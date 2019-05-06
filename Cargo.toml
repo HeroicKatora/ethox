@@ -1,8 +1,12 @@
 [package]
 name = "ethox"
+description = "A standalone network stack for user-space networking and unikernels"
 version = "0.0.1-wip"
 authors = ["Andreas Molzer <andreas.molzer@gmx.de>"]
 edition = "2018"
+license = "GPL-3.0-only"
+documentation = "https://docs.rs/ethox"
+categories = ["network-programming", "no-std"]
 
 [dependencies]
 byteorder = "1.0"

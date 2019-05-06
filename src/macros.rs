@@ -1,3 +1,5 @@
+// Copyright (C) 2016 whitequark@whitequark.org
+
 #[cfg(feature = "log")]
 #[macro_use]
 mod log {

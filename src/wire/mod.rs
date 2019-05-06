@@ -68,6 +68,34 @@ let mut buffer = vec![0; repr.buffer_len() + repr.payload_len];
 # }
 ```
 */
+// Copyright (C) 2016 whitequark@whitequark.org
+// Copyright (C) 2019 Andreas Molzer <andreas.molzer@tum.de>
+//
+// in large parts from `smoltcp` originally distributed under 0-clause BSD
+//
+// Applies to files in this folder unless otherwise noted. These are:
+// * `arp.rs`
+// * `dhcpv4.rs`
+// * `error.rs`
+// * `ethernet.rs`
+// * `icmp.rs`
+// * `icmpv4.rs`
+// * `icmpv6.rs`
+// * `igmp.rs`
+// * `ip.rs`
+// * `ipv4.rs`
+// * `ipv6fragment.rs`
+// * `ipv6hopbyhop.rs`
+// * `ipv6option.rs`
+// * `ipv6routing.rs`
+// * `ipv6.rs`
+// * `mld.rs`
+// * `mod.rs` (this file)
+// * `ndiscoption.rs`
+// * `ndisc.rs`
+// * `pretty_print.rs`
+// * `tcp.rs`
+// * `udp.rs`
 
 mod field {
     pub type Field = ::core::ops::Range<usize>;
