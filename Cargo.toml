@@ -1,0 +1,8 @@
+[package]
+name = "ethox"
+version = "0.0.1-wip"
+authors = ["Andreas Molzer <andreas.molzer@gmx.de>"]
+edition = "2018"
+
+[dependencies]
+byteorder = "1.0"
