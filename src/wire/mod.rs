@@ -126,6 +126,7 @@ mod udp;
 mod tcp;
 #[cfg(feature = "proto-dhcpv4")]
 pub(crate) mod dhcpv4;
+mod payload;
 
 /// Describes how to handle checksums.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -136,6 +137,8 @@ pub enum Checksum {
     /// The checksum field is filled or checked by the NIC.
     Ignored,
 }
+
+pub use self::payload::{Payload, PayloadMut};
 
 pub use self::pretty_print::PrettyPrinter;
 
