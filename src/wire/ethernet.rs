@@ -1,7 +1,8 @@
+use core::ops;
 use core::fmt;
 use byteorder::{ByteOrder, NetworkEndian};
 
-use crate::wire::{Error, Result, Payload};
+use crate::wire::{self, Error, Result, Payload, payload};
 
 enum_with_unknown! {
     /// Ethernet protocol type.
@@ -106,7 +107,8 @@ impl ethernet {
     }
 
     pub fn new_checked(data: &[u8]) -> Result<&Self> {
-        Frame::new_checked(data)?;
+        let packet = Self::new_unchecked(data);
+        packet.check_len()?;
         Ok(Self::new_unchecked(data))
     }
 
@@ -114,38 +116,16 @@ impl ethernet {
         Frame::new_checked(&mut data[..])?;
         Ok(Self::new_unchecked_mut(data))
     }
-}
-
-impl<T: AsRef<[u8]>> Frame<T> {
-    /// Imbue a raw octet buffer with Ethernet frame structure.
-    pub fn new_unchecked(buffer: T) -> Frame<T> {
-        Frame { buffer }
-    }
-
-    /// Shorthand for a combination of [new_unchecked] and [check_len].
-    ///
-    /// [new_unchecked]: #method.new_unchecked
-    /// [check_len]: #method.check_len
-    pub fn new_checked(buffer: T) -> Result<Frame<T>> {
-        let packet = Self::new_unchecked(buffer);
-        packet.check_len()?;
-        Ok(packet)
-    }
 
     /// Ensure that no accessor method will panic if called.
     /// Returns `Err(Error::Truncated)` if the buffer is too short.
     pub fn check_len(&self) -> Result<()> {
-        let len = self.buffer.as_ref().len();
+        let len = self.0.len();
         if len < field::PAYLOAD.start {
             Err(Error::Truncated)
         } else {
             Ok(())
         }
-    }
-
-    /// Consumes the frame, returning the underlying buffer.
-    pub fn into_inner(self) -> T {
-        self.buffer
     }
 
     /// Return the length of a frame header.
@@ -160,25 +140,86 @@ impl<T: AsRef<[u8]>> Frame<T> {
     }
 
     /// Return the destination address field.
-    #[inline]
     pub fn dst_addr(&self) -> Address {
-        let data = self.buffer.as_ref();
-        Address::from_bytes(&data[field::DESTINATION])
+        Address::from_bytes(&self.0[field::DESTINATION])
     }
 
     /// Return the source address field.
-    #[inline]
     pub fn src_addr(&self) -> Address {
-        let data = self.buffer.as_ref();
-        Address::from_bytes(&data[field::SOURCE])
+        Address::from_bytes(&self.0[field::SOURCE])
     }
 
     /// Return the EtherType field, without checking for 802.1Q.
-    #[inline]
     pub fn ethertype(&self) -> EtherType {
-        let data = self.buffer.as_ref();
-        let raw = NetworkEndian::read_u16(&data[field::ETHERTYPE]);
+        let raw = NetworkEndian::read_u16(&self.0[field::ETHERTYPE]);
         EtherType::from(raw)
+    }
+
+    /// Set the destination address field.
+    pub fn set_dst_addr(&mut self, value: Address) {
+        self.0[field::DESTINATION].copy_from_slice(value.as_bytes())
+    }
+
+    /// Set the source address field.
+    pub fn set_src_addr(&mut self, value: Address) {
+        self.0[field::SOURCE].copy_from_slice(value.as_bytes())
+    }
+
+    /// Set the EtherType field.
+    pub fn set_ethertype(&mut self, value: EtherType) {
+        NetworkEndian::write_u16(&mut self.0[field::ETHERTYPE], value.into())
+    }
+
+    /// Return the payload as a byte slice.
+    pub fn payload(&self) -> &[u8] {
+        &self.0[field::PAYLOAD]
+    }
+
+    /// Return the payload as a mutable byte slice.
+    pub fn payload_mut(&mut self) -> &mut [u8] {
+        &mut self.0[field::PAYLOAD]
+    }
+}
+
+impl AsRef<[u8]> for ethernet {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl AsMut<[u8]> for ethernet {
+    fn as_mut(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+}
+
+impl wire::sealed::Sealed for ethernet { }
+
+impl Payload for ethernet {
+    fn payload(&self) -> &payload {
+        self.payload().into()
+    }
+}
+
+impl<T: AsRef<[u8]>> Frame<T> {
+    /// Imbue a raw octet buffer with Ethernet frame structure.
+    pub fn new_unchecked(buffer: T) -> Frame<T> {
+        Frame { buffer }
+    }
+
+    /// Shorthand for a combination of [new_unchecked] and [check_len].
+    ///
+    /// [new_unchecked]: #method.new_unchecked
+    /// [check_len]: #method.check_len
+    pub fn new_checked(buffer: T) -> Result<Frame<T>> {
+        ethernet::new_checked(buffer.as_ref())?;
+        let packet = Self::new_unchecked(buffer);
+        Ok(packet)
+    }
+
+    /// Consumes the frame, returning the underlying buffer.
+    pub fn into_inner(self) -> T {
+        self.buffer
     }
 }
 
@@ -191,33 +232,19 @@ impl<'a, T: AsRef<[u8]> + ?Sized> Frame<&'a T> {
     }
 }
 
-impl<T: AsRef<[u8]> + AsMut<[u8]>> Frame<T> {
-    /// Set the destination address field.
-    #[inline]
-    pub fn set_dst_addr(&mut self, value: Address) {
-        let data = self.buffer.as_mut();
-        data[field::DESTINATION].copy_from_slice(value.as_bytes())
-    }
+impl<T: AsRef<[u8]>> ops::Deref for Frame<T> {
+    type Target = ethernet;
 
-    /// Set the source address field.
-    #[inline]
-    pub fn set_src_addr(&mut self, value: Address) {
-        let data = self.buffer.as_mut();
-        data[field::SOURCE].copy_from_slice(value.as_bytes())
+    fn deref(&self) -> &ethernet {
+        // We checked the length at construction.
+        ethernet::new_unchecked(self.buffer.as_ref())
     }
+}
 
-    /// Set the EtherType field.
-    #[inline]
-    pub fn set_ethertype(&mut self, value: EtherType) {
-        let data = self.buffer.as_mut();
-        NetworkEndian::write_u16(&mut data[field::ETHERTYPE], value.into())
-    }
-
-    /// Return a mutable pointer to the payload.
-    #[inline]
-    pub fn payload_mut(&mut self) -> &mut [u8] {
-        let data = self.buffer.as_mut();
-        &mut data[field::PAYLOAD]
+impl<T: AsRef<[u8]> + AsMut<[u8]>> ops::DerefMut for Frame<T> {
+    fn deref_mut(&mut self) -> &mut ethernet {
+        // We checked the length at construction.
+        ethernet::new_unchecked_mut(self.buffer.as_mut())
     }
 }
 
@@ -246,17 +273,14 @@ impl<T: AsRef<[u8]>> PrettyPrint for Frame<T> {
         write!(f, "{}{}", indent, frame)?;
 
         match frame.ethertype() {
-            #[cfg(feature = "proto-ipv4")]
             EtherType::Arp => {
                 indent.increase(f)?;
                 super::ArpPacket::<&[u8]>::pretty_print(&frame.payload(), f, indent)
             }
-            #[cfg(feature = "proto-ipv4")]
             EtherType::Ipv4 => {
                 indent.increase(f)?;
                 super::Ipv4Packet::<&[u8]>::pretty_print(&frame.payload(), f, indent)
             }
-            #[cfg(feature = "proto-ipv6")]
             EtherType::Ipv6 => {
                 indent.increase(f)?;
                 super::Ipv6Packet::<&[u8]>::pretty_print(&frame.payload(), f, indent)
@@ -276,7 +300,7 @@ pub struct Repr {
 
 impl Repr {
     /// Parse an Ethernet II frame and return a high-level representation.
-    pub fn parse<T: AsRef<[u8]> + ?Sized>(frame: &Frame<&T>) -> Result<Repr> {
+    pub fn parse(frame: &ethernet) -> Result<Repr> {
         frame.check_len()?;
         Ok(Repr {
             src_addr: frame.src_addr(),
@@ -291,7 +315,7 @@ impl Repr {
     }
 
     /// Emit a high-level representation into an Ethernet II frame.
-    pub fn emit<T: AsRef<[u8]> + AsMut<[u8]>>(&self, frame: &mut Frame<T>) {
+    pub fn emit(&self, frame: &mut ethernet) {
         frame.set_src_addr(self.src_addr);
         frame.set_dst_addr(self.dst_addr);
         frame.set_ethertype(self.ethertype);

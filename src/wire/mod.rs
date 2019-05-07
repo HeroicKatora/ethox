@@ -126,7 +126,8 @@ mod udp;
 mod tcp;
 #[cfg(feature = "proto-dhcpv4")]
 pub(crate) mod dhcpv4;
-mod payload;
+#[path = "payload.rs"]
+mod payload_impl;
 
 /// Describes how to handle checksums.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -138,7 +139,11 @@ pub enum Checksum {
     Ignored,
 }
 
-pub use self::payload::{Payload, PayloadMut};
+pub(crate) mod sealed {
+    pub trait Sealed { }
+}
+
+pub use self::payload_impl::{Payload, PayloadMut, payload};
 
 pub use self::pretty_print::PrettyPrinter;
 

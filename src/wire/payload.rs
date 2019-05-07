@@ -1,5 +1,6 @@
 //! Newtype wrappers of the fundamental byte-buffer `[u8]`.
 use core::ops;
+use super::sealed;
 
 /// A specialized, internal variant of `Borrow<payload>`.
 ///
@@ -25,10 +26,6 @@ pub trait PayloadMut: Payload {
 
     /// Retrieve the mutable, inner payload.
     fn payload_mut(&mut self) -> &mut payload;
-}
-
-pub(crate) mod sealed {
-    pub trait Sealed { }
 }
 
 /// A dynamically sized type representing a packet payload.
