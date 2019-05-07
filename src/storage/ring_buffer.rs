@@ -110,7 +110,7 @@ impl<'a, T: 'a> RingBuffer<'a, T> {
 impl<'a, T: 'a> RingBuffer<'a, T> {
     /// Call `f` with a single buffer element, and enqueue the element if `f`
     /// returns successfully, or return `Err(Error::Exhausted)` if the buffer is full.
-    pub fn enqueue_one_with<'b, R, F, E>(&'b mut self, f: F) -> Option<Result<R, E>>
+    pub fn enqueue_one_with<'b, R, E, F>(&'b mut self, f: F) -> Option<Result<R, E>>
             where F: FnOnce(&'b mut T) -> Result<R, E> {
         if self.is_full() { return None }
 
@@ -135,7 +135,7 @@ impl<'a, T: 'a> RingBuffer<'a, T> {
 
     /// Call `f` with a single buffer element, and dequeue the element if `f`
     /// returns successfully, or return `Err(Error::Exhausted)` if the buffer is empty.
-    pub fn dequeue_one_with<'b, R, F, E>(&'b mut self, f: F) -> Option<Result<R, E>>
+    pub fn dequeue_one_with<'b, R, E, F>(&'b mut self, f: F) -> Option<Result<R, E>>
             where F: FnOnce(&'b mut T) -> Result<R, E> {
         if self.is_empty() { return None }
 
@@ -378,7 +378,7 @@ mod test {
 
     #[test]
     fn test_buffer_length_changes() {
-        let mut ring = RingBuffer::new(vec![0; 2]);
+        let mut ring: RingBuffer<usize> = RingBuffer::new(vec![0; 2]);
         assert!(ring.is_empty());
         assert!(!ring.is_full());
         assert_eq!(ring.len(), 0);
@@ -403,34 +403,34 @@ mod test {
     #[test]
     fn test_buffer_enqueue_dequeue_one_with() {
         let mut ring = RingBuffer::new(vec![0; 5]);
-        assert_eq!(ring.dequeue_one_with(|_| unreachable!()) as Result<()>,
-                   Err(Error::Exhausted));
+        assert_eq!(ring.dequeue_one_with::<(), (), _>(|_| unreachable!()),
+                   None);
 
-        ring.enqueue_one_with(|e| Ok(e)).unwrap();
+        let _ = ring.enqueue_one_with::<_, (), _>(|e| Ok(e));
         assert!(!ring.is_empty());
         assert!(!ring.is_full());
 
         for i in 1..5 {
-            ring.enqueue_one_with(|e| Ok(*e = i)).unwrap();
+            let _ = ring.enqueue_one_with::<_, (), _>(|e| Ok(*e = i));
             assert!(!ring.is_empty());
         }
         assert!(ring.is_full());
-        assert_eq!(ring.enqueue_one_with(|_| unreachable!()) as Result<()>,
-                   Err(Error::Exhausted));
+        assert_eq!(ring.enqueue_one_with::<(), (), _>(|_| unreachable!()),
+                   None);
 
         for i in 0..5 {
-            assert_eq!(ring.dequeue_one_with(|e| Ok(*e)).unwrap(), i);
+            assert_eq!(ring.dequeue_one_with::<_, (), _>(|e| Ok(*e)), Some(Ok(i)));
             assert!(!ring.is_full());
         }
-        assert_eq!(ring.dequeue_one_with(|_| unreachable!()) as Result<()>,
-                   Err(Error::Exhausted));
+        assert_eq!(ring.dequeue_one_with::<(), (), _>(|_| unreachable!()),
+                   None);
         assert!(ring.is_empty());
     }
 
     #[test]
     fn test_buffer_enqueue_dequeue_one() {
         let mut ring = RingBuffer::new(vec![0; 5]);
-        assert_eq!(ring.dequeue_one(), Err(Error::Exhausted));
+        assert_eq!(ring.dequeue_one(), None);
 
         ring.enqueue_one().unwrap();
         assert!(!ring.is_empty());
@@ -441,13 +441,13 @@ mod test {
             assert!(!ring.is_empty());
         }
         assert!(ring.is_full());
-        assert_eq!(ring.enqueue_one(), Err(Error::Exhausted));
+        assert_eq!(ring.enqueue_one(), None);
 
-        for i in 0..5 {
-            assert_eq!(*ring.dequeue_one().unwrap(), i);
+        for mut i in 0..5 {
+            assert_eq!(ring.dequeue_one(), Some(&mut i));
             assert!(!ring.is_full());
         }
-        assert_eq!(ring.dequeue_one(), Err(Error::Exhausted));
+        assert_eq!(ring.dequeue_one(), None);
         assert!(ring.is_empty());
     }
 
@@ -725,7 +725,7 @@ mod test {
         assert_eq!(no_capacity.get_allocated(0, 0), &[]);
         no_capacity.dequeue_allocated(0);
         assert_eq!(no_capacity.enqueue_many(0), &[]);
-        assert_eq!(no_capacity.enqueue_one(), Err(Error::Exhausted));
+        assert_eq!(no_capacity.enqueue_one(), None);
         assert_eq!(no_capacity.contiguous_window(), 0);
     }
 

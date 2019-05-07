@@ -11,7 +11,7 @@ pub enum Slice<'a, T: 'a> {
     One(T),
 
     /// An allocated list of objects.
-    #[cfg(feature = "std")]
+    #[cfg(any(test, feature = "std"))]
     Many(Vec<T>),
 
     /// A list of objects living in borrowed memory.
@@ -21,10 +21,14 @@ pub enum Slice<'a, T: 'a> {
 }
 
 impl<'a, T: 'a> Slice<'a, T> {
+    pub fn one_default() -> Self where T: Default {
+        Slice::One(T::default())
+    }
+
     pub fn as_slice(&self) -> &[T] {
         match self {
             Slice::One(t) => slice::from_ref(t),
-            #[cfg(feature = "std")]
+            #[cfg(any(test, feature = "std"))]
             Slice::Many(vec) => vec.as_slice(),
             Slice::Borrowed(slice) => slice,
         }
@@ -33,7 +37,7 @@ impl<'a, T: 'a> Slice<'a, T> {
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         match self {
             Slice::One(t) => slice::from_mut(t),
-            #[cfg(feature = "std")]
+            #[cfg(any(test, feature = "std"))]
             Slice::Many(vec) => vec.as_mut_slice(),
             Slice::Borrowed(slice) => slice,
         }
@@ -55,7 +59,7 @@ impl<T> From<Option<T>> for Slice<'_, T> {
     }
 }
 
-#[cfg(feature = "std")]
+#[cfg(any(test, feature = "std"))]
 impl<T> From<Vec<T>> for Slice<'_, T> {
     fn from(t: Vec<T>) -> Self {
         Slice::Many(t)
