@@ -17,7 +17,7 @@ pub trait Payload: sealed::Sealed {
 /// region, an implementation detail that other parts of the crate could rely upon. The guarantee
 /// is that the values in the referred to byte region will not appear differently, which is trivial
 /// when we guarantee that the byte region is part of our object and does not change.
-pub trait PayloadMut: sealed::Sealed {
+pub trait PayloadMut: Payload {
     /// Resize the payload.
     ///
     /// New bytes will be intialized with some value, likely `0` but not guaranteed.
@@ -36,9 +36,7 @@ pub(crate) mod sealed {
 /// This type is seemingly just a `[u8]`. It is a newtype wrapper so that this crate can freely
 /// implement traits for it but also restrict the standard trait implementations to not be
 /// available.
-#[allow(non_camel_case_types)]
-#[repr(transparent)]
-pub struct payload([u8]);
+byte_wrapper!(payload);
 
 /// Error variants for resizing.
 pub enum Error {
@@ -47,15 +45,13 @@ pub enum Error {
 
 impl<'a> From<&'a [u8]> for &'a payload {
     fn from(val: &'a [u8]) -> &'a payload {
-        // SAFETY: this is safe due to repr(transparent)
-        unsafe { &*(val as *const _ as *const payload) }
+        payload::__from_macro_new_unchecked(val)
     }
 }
 
 impl<'a> From<&'a mut [u8]> for &'a mut payload {
     fn from(val: &'a mut [u8]) -> &'a mut payload {
-        // SAFETY: this is safe due to repr(transparent)
-        unsafe { &mut *(val as *mut _ as *mut payload) }
+        payload::__from_macro_new_unchecked_mut(val)
     }
 }
 

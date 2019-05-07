@@ -77,3 +77,23 @@ macro_rules! enum_with_unknown {
         }
     }
 }
+
+macro_rules! byte_wrapper {
+    ($name:ident) => {
+        #[allow(non_camel_case_types)]
+        #[repr(transparent)]
+        pub struct $name([u8]);
+
+        impl $name {
+            fn __from_macro_new_unchecked(data: &[u8]) -> &Self {
+                // SAFETY: this is safe due to repr(transparent)
+                unsafe { &*(data as *const _ as *const Self) }
+            }
+
+            fn __from_macro_new_unchecked_mut(data: &mut [u8]) -> &mut Self {
+                // SAFETY: this is safe due to repr(transparent)
+                unsafe { &mut *(data as *mut _ as *mut Self) }
+            }
+        }
+    }
+}

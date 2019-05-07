@@ -1,7 +1,7 @@
 use core::fmt;
 use byteorder::{ByteOrder, NetworkEndian};
 
-use crate::wire::{Error, Result};
+use crate::wire::{Error, Result, Payload};
 
 enum_with_unknown! {
     /// Ethernet protocol type.
@@ -84,6 +84,9 @@ pub struct Frame<T: AsRef<[u8]>> {
     buffer: T
 }
 
+/// A byte sequence representing an Ethernet II frame.
+byte_wrapper!(ethernet);
+
 mod field {
     use crate::wire::field::*;
 
@@ -91,6 +94,26 @@ mod field {
     pub const SOURCE:      Field =  6..12;
     pub const ETHERTYPE:   Field = 12..14;
     pub const PAYLOAD:     Rest  = 14..;
+}
+
+impl ethernet {
+    pub fn new_unchecked(data: &[u8]) -> &Self {
+        Self::__from_macro_new_unchecked(data)
+    }
+
+    pub fn new_unchecked_mut(data: &mut [u8]) -> &mut Self {
+        Self::__from_macro_new_unchecked_mut(data)
+    }
+
+    pub fn new_checked(data: &[u8]) -> Result<&Self> {
+        Frame::new_checked(data)?;
+        Ok(Self::new_unchecked(data))
+    }
+
+    pub fn new_checked_mut(data: &mut [u8]) -> Result<&mut Self> {
+        Frame::new_checked(&mut data[..])?;
+        Ok(Self::new_unchecked_mut(data))
+    }
 }
 
 impl<T: AsRef<[u8]>> Frame<T> {
