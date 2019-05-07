@@ -45,14 +45,11 @@
 
 pub mod eth;
 pub mod ip;
-pub mod nic;
-pub mod payload;
 pub mod udp;
 
 pub type Result<T> = core::result::Result<T, Error>;
 
-pub use self::payload::{Payload, PayloadMut};
-
 pub enum Error {
+    Illegal,
     // TODO
 }

@@ -1,18 +1,16 @@
 //! Encapsulates a network interface card.
 //!
 //! Also permits software emulation or implementation of one as well, of course.
+pub mod loopback;
 mod personality;
-mod software;
 
-use super::{Result, Payload};
+use crate::wire::Payload;
+use crate::endpoint::{Error, Result};
 
 pub use self::personality::{
     Capabilities,
     Personality,
     Protocol};
-
-pub use self::software::{
-    Loopback};
 
 /// A reference to memory holding packet data and a handle.
 ///
@@ -20,10 +18,10 @@ pub use self::software::{
 /// `Handle` is an interface to the device to provide operations for packet handling.
 pub trait Packet<'a> {
     /// The inner interface into deciding the packet's processing.
-    type Handle: Handle + 'a;
+    type Handle: Handle + ?Sized + 'a;
 
     /// Handle to the contained payload.
-    type Payload: Payload + 'a;
+    type Payload: Payload + ?Sized + 'a;
 
     /// It must be possible to access handle and payload simultaneously.
     ///
@@ -39,11 +37,12 @@ pub trait Handle {
     /// allocated for that specific purpose and can, for lack of logic for this, not implement
     /// ad-hoc allocation for this purpose. Another reason for failure is simply a lack of
     /// resources to queue the packet.
-    fn queue(self) -> Result<()>;
+    fn queue(&mut self) -> Result<()>;
 }
 
 pub trait Device<'a> {
-    type Packet: Packet<'a> + 'a;
+    type Send: Packet<'a>;
+    type Recv: Packet<'a>;
 
     /// A description of the device.
     ///
@@ -51,18 +50,18 @@ pub trait Device<'a> {
     /// implementation does not take advantage of this fact.
     fn personality(&self) -> Personality;
 
-    /// Receive some packets with the specified receptor.
-    ///
-    /// Should return the number of processed packets for convenience.
-    fn rx<R: Receive<'a, Self::Packet>>(&mut self, max: usize, receptor: R) -> Result<usize>;
-
     /// Prepare then send some packets with the specified receptor.
     ///
     /// Should return the number of processed packets for convenience.
-    fn tx<R: Send<'a, Self::Packet>>(&mut self, max: usize, sender: R) -> Result<usize>;
+    fn tx<R: Send<'a, Self::Send>>(&'a mut self, max: usize, sender: R) -> Result<usize>;
+
+    /// Receive some packets with the specified receptor.
+    ///
+    /// Should return the number of processed packets for convenience.
+    fn rx<R: Recv<'a, Self::Recv>>(&'a mut self, max: usize, receptor: R) -> Result<usize>;
 }
 
-pub trait Receive<'a, P: Packet<'a>> {
+pub trait Recv<'a, P: Packet<'a>> {
     /// Receive a single packet.
     ///
     /// Some `Packet` types will allow you not only to access but also modify their contents (i.e.
