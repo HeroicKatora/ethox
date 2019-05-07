@@ -20,6 +20,26 @@ pub enum Slice<'a, T: 'a> {
     Borrowed(&'a mut [T]),
 }
 
+impl<'a, T: 'a> Slice<'a, T> {
+    pub fn as_slice(&self) -> &[T] {
+        match self {
+            Slice::One(t) => slice::from_ref(t),
+            #[cfg(feature = "std")]
+            Slice::Many(vec) => vec.as_slice(),
+            Slice::Borrowed(slice) => slice,
+        }
+    }
+
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        match self {
+            Slice::One(t) => slice::from_mut(t),
+            #[cfg(feature = "std")]
+            Slice::Many(vec) => vec.as_mut_slice(),
+            Slice::Borrowed(slice) => slice,
+        }
+    }
+}
+
 impl<T> From<T> for Slice<'_, T> {
     fn from(t: T) -> Self {
         Slice::One(t)
@@ -52,22 +72,12 @@ impl<T> ops::Deref for Slice<'_, T> {
     type Target = [T];
 
     fn deref(&self) -> &[T] {
-        match self {
-            Slice::One(t) => slice::from_ref(t),
-            #[cfg(feature = "std")]
-            Slice::Many(vec) => vec.as_slice(),
-            Slice::Borrowed(slice) => slice,
-        }
+        self.as_slice()
     }
 }
 
 impl<T> ops::DerefMut for Slice<'_, T> {
     fn deref_mut(&mut self) -> &mut [T] {
-        match self {
-            Slice::One(t) => slice::from_mut(t),
-            #[cfg(feature = "std")]
-            Slice::Many(vec) => vec.as_mut_slice(),
-            Slice::Borrowed(slice) => slice,
-        }
+        self.as_mut_slice()
     }
 }
