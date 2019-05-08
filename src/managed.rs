@@ -21,6 +21,10 @@ pub enum Slice<'a, T: 'a> {
 }
 
 impl<'a, T: 'a> Slice<'a, T> {
+    pub fn empty() -> Self {
+        Slice::Borrowed(Default::default())
+    }
+
     pub fn one_default() -> Self where T: Default {
         Slice::One(T::default())
     }

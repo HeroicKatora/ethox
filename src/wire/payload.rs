@@ -1,5 +1,7 @@
 //! Newtype wrappers of the fundamental byte-buffer `[u8]`.
 use core::ops;
+use crate::managed::Slice;
+
 use super::sealed;
 
 /// A specialized, internal variant of `Borrow<payload>`.
@@ -163,5 +165,49 @@ impl<P: PayloadMut + ?Sized> PayloadMut for &'_ mut P {
 
     fn resize(&mut self, length: usize) -> Result<(), Error> {
         (**self).resize(length)
+    }
+}
+
+impl sealed::Sealed for Slice<'_, u8> { }
+
+impl Payload for Slice<'_, u8> {
+    fn payload(&self) -> &payload {
+        self.as_slice().into()
+    }
+}
+
+impl PayloadMut for Slice<'_, u8> {
+    fn payload_mut(&mut self) -> &mut payload {
+        self.as_mut_slice().into()
+    }
+    
+    fn resize(&mut self, length: usize) -> Result<(), Error> {
+        let inner = core::mem::replace(self, Slice::empty());
+
+        let result;
+        let inner = match inner {
+            Slice::One(one) => {
+                result = Err(Error::BadSize);
+                Slice::One(one)
+            },
+            #[cfg(any(test, feature = "std"))]
+            Slice::Many(mut vec) => {
+                vec.resize(length, 0);
+                result = Ok(());
+                Slice::Many(vec)
+            },
+            Slice::Borrowed(inner) => {
+                if inner.len() >= length {
+                    result = Ok(());
+                    Slice::Borrowed(&mut inner[..length])
+                } else {
+                    result = Err(Error::BadSize);
+                    Slice::Borrowed(inner)
+                }
+            },
+        };
+
+        core::mem::replace(self, inner);
+        result
     }
 }
