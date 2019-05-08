@@ -91,3 +91,46 @@ pub trait Send<'a, P: Packet<'a> + ?Sized> {
         }
     }
 }
+
+/// Some base types and methods for other tests.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wire::PayloadMut;
+
+    /// Sender and receiver verifying packet lengths.
+    #[derive(Copy, Clone)]
+    pub struct LengthIo;
+
+    impl LengthIo {
+        fn signature<P: Payload + ?Sized>(&mut self, payload: &P) -> [u8; 8] {
+            payload.payload()
+                .as_slice()
+                .len()
+                .to_le_bytes()
+        }
+    }
+
+    impl<'a, P: Packet<'a> + ?Sized> Recv<'a, P> for LengthIo {
+        fn receive(&mut self, packet: &mut P) {
+            let (_, payload) = packet.separate();
+            let bytes = self.signature(payload);
+            for (p, b) in payload.payload().as_slice().iter().zip(bytes.iter().cycle()) {
+                assert!(p == b)
+            }
+        }
+    }
+
+    impl<'a, P: Packet<'a> + ?Sized> Send<'a, P> for LengthIo 
+        where P::Payload: PayloadMut
+    {
+        fn send(&mut self, packet: &mut P) {
+            let (handle, payload) = packet.separate();
+            let bytes = self.signature(payload);
+            for (p, b) in payload.payload_mut().as_mut_slice().iter_mut().zip(bytes.iter().cycle()) {
+                *p = *b;
+            }
+            assert_eq!(handle.queue(), Ok(()));
+        }
+    }
+}

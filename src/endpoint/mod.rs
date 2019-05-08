@@ -49,6 +49,7 @@ pub mod udp;
 
 pub type Result<T> = core::result::Result<T, Error>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Error {
     Illegal,
     // TODO
