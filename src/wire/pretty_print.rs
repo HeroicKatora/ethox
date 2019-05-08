@@ -25,7 +25,7 @@ let buffer = vec![
     0x12, 0x34, 0xab, 0xcd,
     0xaa, 0x00, 0x00, 0xff
 ];
-print!("{}", PrettyPrinter::<EthernetFrame<&'static [u8]>>::new("", &buffer));
+print!("{}", PrettyPrinter::<ethernet_frame>::new("", &buffer));
 ```
 */
 
@@ -71,40 +71,40 @@ pub trait PrettyPrint {
     ///
     /// `pretty_print` accepts a buffer and not a packet wrapper because the packet might
     /// be truncated, and so it might not be possible to create the packet wrapper.
-    fn pretty_print(buffer: &AsRef<[u8]>, fmt: &mut fmt::Formatter,
+    fn pretty_print(buffer: &[u8], fmt: &mut fmt::Formatter,
                     indent: &mut PrettyIndent) -> fmt::Result;
 }
 
 /// Wrapper for using a `PrettyPrint` where a `Display` is expected.
-pub struct PrettyPrinter<'a, T: PrettyPrint> {
+pub struct PrettyPrinter<'a, T: PrettyPrint + ?Sized> {
     prefix:  &'static str,
-    buffer:  &'a AsRef<[u8]>,
+    buffer:  &'a [u8],
     phantom: PhantomData<T>
 }
 
-impl<'a, T: PrettyPrint> PrettyPrinter<'a, T> {
+impl<'a, T: PrettyPrint + ?Sized> PrettyPrinter<'a, T> {
     /// Format the listing with the recorded parameters when Display::fmt is called.
-    pub fn new(prefix: &'static str, buffer: &'a AsRef<[u8]>) -> PrettyPrinter<'a, T> {
+    pub fn new(prefix: &'static str, buffer: &'a (impl AsRef<[u8]> + ?Sized)) -> PrettyPrinter<'a, T> {
         PrettyPrinter {
             prefix:  prefix,
-            buffer:  buffer,
+            buffer:  buffer.as_ref(),
             phantom: PhantomData
         }
     }
 }
 
-impl<'a, T: PrettyPrint + AsRef<[u8]>> PrettyPrinter<'a, T> {
+impl<'a, T: PrettyPrint + AsRef<[u8]> + ?Sized> PrettyPrinter<'a, T> {
     /// Create a `PrettyPrinter` which prints the given object.
     pub fn print(printable: &'a T) -> PrettyPrinter<'a, T> {
         PrettyPrinter {
             prefix: "",
-            buffer: printable,
+            buffer: printable.as_ref(),
             phantom: PhantomData,
         }
     }
 }
 
-impl<'a, T: PrettyPrint> fmt::Display for PrettyPrinter<'a, T> {
+impl<'a, T: PrettyPrint + ?Sized> fmt::Display for PrettyPrinter<'a, T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         T::pretty_print(&self.buffer, f, &mut PrettyIndent::new(self.prefix))
     }

@@ -148,6 +148,7 @@ pub use self::payload_impl::{Payload, PayloadMut, payload};
 pub use self::pretty_print::PrettyPrinter;
 
 pub use self::ethernet::{
+    ethernet as ethernet_frame,
     EtherType as EthernetProtocol,
     Address as EthernetAddress,
     Frame as EthernetFrame,

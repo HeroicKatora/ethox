@@ -275,9 +275,9 @@ impl<T: Payload> fmt::Display for Frame<T> {
 use super::pretty_print::{PrettyPrint, PrettyIndent};
 
 impl PrettyPrint for ethernet {
-    fn pretty_print(buffer: &AsRef<[u8]>, f: &mut fmt::Formatter,
+    fn pretty_print(buffer: &[u8], f: &mut fmt::Formatter,
                     indent: &mut PrettyIndent) -> fmt::Result {
-        let frame = match Frame::new_checked(buffer.as_ref()) {
+        let frame = match Frame::new_checked(buffer) {
             Err(err)  => return write!(f, "{}({})", indent, err),
             Ok(frame) => frame
         };
