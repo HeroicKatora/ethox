@@ -10,9 +10,7 @@ pub struct Loopback<'r> {
     sent: usize,
 }
 
-pub struct Handle<'a>(&'a mut EnqueueFlag);
-
-pub struct Packet<'a>(Handle<'a>, &'a mut [u8]);
+pub struct Handle(EnqueueFlag);
 
 struct AckRecv<'a>(&'a mut usize, usize, &'a mut usize);
 
@@ -77,13 +75,16 @@ impl<'r> Loopback<'r> {
     }
 }
 
-impl<'r> Loopback<'r> {
-    pub fn personality(&self) -> Personality {
+impl<'a> super::Device<'a> for Loopback<'a> {
+    type Handle = Handle;
+    type Payload = [u8];
+
+    fn personality(&self) -> Personality {
         Personality::baseline()
     }
 
-    pub fn tx<R>(&mut self, max: usize, mut sender: R) -> Result<usize> 
-        where R: for<'a> Send<'a, Packet<'a>>
+    fn tx(&mut self, max: usize, mut sender: impl Send<Self::Handle, Self::Payload>)
+        -> Result<usize> 
     {
         let mut count = 0;
 
@@ -93,10 +94,13 @@ impl<'r> Loopback<'r> {
                 Some(packet) => packet,
             };
 
-            let mut flag = EnqueueFlag::SetTrue(false);
-            sender.send(Packet(Handle(&mut flag), packet));
+            let mut flag = Handle(EnqueueFlag::SetTrue(false));
+            sender.send(super::Packet {
+                handle: &mut flag,
+                payload: packet,
+            });
 
-            if flag.was_sent() {
+            if flag.0.was_sent() {
                 ack.ack();
                 count += 1;
             }
@@ -105,8 +109,8 @@ impl<'r> Loopback<'r> {
         Ok(count)
     }
 
-    pub fn rx<R>(&mut self, max: usize, mut receptor: R) -> Result<usize> 
-        where R: for<'a> Recv<'a, Packet<'a>>
+    fn rx(&mut self, max: usize, mut receptor: impl Recv<Self::Handle, Self::Payload>)
+        -> Result<usize>
     {
         let mut count = 0;
 
@@ -116,8 +120,11 @@ impl<'r> Loopback<'r> {
                 Some(packet) => packet,
             };
 
-            let mut flag = EnqueueFlag::NotPossible;
-            receptor.receive(Packet(Handle(&mut flag), packet));
+            let mut flag = Handle(EnqueueFlag::NotPossible);
+            receptor.receive(super::Packet {
+                handle: &mut flag,
+                payload: packet,
+            });
             ack.ack();
 
             count += 1;
@@ -127,16 +134,7 @@ impl<'r> Loopback<'r> {
     }
 }
 
-impl<'a, 'p> super::Packet<'a> for Packet<'p> where 'p: 'a {
-    type Handle = Handle<'p>;
-    type Payload = [u8];
-
-    fn separate(self) -> (Self::Handle, &'a mut Self::Payload) {
-        (self.0, self.1)
-    }
-}
-
-impl super::Handle for Handle<'_> {
+impl super::Handle for Handle {
     fn queue(&mut self) -> Result<()> {
         self.0.queue()
     }

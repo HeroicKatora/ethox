@@ -5,9 +5,7 @@ use crate::wire::Payload;
 use super::{Personality, Recv, Send, Result};
 use super::common::EnqueueFlag;
 
-pub struct Handle<'a>(&'a mut EnqueueFlag);
-
-pub struct Packet<'a, P>(Handle<'a>, &'a mut P);
+pub struct Handle(EnqueueFlag);
 
 pub struct External<T> {
     /// Backing buffer, accessible as a slice of packet payloads.
@@ -89,17 +87,20 @@ impl<T, P> External<T> where T: Deref<Target=[P]> {
     }
 }
 
-impl<T, P> External<T>
+impl<'a, T, P> super::Device<'a> for External<T>
 where
     T: Deref<Target=[P]> + DerefMut,
-    P: Payload,
+    P: Payload + 'a,
 {
-    pub fn personality(&self) -> Personality {
+    type Handle = Handle;
+    type Payload = P;
+
+    fn personality(&self) -> Personality {
         Personality::baseline()
     }
 
-    pub fn tx<R>(&mut self, max: usize, mut sender: R) -> Result<usize>
-        where R: for<'a> Send<'a, Packet<'a, P>>
+    fn tx(&mut self, max: usize, mut sender: impl Send<Self::Handle, Self::Payload>)
+        -> Result<usize> 
     {
         if max == 0 || self.to_send() == 0 {
             return Ok(0)
@@ -108,8 +109,11 @@ where
         let next_id = self.next_send();
         let buffer = &mut self.buffer[next_id];
 
-        self.flag = EnqueueFlag::SetTrue(false);
-        sender.send(Packet(Handle(&mut self.flag), buffer));
+        let mut flag = Handle(EnqueueFlag::SetTrue(false));
+        sender.send(super::Packet {
+            handle: &mut flag,
+            payload: buffer,
+        });
 
         if self.flag.was_sent() {
             self.sent += 1;
@@ -119,8 +123,8 @@ where
         }
     }
 
-    pub fn rx<R>(&mut self, max: usize, mut receptor: R) -> Result<usize>
-        where R: for<'a> Recv<'a, Packet<'a, P>>
+    fn rx(&mut self, max: usize, mut receptor: impl Recv<Self::Handle, Self::Payload>)
+        -> Result<usize>
     {
         if max == 0 || self.to_recv() == 0 {
             return Ok(0)
@@ -129,27 +133,18 @@ where
         let next_id = self.next_recv();
         let buffer = &mut self.buffer[next_id];
 
-        self.flag = EnqueueFlag::NotPossible;
-        receptor.receive(Packet(Handle(&mut self.flag), buffer));
+        let mut flag = Handle(EnqueueFlag::NotPossible);
+        receptor.receive(super::Packet {
+            handle: &mut flag,
+            payload: buffer,
+        });
 
         self.recv += 1;
         Ok(1)
     }
 }
 
-impl<'a, 'p: 'a, P> super::Packet<'a> for Packet<'p, P>
-where
-    P: Payload + 'a,
-{
-    type Handle = Handle<'p>;
-    type Payload = P;
-
-    fn separate(self) -> (Self::Handle, &'a mut Self::Payload) {
-        (self.0, self.1)
-    }
-}
-
-impl super::Handle for Handle<'_> {
+impl super::Handle for Handle {
     fn queue(&mut self) -> super::Result<()> {
         self.0.queue()
     }

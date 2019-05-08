@@ -5,8 +5,8 @@ use crate::nic;
 pub struct Sock {
 }
 
-pub trait Recv<C: Payload> {
-    fn receive(&mut self, repr: EthernetRepr, frame: EthernetFrame<C>);
+pub trait Recv<C: Payload + ?Sized> {
+    fn receive(&mut self, repr: EthernetRepr, frame: EthernetFrame<&mut C>);
 }
 
 pub struct Endpoint {
@@ -35,12 +35,14 @@ impl Endpoint {
     }
 }
 
-impl<'a, P: nic::Packet<'a>, H> nic::Recv<'a, P> for Receiver<'_, H> 
-    where H: Recv<&'a mut P::Payload>
+impl<H, P, T> nic::Recv<H, P> for Receiver<'_, T>
+where
+    H: nic::Handle + ?Sized,
+    P: Payload + ?Sized,
+    T: Recv<P>,
 {
-    fn receive(&mut self, packet: P) {
-        let (_, payload) = packet.separate();
-        let frame = match EthernetFrame::new_checked(payload) {
+    fn receive(&mut self, packet: nic::Packet<H, P>) {
+        let frame = match EthernetFrame::new_checked(packet.payload) {
             Ok(frame) => frame,
             Err(_) => return,
         };
