@@ -61,17 +61,17 @@ pub trait Device<'a> {
     fn rx<R: Recv<'a, Self::Recv>>(&'a mut self, max: usize, receptor: R) -> Result<usize>;
 }
 
-pub trait Recv<'a, P: Packet<'a>> {
+pub trait Recv<'a, P: Packet<'a> + ?Sized> {
     /// Receive a single packet.
     ///
     /// Some `Packet` types will allow you not only to access but also modify their contents (i.e.
     /// they also implement `AsMut<[u8]>`
-    fn receive(&mut self, packet: &mut P);
+    fn receive(&mut self, packet: &'a mut P);
 
     /// Vectored receive.
     ///
     /// The default implementation will simply receive all packets in sequence.
-    fn receivev(&mut self, packets: &mut [P])
+    fn receivev(&mut self, packets: &'a mut [P])
         where P: Sized,
     {
         for packet in packets.iter_mut() {
@@ -80,10 +80,10 @@ pub trait Recv<'a, P: Packet<'a>> {
     }
 }
 
-pub trait Send<'a, P: Packet<'a>> {
-    fn send(&mut self, packet: &mut P);
+pub trait Send<'a, P: Packet<'a> + ?Sized> {
+    fn send(&mut self, packet: &'a mut P);
 
-    fn sendv(&mut self, packets: &mut [P])
+    fn sendv(&mut self, packets: &'a mut [P])
         where P: Sized,
     {
         for packet in packets.iter_mut() {
