@@ -1,7 +1,9 @@
 //! Encapsulates a network interface card.
 //!
 //! Also permits software emulation or implementation of one as well, of course.
+pub mod common;
 pub mod loopback;
+pub mod external;
 mod personality;
 
 use crate::wire::Payload;

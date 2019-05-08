@@ -137,7 +137,7 @@ impl<'a, 'p> super::Packet<'a> for RecvPacket<'p> where 'a: 'p {
     }
 }
 
-impl<'a, 'p> super::Packet<'a> for SendPacket<'p> where 'a: 'p {
+impl<'a, 'p> super::Packet<'a> for SendPacket<'p> where 'p: 'a {
     type Handle = SendHandle;
     type Payload = [u8];
 
