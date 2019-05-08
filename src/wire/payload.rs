@@ -40,6 +40,16 @@ pub enum Error {
     BadSize,
 }
 
+impl payload {
+    pub fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
+
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+}
+
 impl<'a> From<&'a [u8]> for &'a payload {
     fn from(val: &'a [u8]) -> &'a payload {
         payload::__from_macro_new_unchecked(val)
@@ -52,13 +62,27 @@ impl<'a> From<&'a mut [u8]> for &'a mut payload {
     }
 }
 
-impl payload {
-    pub fn as_slice(&self) -> &[u8] {
-        &self.0
+impl<'a> From<&'a payload> for &'a [u8] {
+    fn from(val: &'a payload) -> &'a [u8] {
+        val.as_slice()
     }
+}
 
-    pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        &mut self.0
+impl<'a> From<&'a mut payload> for &'a mut [u8] {
+    fn from(val: &'a mut payload) -> &'a mut [u8] {
+        val.as_mut_slice()
+    }
+}
+
+impl AsRef<[u8]> for payload {
+    fn as_ref(&self) -> &[u8] {
+        self.into()
+    }
+}
+
+impl AsMut<[u8]> for payload {
+    fn as_mut(&mut self) -> &mut [u8] {
+        self.into()
     }
 }
 
@@ -113,5 +137,31 @@ impl PayloadMut for payload {
 
     fn resize(&mut self, len: usize) -> Result<(), Error> {
         self.as_mut_slice().resize(len)
+    }
+}
+
+impl<P: Payload + ?Sized> sealed::Sealed for &'_ P { }
+
+impl<P: Payload + ?Sized> Payload for &'_ P {
+    fn payload(&self) -> &payload {
+        (**self).payload()
+    }
+}
+
+impl<P: Payload + ?Sized> sealed::Sealed for &'_ mut P { }
+
+impl<P: Payload + ?Sized> Payload for &'_ mut P {
+    fn payload(&self) -> &payload {
+        (**self).payload()
+    }
+}
+
+impl<P: PayloadMut + ?Sized> PayloadMut for &'_ mut P {
+    fn payload_mut(&mut self) -> &mut payload {
+        (**self).payload_mut()
+    }
+
+    fn resize(&mut self, length: usize) -> Result<(), Error> {
+        (**self).resize(length)
     }
 }

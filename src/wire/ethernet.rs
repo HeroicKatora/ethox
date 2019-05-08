@@ -2,7 +2,7 @@ use core::ops;
 use core::fmt;
 use byteorder::{ByteOrder, NetworkEndian};
 
-use crate::wire::{self, Error, Result, Payload, payload};
+use crate::wire::{self, Error, Result, Payload, PayloadMut, payload};
 
 enum_with_unknown! {
     /// Ethernet protocol type.
@@ -81,8 +81,9 @@ impl fmt::Display for Address {
 
 /// A read/write wrapper around an Ethernet II frame buffer.
 #[derive(Debug, Clone)]
-pub struct Frame<T: AsRef<[u8]>> {
-    buffer: T
+pub struct Frame<T: Payload> {
+    buffer: T,
+    repr: Repr,
 }
 
 /// A byte sequence representing an Ethernet II frame.
@@ -107,14 +108,21 @@ impl ethernet {
     }
 
     pub fn new_checked(data: &[u8]) -> Result<&Self> {
-        let packet = Self::new_unchecked(data);
-        packet.check_len()?;
+        Self::new_unchecked(data).check_len()?;
         Ok(Self::new_unchecked(data))
     }
 
     pub fn new_checked_mut(data: &mut [u8]) -> Result<&mut Self> {
-        Frame::new_checked(&mut data[..])?;
+        Self::new_checked(&data[..])?;
         Ok(Self::new_unchecked_mut(data))
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
+        &mut self.0
     }
 
     /// Ensure that no accessor method will panic if called.
@@ -201,20 +209,23 @@ impl Payload for ethernet {
     }
 }
 
-impl<T: AsRef<[u8]>> Frame<T> {
-    /// Imbue a raw octet buffer with Ethernet frame structure.
-    pub fn new_unchecked(buffer: T) -> Frame<T> {
-        Frame { buffer }
-    }
-
+impl<T: Payload> Frame<T> {
     /// Shorthand for a combination of [new_unchecked] and [check_len].
     ///
     /// [new_unchecked]: #method.new_unchecked
     /// [check_len]: #method.check_len
     pub fn new_checked(buffer: T) -> Result<Frame<T>> {
-        ethernet::new_checked(buffer.as_ref())?;
-        let packet = Self::new_unchecked(buffer);
-        Ok(packet)
+        let frame = ethernet::new_checked(buffer.payload())?;
+        let repr = Repr::parse(frame)?;
+        Ok(Frame {
+            buffer,
+            repr,
+        })
+    }
+
+    /// Get the repr of the underlying frame.
+    pub fn repr(&self) -> Repr {
+        self.repr
     }
 
     /// Consumes the frame, returning the underlying buffer.
@@ -223,38 +234,38 @@ impl<T: AsRef<[u8]>> Frame<T> {
     }
 }
 
-impl<'a, T: AsRef<[u8]> + ?Sized> Frame<&'a T> {
+impl<'a, T: Payload + ?Sized> Frame<&'a T> {
     /// Return a pointer to the payload, without checking for 802.1Q.
     #[inline]
-    pub fn payload(&self) -> &'a [u8] {
-        let data = self.buffer.as_ref();
-        &data[field::PAYLOAD]
+    pub fn payload_bytes(&self) -> &'a [u8] {
+        &self.buffer.payload()[field::PAYLOAD]
     }
 }
 
-impl<T: AsRef<[u8]>> ops::Deref for Frame<T> {
+impl<T: Payload> ops::Deref for Frame<T> {
     type Target = ethernet;
 
     fn deref(&self) -> &ethernet {
         // We checked the length at construction.
-        ethernet::new_unchecked(self.buffer.as_ref())
+        ethernet::new_unchecked(self.buffer.payload())
     }
 }
 
-impl<T: AsRef<[u8]> + AsMut<[u8]>> ops::DerefMut for Frame<T> {
-    fn deref_mut(&mut self) -> &mut ethernet {
-        // We checked the length at construction.
-        ethernet::new_unchecked_mut(self.buffer.as_mut())
-    }
-}
-
-impl<T: AsRef<[u8]>> AsRef<[u8]> for Frame<T> {
+impl<T: Payload> AsRef<[u8]> for Frame<T> {
     fn as_ref(&self) -> &[u8] {
-        self.buffer.as_ref()
+        self.buffer.payload().into()
     }
 }
 
-impl<T: AsRef<[u8]>> fmt::Display for Frame<T> {
+impl<T: Payload> wire::sealed::Sealed for Frame<T> { }
+
+impl<T: Payload> Payload for Frame<T> {
+    fn payload(&self) -> &payload {
+        ethernet::payload(self).into()
+    }
+}
+
+impl<T: Payload> fmt::Display for Frame<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "EthernetII src={} dst={} type={}",
                self.src_addr(), self.dst_addr(), self.ethertype())
@@ -263,10 +274,10 @@ impl<T: AsRef<[u8]>> fmt::Display for Frame<T> {
 
 use super::pretty_print::{PrettyPrint, PrettyIndent};
 
-impl<T: AsRef<[u8]>> PrettyPrint for Frame<T> {
+impl PrettyPrint for ethernet {
     fn pretty_print(buffer: &AsRef<[u8]>, f: &mut fmt::Formatter,
                     indent: &mut PrettyIndent) -> fmt::Result {
-        let frame = match Frame::new_checked(buffer) {
+        let frame = match Frame::new_checked(buffer.as_ref()) {
             Err(err)  => return write!(f, "{}({})", indent, err),
             Ok(frame) => frame
         };
@@ -365,7 +376,7 @@ mod test_ipv4 {
 
     #[test]
     fn test_deconstruct() {
-        let frame = Frame::new_unchecked(&FRAME_BYTES[..]);
+        let frame = ethernet::new_unchecked(&FRAME_BYTES[..]);
         assert_eq!(frame.dst_addr(), Address([0x01, 0x02, 0x03, 0x04, 0x05, 0x06]));
         assert_eq!(frame.src_addr(), Address([0x11, 0x12, 0x13, 0x14, 0x15, 0x16]));
         assert_eq!(frame.ethertype(), EtherType::Ipv4);
@@ -375,12 +386,12 @@ mod test_ipv4 {
     #[test]
     fn test_construct() {
         let mut bytes = vec![0xa5; 64];
-        let mut frame = Frame::new_unchecked(&mut bytes);
+        let frame = ethernet::new_unchecked_mut(&mut bytes);
         frame.set_dst_addr(Address([0x01, 0x02, 0x03, 0x04, 0x05, 0x06]));
         frame.set_src_addr(Address([0x11, 0x12, 0x13, 0x14, 0x15, 0x16]));
         frame.set_ethertype(EtherType::Ipv4);
         frame.payload_mut().copy_from_slice(&PAYLOAD_BYTES[..]);
-        assert_eq!(&frame.into_inner()[..], &FRAME_BYTES[..]);
+        assert_eq!(frame.as_bytes(), &FRAME_BYTES[..]);
     }
 }
 
@@ -408,7 +419,7 @@ mod test_ipv6 {
 
     #[test]
     fn test_deconstruct() {
-        let frame = Frame::new_unchecked(&FRAME_BYTES[..]);
+        let frame = ethernet::new_unchecked(&FRAME_BYTES[..]);
         assert_eq!(frame.dst_addr(), Address([0x01, 0x02, 0x03, 0x04, 0x05, 0x06]));
         assert_eq!(frame.src_addr(), Address([0x11, 0x12, 0x13, 0x14, 0x15, 0x16]));
         assert_eq!(frame.ethertype(), EtherType::Ipv6);
@@ -418,12 +429,12 @@ mod test_ipv6 {
     #[test]
     fn test_construct() {
         let mut bytes = vec![0xa5; 54];
-        let mut frame = Frame::new_unchecked(&mut bytes);
+        let frame = ethernet::new_unchecked_mut(&mut bytes);
         frame.set_dst_addr(Address([0x01, 0x02, 0x03, 0x04, 0x05, 0x06]));
         frame.set_src_addr(Address([0x11, 0x12, 0x13, 0x14, 0x15, 0x16]));
         frame.set_ethertype(EtherType::Ipv6);
         assert_eq!(PAYLOAD_BYTES.len(), frame.payload_mut().len());
         frame.payload_mut().copy_from_slice(&PAYLOAD_BYTES[..]);
-        assert_eq!(&frame.into_inner()[..], &FRAME_BYTES[..]);
+        assert_eq!(frame.as_bytes(), &FRAME_BYTES[..]);
     }
 }

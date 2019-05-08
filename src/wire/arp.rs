@@ -22,7 +22,7 @@ enum_with_unknown! {
 
 /// A read/write wrapper around an Address Resolution Protocol packet buffer.
 #[derive(Debug, PartialEq, Clone)]
-pub struct Packet<T: AsRef<[u8]>> {
+pub struct Packet<T: AsRef<[u8]> + ?Sized> {
     buffer: T
 }
 
@@ -358,7 +358,7 @@ impl fmt::Display for Repr {
 
 use super::pretty_print::{PrettyPrint, PrettyIndent};
 
-impl<T: AsRef<[u8]>> PrettyPrint for Packet<T> {
+impl<T: AsRef<[u8]> + ?Sized> PrettyPrint for Packet<T> {
     fn pretty_print(buffer: &AsRef<[u8]>, f: &mut fmt::Formatter,
                     indent: &mut PrettyIndent) -> fmt::Result {
         match Packet::new_checked(buffer) {
