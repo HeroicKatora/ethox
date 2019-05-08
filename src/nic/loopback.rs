@@ -1,5 +1,6 @@
 use crate::managed::Slice;
 
+use super::common::EnqueueFlag;
 use super::{Personality, Recv, Send, Result};
 
 pub struct Loopback<'r> {
@@ -9,13 +10,9 @@ pub struct Loopback<'r> {
     sent: usize,
 }
 
-pub struct RecvPacket<'a>(RecvHandle, Slice<'a, u8>);
+pub struct Handle<'a>(&'a mut EnqueueFlag);
 
-pub struct SendPacket<'a>(SendHandle, Slice<'a, u8>);
-
-pub struct RecvHandle;
-
-pub struct SendHandle(bool);
+pub struct Packet<'a>(Handle<'a>, &'a mut [u8]);
 
 struct AckRecv<'a>(&'a mut usize, usize, &'a mut usize);
 
@@ -40,7 +37,7 @@ impl<'r> Loopback<'r> {
         }
     }
 
-    fn next_recv(&mut self) -> Option<(AckRecv, Slice<u8>)> {
+    fn next_recv(&mut self) -> Option<(AckRecv, &mut [u8])> {
         if self.sent == 0 {
             return None
         }
@@ -49,10 +46,10 @@ impl<'r> Loopback<'r> {
         let buffer = self.buffer_at(self.next_recv);
         let buffer = &mut self.buffer[buffer];
         let ack = AckRecv(&mut self.next_recv, next, &mut self.sent);
-        Some((ack, buffer.into()))
+        Some((ack, buffer))
     }
 
-    fn next_send(&mut self) -> Option<(AckSend, Slice<u8>)> {
+    fn next_send(&mut self) -> Option<(AckSend, &mut [u8])> {
         if self.sent == self.buffer_count() {
             return None
         }
@@ -61,7 +58,7 @@ impl<'r> Loopback<'r> {
         let buffer = self.buffer_at(send);
         let buffer = &mut self.buffer[buffer];
         let ack = AckSend(&mut self.sent);
-        Some((ack, buffer.into()))
+        Some((ack, buffer))
     }
 
     fn buffer_count(&self) -> usize {
@@ -80,79 +77,68 @@ impl<'r> Loopback<'r> {
     }
 }
 
-impl<'a, 'r> super::Device<'a> for Loopback<'r> 
-    where 'r: 'a
-{
-    type Send = SendPacket<'a>;
-    type Recv = RecvPacket<'a>;
-
-    fn personality(&self) -> Personality {
+impl<'r> Loopback<'r> {
+    pub fn personality(&self) -> Personality {
         Personality::baseline()
     }
 
-    fn tx<R: Send<'a, Self::Send>>(&'a mut self, max: usize, mut sender: R) -> Result<usize> {
-        if max == 0 {
-            return Ok(0)
+    pub fn tx<R>(&mut self, max: usize, mut sender: R) -> Result<usize> 
+        where R: for<'a> Send<'a, Packet<'a>>
+    {
+        let mut count = 0;
+
+        for _ in 0..max {
+            let (ack, packet) = match self.next_send() {
+                None => return Ok(count),
+                Some(packet) => packet,
+            };
+
+            let mut flag = EnqueueFlag::SetTrue(false);
+            sender.send(Packet(Handle(&mut flag), packet));
+
+            if flag.was_sent() {
+                ack.ack();
+                count += 1;
+            }
         }
 
-        let (ack, packet) = match self.next_send() {
-            None => return Ok(0),
-            Some(packet) => packet,
-        };
+        Ok(count)
+    }
 
-        let mut packet = SendPacket(SendHandle(false), packet);
-        sender.send(&mut packet);
-        let sent = if packet.0.sent() {
+    pub fn rx<R>(&mut self, max: usize, mut receptor: R) -> Result<usize> 
+        where R: for<'a> Recv<'a, Packet<'a>>
+    {
+        let mut count = 0;
+
+        for _ in 0..max {
+            let (ack, packet) = match self.next_recv() {
+                None => return Ok(count),
+                Some(packet) => packet,
+            };
+
+            let mut flag = EnqueueFlag::NotPossible;
+            receptor.receive(Packet(Handle(&mut flag), packet));
             ack.ack();
-            1
-        } else {
-            0
-        };
-        Ok(sent)
-    }
 
-    fn rx<R: Recv<'a, Self::Recv>>(&'a mut self, max: usize, mut receptor: R) -> Result<usize> {
-        if max == 0 {
-            return Ok(0)
+            count += 1;
         }
 
-        let (ack, packet) = match self.next_recv() {
-            None => return Ok(0),
-            Some(packet) => packet,
-        };
-
-        let mut packet = RecvPacket(RecvHandle, packet);
-        receptor.receive(&mut packet);
-        ack.ack();
-        Ok(1)
+        Ok(count)
     }
 }
 
-impl<'a, 'p> super::Packet<'a> for RecvPacket<'p> where 'a: 'p {
-    type Handle = RecvHandle;
+impl<'a, 'p> super::Packet<'a> for Packet<'p> where 'p: 'a {
+    type Handle = Handle<'p>;
     type Payload = [u8];
 
-    fn separate(&mut self) -> (&mut Self::Handle, &mut Self::Payload) {
-        (&mut self.0, self.1.as_mut_slice())
+    fn separate(self) -> (Self::Handle, &'a mut Self::Payload) {
+        (self.0, self.1)
     }
 }
 
-impl<'a, 'p> super::Packet<'a> for SendPacket<'p> where 'p: 'a {
-    type Handle = SendHandle;
-    type Payload = [u8];
-
-    fn separate(&mut self) -> (&mut Self::Handle, &mut Self::Payload) {
-        (&mut self.0, self.1.as_mut_slice())
-    }
-}
-
-impl SendHandle {
-    fn send(&mut self) {
-        self.0 = true;
-    }
-
-    fn sent(&self) -> bool {
-        self.0
+impl super::Handle for Handle<'_> {
+    fn queue(&mut self) -> Result<()> {
+        self.0.queue()
     }
 }
 
@@ -166,18 +152,6 @@ impl AckRecv<'_> {
 impl AckSend<'_> {
     fn ack(self) {
         *self.0 += 1;
-    }
-}
-
-impl super::Handle for RecvHandle {
-    fn queue(&mut self) -> super::Result<()> {
-        Err(super::Error::Illegal)
-    }
-}
-
-impl super::Handle for SendHandle {
-    fn queue(&mut self) -> super::Result<()> {
-        Ok(self.send())
     }
 }
 

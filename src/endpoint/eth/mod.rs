@@ -35,10 +35,10 @@ impl Endpoint {
     }
 }
 
-impl<'a, P: nic::Packet<'a> + ?Sized, H> nic::Recv<'a, P> for Receiver<'_, H> 
-    where H: for<'b> Recv<&'b mut P::Payload>
+impl<'a, P: nic::Packet<'a>, H> nic::Recv<'a, P> for Receiver<'_, H> 
+    where H: Recv<&'a mut P::Payload>
 {
-    fn receive(&mut self, packet: &mut P) {
+    fn receive(&mut self, packet: P) {
         let (_, payload) = packet.separate();
         let frame = match EthernetFrame::new_checked(payload) {
             Ok(frame) => frame,
