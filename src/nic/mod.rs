@@ -27,7 +27,7 @@ pub trait Packet<'a> {
     ///
     /// Note that while the reference to the payload must be mutable, the payload itself must not
     /// be a reference to mutable data.
-    fn separate(&'a mut self) -> (&'a mut Self::Handle, &'a mut Self::Payload);
+    fn separate(&mut self) -> (&mut Self::Handle, &mut Self::Payload);
 }
 
 pub trait Handle {
@@ -66,12 +66,12 @@ pub trait Recv<'a, P: Packet<'a> + ?Sized> {
     ///
     /// Some `Packet` types will allow you not only to access but also modify their contents (i.e.
     /// they also implement `AsMut<[u8]>`
-    fn receive(&mut self, packet: &'a mut P);
+    fn receive(&mut self, packet: &mut P);
 
     /// Vectored receive.
     ///
     /// The default implementation will simply receive all packets in sequence.
-    fn receivev(&mut self, packets: &'a mut [P])
+    fn receivev(&mut self, packets: &mut [P])
         where P: Sized,
     {
         for packet in packets.iter_mut() {
@@ -81,9 +81,9 @@ pub trait Recv<'a, P: Packet<'a> + ?Sized> {
 }
 
 pub trait Send<'a, P: Packet<'a> + ?Sized> {
-    fn send(&mut self, packet: &'a mut P);
+    fn send(&mut self, packet: &mut P);
 
-    fn sendv(&mut self, packets: &'a mut [P])
+    fn sendv(&mut self, packets: &mut [P])
         where P: Sized,
     {
         for packet in packets.iter_mut() {

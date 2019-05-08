@@ -38,7 +38,7 @@ impl<'a, 'p> super::Packet<'a> for RecvPacket<'p> where 'a: 'p {
     type Handle = RecvHandle;
     type Payload = [u8];
 
-    fn separate(&'a mut self) -> (&'a mut Self::Handle, &'a mut Self::Payload) {
+    fn separate(&mut self) -> (&mut Self::Handle, &mut Self::Payload) {
         (&mut self.0, self.1.as_mut_slice())
     }
 }
