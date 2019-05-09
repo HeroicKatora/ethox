@@ -1,57 +1,63 @@
 //! The ethernet layer.
-use crate::wire::{EthernetAddress, EthernetFrame, EthernetRepr, Payload};
-use crate::nic;
+use crate::endpoint::Result;
+use crate::wire::{EthernetFrame, EthernetRepr, Payload, PayloadMut};
 
-pub struct Sock {
+pub mod simple;
+
+pub trait Recv<H: Handle, P: Payload> {
+    fn receive(&mut self, frame: Packet<H, P>);
 }
 
-pub trait Recv<C: Payload + ?Sized> {
-    fn receive(&mut self, repr: EthernetRepr, frame: EthernetFrame<&mut C>);
+pub trait Send<H: Handle, P: Payload> {
+    fn send(&mut self, raw: RawPacket<H, P>);
 }
 
-pub struct Endpoint {
-    /// Our own address.
-    ///
-    /// We ignored any packets with mismatching destination.
-    addr: EthernetAddress,
+/// A trait-object to something implementing the eth-layer.
+pub trait Handle {
+    /// Initialize the frame and return the supposed representation.
+    fn initialize<P: PayloadMut>(&mut self, frame: &mut P) -> Result<EthernetRepr>;
 }
 
-/// An endpoint borrowed for receiving.
-///
-/// Dispatching to higher protocols is configurerd here, and not in the endpoint state.
-pub struct Receiver<'a, H> {
-    inner: &'a Endpoint,
-    handler: H,
+pub struct Packet<'a, H: Handle, P: Payload> {
+    handle: &'a mut H,
+    frame: EthernetFrame<P>,
 }
 
-impl Endpoint {
-    pub fn recv<H>(&self, handler: H) -> Receiver<H> {
-        Receiver { inner: self, handler, }
-    }
-
-    fn accepts(&self, dst_addr: EthernetAddress) -> bool {
-        // TODO: broadcast and multicast
-        self.addr == dst_addr
-    }
+pub struct RawPacket<'a, H: Handle, P: Payload> {
+    handle: &'a mut H,
+    payload: P,
 }
 
-impl<H, P, T> nic::Recv<H, P> for Receiver<'_, T>
-where
-    H: nic::Handle + ?Sized,
-    P: Payload + ?Sized,
-    T: Recv<P>,
-{
-    fn receive(&mut self, packet: nic::Packet<H, P>) {
-        let frame = match EthernetFrame::new_checked(packet.payload) {
-            Ok(frame) => frame,
-            Err(_) => return,
-        };
-
-        let repr = frame.repr();
-        if !self.inner.accepts(repr.dst_addr) {
-            return
+impl<'a, H: Handle, P: Payload> Packet<'a, H, P> {
+    pub fn new(handle: &'a mut H, frame: EthernetFrame<P>) -> Self {
+        Packet {
+            handle,
+            frame,
         }
+    }
 
-        self.handler.receive(repr, frame)
+    pub fn deinit(self) -> RawPacket<'a, H, P> {
+        RawPacket {
+            handle: self.handle,
+            payload: self.frame.into_inner(),
+        }
+    }
+}
+
+impl<'a, H: Handle, P: Payload + PayloadMut> RawPacket<'a, H, P> {
+    pub fn new(handle: &'a mut H, payload: P) -> Self {
+        RawPacket {
+            handle,
+            payload,
+        }
+    }
+
+    pub fn prepare(self) -> Result<Packet<'a, H, P>> {
+        let mut payload = self.payload;
+        let repr = self.handle.initialize(&mut payload)?;
+        Ok(Packet {
+            handle: self.handle,
+            frame: EthernetFrame::new_unchecked(payload, repr),
+        })
     }
 }

@@ -223,6 +223,18 @@ impl<T: Payload> Frame<T> {
         })
     }
 
+    /// Constructs a frame with assumed representation.
+    ///
+    /// The validity of the frame is never a safety invariant but wrong data can still lead to
+    /// inconsistent handling. In particular, wrong assumptions on the length may panic at runtime
+    /// due to bounds checks.
+    pub fn new_unchecked(buffer: T, repr: Repr) -> Self {
+        Frame {
+            buffer,
+            repr,
+        }
+    }
+
     /// Get the repr of the underlying frame.
     pub fn repr(&self) -> Repr {
         self.repr
