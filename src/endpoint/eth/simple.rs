@@ -32,11 +32,24 @@ pub struct WithSender {
     from: EthernetAddress,
     to: Option<EthernetAddress>,
     ethertype: Option<EthernetProtocol>,
+    inited: bool,
 }
 
+pub struct FnHandle<F>(pub F);
+
 impl Endpoint {
+    pub fn new(addr: EthernetAddress) -> Self {
+        Endpoint {
+            addr,
+        }
+    }
+
     pub fn recv<H>(&self, handler: H) -> Receiver<H> {
         Receiver { inner: self, eth_handler: NoHandler, handler, }
+    }
+
+    pub fn recv_with<H>(&self, handler: H) -> Receiver<FnHandle<H>> {
+        self.recv(FnHandle(handler))
     }
 
     pub fn send<H>(&self, handler: H) -> Sender<H> {
@@ -44,14 +57,29 @@ impl Endpoint {
             from: self.addr,
             to: None,
             ethertype: None,
+            inited: false,
         };
 
         Sender { _inner: self, eth_handler, handler, }
     }
 
+    pub fn send_with<H>(&self, handler: H) -> Sender<FnHandle<H>> {
+        self.send(FnHandle(handler))
+    }
+
     fn accepts(&self, dst_addr: EthernetAddress) -> bool {
         // TODO: broadcast and multicast
         self.addr == dst_addr
+    }
+}
+
+impl WithSender {
+    pub fn set_dst_addr(&mut self, addr: EthernetAddress) {
+        self.to = Some(addr)
+    }
+
+    pub fn set_ethertype(&mut self, ethertype: EthernetProtocol) {
+        self.ethertype = Some(ethertype)
     }
 }
 
@@ -66,6 +94,7 @@ impl Handle for WithSender {
     fn initialize<P: PayloadMut>(&mut self, _: &mut P) -> Result<EthernetRepr> {
         let dst_addr = self.to.ok_or(Error::Illegal)?;
         let ethertype = self.ethertype.ok_or(Error::Illegal)?;
+        self.inited = true;
         Ok(EthernetRepr {
             src_addr: self.from,
             dst_addr,
@@ -103,7 +132,61 @@ where
     T: for<'a> Send<WithSender, &'a mut P>,
 {
     fn send(&mut self, packet: nic::Packet<H, P>) {
+        self.eth_handler.inited = false;
+        let handle = packet.handle;
         let packet = RawPacket::new(&mut self.eth_handler, packet.payload);
         self.handler.send(packet);
+        // FIXME: should be part of Handler::initialize
+        let _ = handle.queue();
+    }
+}
+
+impl<'a, H: Handle, P: Payload, F> Recv<H, &'a mut P> for FnHandle<F>
+    where F: FnMut(Packet<H, &mut P>)
+{
+    fn receive(&mut self, frame: Packet<H, &'a mut P>) {
+        self.0(frame)
+    }
+}
+
+impl<'a, H: Handle, P: Payload, F> Send<H, &'a mut P> for FnHandle<F>
+    where F: FnMut(RawPacket<H, &mut P>)
+{
+    fn send(&mut self, frame: RawPacket<H, &'a mut P>) {
+        self.0(frame)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::managed::Slice;
+    use crate::nic::{external::External, Device};
+
+    const MAC_ADDR_1: EthernetAddress = EthernetAddress([0, 1, 2, 3, 4, 5]);
+
+    static PAYLOAD_BYTES: [u8; 50] =
+        [0xaa, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+         0x00, 0xff];
+
+    fn simple_send<P: Payload + PayloadMut>(mut frame: RawPacket<WithSender, &mut P>) {
+        frame.handle().set_dst_addr(MAC_ADDR_1);
+        frame.handle().set_ethertype(EthernetProtocol::Unknown(0xBEEF));
+    }
+
+    #[test]
+    fn simple() {
+        let mut endpoint = Endpoint::new(MAC_ADDR_1);
+        let mut nic = External::new_send(Slice::One(vec![0; 1024]));
+        let sent = nic.tx(
+            1,
+            endpoint
+                .send_with(simple_send));
+        assert_eq!(sent, Ok(1));
     }
 }

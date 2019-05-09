@@ -36,6 +36,14 @@ impl<'a, H: Handle, P: Payload> Packet<'a, H, P> {
         }
     }
 
+    pub fn handle(&mut self) -> &mut H {
+        self.handle
+    }
+
+    pub fn frame(&mut self) -> &mut EthernetFrame<P> {
+        &mut self.frame
+    }
+
     pub fn deinit(self) -> RawPacket<'a, H, P> {
         RawPacket {
             handle: self.handle,
@@ -50,6 +58,14 @@ impl<'a, H: Handle, P: Payload + PayloadMut> RawPacket<'a, H, P> {
             handle,
             payload,
         }
+    }
+
+    pub fn handle(&mut self) -> &mut H {
+        self.handle
+    }
+
+    pub fn payload(&mut self) -> &mut P {
+        &mut self.payload
     }
 
     pub fn prepare(self) -> Result<Packet<'a, H, P>> {

@@ -51,6 +51,17 @@ pub type Result<T> = core::result::Result<T, Error>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Error {
+    /// The operation was not permitted.
+    ///
+    /// Returned when the device, endpoint, receiver or sender does not allow or implement an
+    /// operation.
     Illegal,
+
+    /// Not enough space for the requested packet.
+    ///
+    /// May also be returned when trying to resize a packet but the requested length can not be
+    /// fulfilled. In contrast to `Illegal` this would signal that a smaller size may be possible.
+    PacketTooLarge,
+
     // TODO
 }
