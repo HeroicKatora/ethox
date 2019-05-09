@@ -211,3 +211,24 @@ impl PayloadMut for Slice<'_, u8> {
         result
     }
 }
+
+#[cfg(any(feature = "std", test))]
+mod std_impls {
+    impl super::sealed::Sealed for Vec<u8> { }
+
+    impl super::Payload for Vec<u8> {
+        fn payload(&self) -> &super::payload {
+            self.as_slice().into()
+        }
+    }
+
+    impl super::PayloadMut for Vec<u8> {
+        fn payload_mut(&mut self) -> &mut super::payload {
+            self.as_mut_slice().into()
+        }
+
+        fn resize(&mut self, length: usize) -> Result<(), super::Error> {
+            Ok(self.resize(length, 0u8))
+        }
+    }
+}
