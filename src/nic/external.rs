@@ -19,8 +19,6 @@ pub struct External<T> {
 
     /// The index of the split.
     split: usize,
-
-    flag: EnqueueFlag,
 }
 
 impl<T> External<T> {
@@ -48,7 +46,6 @@ impl<T, P> External<T> where T: Deref<Target=[P]> {
             recv: 0,
             sent: 0,
             split: 0,
-            flag: EnqueueFlag::NotPossible,
         }
     }
 
@@ -60,7 +57,6 @@ impl<T, P> External<T> where T: Deref<Target=[P]> {
             recv: 0,
             sent: 0,
             split: len,
-            flag: EnqueueFlag::NotPossible,
         }
     }
 
@@ -115,7 +111,7 @@ where
             payload: buffer,
         });
 
-        if self.flag.was_sent() {
+        if flag.0.was_sent() {
             self.sent += 1;
             Ok(1)
         } else {
