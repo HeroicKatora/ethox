@@ -2,7 +2,7 @@ use core::ops;
 use core::fmt;
 use byteorder::{ByteOrder, NetworkEndian};
 
-use crate::wire::{self, Error, Result, Payload, PayloadMut, payload};
+use crate::wire::{self, Error, Result, Payload, PayloadError, PayloadMut, payload};
 
 enum_with_unknown! {
     /// Ethernet protocol type.
@@ -179,12 +179,12 @@ impl ethernet {
     }
 
     /// Return the payload as a byte slice.
-    pub fn payload(&self) -> &[u8] {
+    pub fn payload_slice(&self) -> &[u8] {
         &self.0[field::PAYLOAD]
     }
 
     /// Return the payload as a mutable byte slice.
-    pub fn payload_mut(&mut self) -> &mut [u8] {
+    pub fn payload_mut_slice(&mut self) -> &mut [u8] {
         &mut self.0[field::PAYLOAD]
     }
 }
@@ -202,12 +202,6 @@ impl AsMut<[u8]> for ethernet {
 }
 
 impl wire::sealed::Sealed for ethernet { }
-
-impl Payload for ethernet {
-    fn payload(&self) -> &payload {
-        self.payload().into()
-    }
-}
 
 impl<T: Payload> Frame<T> {
     /// Shorthand for a combination of [new_unchecked] and [check_len].
@@ -244,6 +238,18 @@ impl<T: Payload> Frame<T> {
     pub fn into_inner(self) -> T {
         self.buffer
     }
+
+    /// Return the payload as a byte slice.
+    pub fn payload_slice(&self) -> &[u8] {
+        &self.0[field::PAYLOAD]
+    }
+
+    /// Return the payload as a mutable byte slice.
+    pub fn payload_mut_slice(&mut self) -> &mut [u8] where T: PayloadMut {
+        // Keeps header values unchanged.
+        ethernet::new_unchecked_mut(self.buffer.payload_mut())
+            .payload_mut_slice()
+    }
 }
 
 impl<'a, T: Payload + ?Sized> Frame<&'a T> {
@@ -273,7 +279,17 @@ impl<T: Payload> wire::sealed::Sealed for Frame<T> { }
 
 impl<T: Payload> Payload for Frame<T> {
     fn payload(&self) -> &payload {
-        ethernet::payload(self).into()
+        self.payload_slice().into()
+    }
+}
+
+impl<T: Payload + PayloadMut> PayloadMut for Frame<T> {
+    fn payload_mut(&mut self) -> &mut payload {
+        self.payload_mut_slice().into()
+    }
+
+    fn resize(&mut self, length: usize) -> core::result::Result<(), PayloadError> {
+        self.buffer.resize(length)
     }
 }
 
@@ -392,7 +408,7 @@ mod test_ipv4 {
         assert_eq!(frame.dst_addr(), Address([0x01, 0x02, 0x03, 0x04, 0x05, 0x06]));
         assert_eq!(frame.src_addr(), Address([0x11, 0x12, 0x13, 0x14, 0x15, 0x16]));
         assert_eq!(frame.ethertype(), EtherType::Ipv4);
-        assert_eq!(frame.payload(), &PAYLOAD_BYTES[..]);
+        assert_eq!(frame.payload_slice(), &PAYLOAD_BYTES[..]);
     }
 
     #[test]
@@ -402,7 +418,7 @@ mod test_ipv4 {
         frame.set_dst_addr(Address([0x01, 0x02, 0x03, 0x04, 0x05, 0x06]));
         frame.set_src_addr(Address([0x11, 0x12, 0x13, 0x14, 0x15, 0x16]));
         frame.set_ethertype(EtherType::Ipv4);
-        frame.payload_mut().copy_from_slice(&PAYLOAD_BYTES[..]);
+        frame.payload_mut_slice().copy_from_slice(&PAYLOAD_BYTES[..]);
         assert_eq!(frame.as_bytes(), &FRAME_BYTES[..]);
     }
 }
@@ -435,7 +451,7 @@ mod test_ipv6 {
         assert_eq!(frame.dst_addr(), Address([0x01, 0x02, 0x03, 0x04, 0x05, 0x06]));
         assert_eq!(frame.src_addr(), Address([0x11, 0x12, 0x13, 0x14, 0x15, 0x16]));
         assert_eq!(frame.ethertype(), EtherType::Ipv6);
-        assert_eq!(frame.payload(), &PAYLOAD_BYTES[..]);
+        assert_eq!(frame.payload_slice(), &PAYLOAD_BYTES[..]);
     }
 
     #[test]
@@ -445,8 +461,8 @@ mod test_ipv6 {
         frame.set_dst_addr(Address([0x01, 0x02, 0x03, 0x04, 0x05, 0x06]));
         frame.set_src_addr(Address([0x11, 0x12, 0x13, 0x14, 0x15, 0x16]));
         frame.set_ethertype(EtherType::Ipv6);
-        assert_eq!(PAYLOAD_BYTES.len(), frame.payload_mut().len());
-        frame.payload_mut().copy_from_slice(&PAYLOAD_BYTES[..]);
+        assert_eq!(PAYLOAD_BYTES.len(), frame.payload_mut_slice().len());
+        frame.payload_mut_slice().copy_from_slice(&PAYLOAD_BYTES[..]);
         assert_eq!(frame.as_bytes(), &FRAME_BYTES[..]);
     }
 }
