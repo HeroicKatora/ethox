@@ -32,7 +32,6 @@ pub struct WithSender {
     from: EthernetAddress,
     to: Option<EthernetAddress>,
     ethertype: Option<EthernetProtocol>,
-    inited: bool,
 }
 
 pub struct FnHandle<F>(pub F);
@@ -57,7 +56,6 @@ impl Endpoint {
             from: self.addr,
             to: None,
             ethertype: None,
-            inited: false,
         };
 
         Sender { _inner: self, eth_handler, handler, }
@@ -84,17 +82,20 @@ impl WithSender {
 }
 
 impl Handle for NoHandler {
-    fn initialize<P: PayloadMut>(&mut self, _: &mut P) -> Result<EthernetRepr> {
+    fn initialize<P: PayloadMut>(&mut self, _: &mut nic::Handle, _: &mut P) -> Result<EthernetRepr> {
         // this context is not able to construct immediate responses.
         Err(Error::Illegal)
     }
 }
 
 impl Handle for WithSender {
-    fn initialize<P: PayloadMut>(&mut self, _: &mut P) -> Result<EthernetRepr> {
+    fn initialize<P: PayloadMut>(&mut self, nic: &mut nic::Handle, _: &mut P) -> Result<EthernetRepr> {
         let dst_addr = self.to.ok_or(Error::Illegal)?;
         let ethertype = self.ethertype.ok_or(Error::Illegal)?;
-        self.inited = true;
+
+        // We did our preconditions, now try to actually get that buffer ready to send.
+        nic.queue()?;
+
         Ok(EthernetRepr {
             src_addr: self.from,
             dst_addr,
@@ -105,7 +106,7 @@ impl Handle for WithSender {
 
 impl<H, P, T> nic::Recv<H, P> for Receiver<'_, T>
 where
-    H: nic::Handle + ?Sized,
+    H: nic::Handle,
     P: Payload + ?Sized,
     T: for<'a> Recv<NoHandler, &'a mut P>,
 {
@@ -120,24 +121,26 @@ where
             return
         }
 
-        let packet = Packet::new(&mut self.eth_handler, frame);
+        let packet = Packet::new(
+            packet.handle,
+            &mut self.eth_handler,
+            frame);
         self.handler.receive(packet)
     }
 }
 
 impl<H, P, T> nic::Send<H, P> for Sender<'_, T>
 where
-    H: nic::Handle + ?Sized,
+    H: nic::Handle,
     P: Payload + PayloadMut + ?Sized,
     T: for<'a> Send<WithSender, &'a mut P>,
 {
     fn send(&mut self, packet: nic::Packet<H, P>) {
-        self.eth_handler.inited = false;
-        let handle = packet.handle;
-        let packet = RawPacket::new(&mut self.eth_handler, packet.payload);
+        let packet = RawPacket::new(
+            packet.handle,
+            &mut self.eth_handler,
+            packet.payload);
         self.handler.send(packet);
-        // FIXME: should be part of Handler::initialize
-        let _ = handle.queue();
     }
 }
 
@@ -177,11 +180,17 @@ mod tests {
     fn simple_send<P: Payload + PayloadMut>(mut frame: RawPacket<WithSender, &mut P>) {
         frame.handle().set_dst_addr(MAC_ADDR_1);
         frame.handle().set_ethertype(EthernetProtocol::Unknown(0xBEEF));
+        let mut prepared = frame.prepare()
+            .expect("Preparing frame mustn't fail in controlled environment");
+        prepared
+            .frame()
+            .payload_mut_slice()[..50] //FIXME: this should not be necessary, resize first.
+            .copy_from_slice(&PAYLOAD_BYTES[..]);
     }
 
     #[test]
     fn simple() {
-        let mut endpoint = Endpoint::new(MAC_ADDR_1);
+        let endpoint = Endpoint::new(MAC_ADDR_1);
         let mut nic = External::new_send(Slice::One(vec![0; 1024]));
         let sent = nic.tx(
             1,
