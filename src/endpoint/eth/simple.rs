@@ -1,5 +1,5 @@
 use crate::endpoint::{Error, Result};
-use crate::wire::{EthernetAddress, EthernetFrame, EthernetRepr, EthernetProtocol, Payload, PayloadMut};
+use crate::wire::{ethernet_frame, EthernetAddress, EthernetFrame, EthernetRepr, EthernetProtocol, Payload, PayloadMut};
 use crate::nic;
 
 use super::{Handle, Packet, RawPacket, Recv, Send};
@@ -32,6 +32,7 @@ pub struct WithSender {
     from: EthernetAddress,
     to: Option<EthernetAddress>,
     ethertype: Option<EthernetProtocol>,
+    payload: usize,
 }
 
 pub struct FnHandle<F>(pub F);
@@ -56,6 +57,7 @@ impl Endpoint {
             from: self.addr,
             to: None,
             ethertype: None,
+            payload: 0,
         };
 
         Sender { _inner: self, eth_handler, handler, }
@@ -73,11 +75,15 @@ impl Endpoint {
 
 impl WithSender {
     pub fn set_dst_addr(&mut self, addr: EthernetAddress) {
-        self.to = Some(addr)
+        self.to = Some(addr);
     }
 
     pub fn set_ethertype(&mut self, ethertype: EthernetProtocol) {
-        self.ethertype = Some(ethertype)
+        self.ethertype = Some(ethertype);
+    }
+
+    pub fn set_payload_len(&mut self, length: usize) {
+        self.payload = length;
     }
 }
 
@@ -89,10 +95,12 @@ impl Handle for NoHandler {
 }
 
 impl Handle for WithSender {
-    fn initialize<P: PayloadMut>(&mut self, nic: &mut nic::Handle, _: &mut P) -> Result<EthernetRepr> {
+    fn initialize<P: PayloadMut>(&mut self, nic: &mut nic::Handle, payload: &mut P) -> Result<EthernetRepr> {
         let dst_addr = self.to.ok_or(Error::Illegal)?;
         let ethertype = self.ethertype.ok_or(Error::Illegal)?;
 
+        let real_len = ethernet_frame::buffer_len(self.payload);
+        payload.resize(real_len)?;
         // We did our preconditions, now try to actually get that buffer ready to send.
         nic.queue()?;
 
@@ -180,11 +188,12 @@ mod tests {
     fn simple_send<P: Payload + PayloadMut>(mut frame: RawPacket<WithSender, &mut P>) {
         frame.handle().set_dst_addr(MAC_ADDR_1);
         frame.handle().set_ethertype(EthernetProtocol::Unknown(0xBEEF));
+        frame.handle().set_payload_len(PAYLOAD_BYTES.len());
         let mut prepared = frame.prepare()
             .expect("Preparing frame mustn't fail in controlled environment");
         prepared
             .frame()
-            .payload_mut_slice()[..50] //FIXME: this should not be necessary, resize first.
+            .payload_mut_slice()
             .copy_from_slice(&PAYLOAD_BYTES[..]);
     }
 

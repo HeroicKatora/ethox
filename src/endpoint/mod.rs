@@ -61,7 +61,28 @@ pub enum Error {
     ///
     /// May also be returned when trying to resize a packet but the requested length can not be
     /// fulfilled. In contrast to `Illegal` this would signal that a smaller size may be possible.
-    PacketTooLarge,
+    BadSize,
 
     // TODO
+}
+
+/// Can convert from a wire error.
+///
+/// This indicates some layer tried to operate on a packet but failed.
+impl From<crate::wire::Error> for Error {
+    fn from(_: crate::wire::Error) -> Self {
+        Error::Illegal
+    }
+}
+
+/// Can convert from a payload error.
+///
+/// One common cause is failure to resize the buffer to the necessary size.
+impl From<crate::wire::PayloadError> for Error {
+    fn from(err: crate::wire::PayloadError) -> Self {
+        use crate::wire::PayloadError;
+        match err {
+            PayloadError::BadSize => Error::BadSize,
+        }
+    }
 }
