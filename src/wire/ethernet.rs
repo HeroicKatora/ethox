@@ -289,7 +289,7 @@ impl<T: Payload + PayloadMut> PayloadMut for Frame<T> {
     }
 
     fn resize(&mut self, length: usize) -> core::result::Result<(), PayloadError> {
-        self.buffer.resize(length)
+        unimplemented!()
     }
 }
 
@@ -318,7 +318,7 @@ impl PrettyPrint for ethernet {
             }
             EtherType::Ipv4 => {
                 indent.increase(f)?;
-                super::Ipv4Packet::<&[u8]>::pretty_print(&frame.payload(), f, indent)
+                super::ipv4_frame::pretty_print(&frame.payload(), f, indent)
             }
             EtherType::Ipv6 => {
                 indent.increase(f)?;

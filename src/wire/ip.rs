@@ -2,7 +2,7 @@ use core::fmt;
 use core::convert::From;
 
 use crate::wire::{Error, Checksum, Result};
-use super::{Ipv4Address, Ipv4Packet, Ipv4Repr, Ipv4Cidr};
+use super::{Ipv4Address, Ipv4Packet, Ipv4Repr, Ipv4Cidr, ipv4_frame};
 use super::{Ipv6Address, Ipv6Cidr, Ipv6Packet, Ipv6Repr};
 
 /// Internet protocol version.
@@ -665,11 +665,11 @@ impl Repr {
     /// The checksum setting is passed to the specific representation for IPv4.
     /// # Panics
     /// This function panics if invoked on an unspecified representation.
-    pub fn emit<T: AsRef<[u8]> + AsMut<[u8]>>(&self, buffer: T, checksum: Checksum) {
+    pub fn emit<T: AsRef<[u8]> + AsMut<[u8]>>(&self, mut buffer: T, checksum: Checksum) {
         match self {
             Repr::Unspecified { .. } => panic!("unspecified IP representation"),
             Repr::Ipv4(repr) => {
-                repr.emit(&mut Ipv4Packet::new_unchecked(buffer), checksum)
+                repr.emit(ipv4_frame::new_unchecked_mut(buffer.as_mut()), checksum)
             },
             Repr::Ipv6(repr) => {
                 repr.emit(&mut Ipv6Packet::new_unchecked(buffer))

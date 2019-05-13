@@ -1,8 +1,11 @@
 use core::fmt;
+use core::ops;
 use byteorder::{ByteOrder, NetworkEndian};
 
+use super::{sealed, Payload, PayloadError, PayloadMut, payload};
 use super::{Error, Checksum, Result};
 use super::ip::{checksum, pretty_print_ip_payload};
+use super::field::Field;
 
 pub use super::IpProtocol as Protocol;
 
@@ -225,12 +228,16 @@ impl fmt::Display for Cidr {
 
 /// A read/write wrapper around an Internet Protocol version 4 packet buffer.
 #[derive(Debug, PartialEq, Clone)]
-pub struct Packet<T: AsRef<[u8]>> {
-    buffer: T
+pub struct Packet<T: Payload> {
+    buffer: T,
+    repr: Repr,
 }
 
+/// A byte sequence representing an IPv4 packet.
+byte_wrapper!(ipv4);
+
 mod field {
-    use crate::wire::field::*;
+    use crate::wire::field::Field;
 
     pub const VER_IHL:  usize = 0;
     pub const DSCP_ECN: usize = 1;
@@ -244,20 +251,32 @@ mod field {
     pub const DST_ADDR: Field = 16..20;
 }
 
-impl<T: AsRef<[u8]>> Packet<T> {
+impl ipv4 {
     /// Imbue a raw octet buffer with IPv4 packet structure.
-    pub fn new_unchecked(buffer: T) -> Packet<T> {
-        Packet { buffer }
+    pub fn new_unchecked(buffer: &[u8]) -> &ipv4 {
+        Self::__from_macro_new_unchecked(buffer)
+    }
+
+    pub fn new_unchecked_mut(buffer: &mut [u8]) -> &mut ipv4 {
+        Self::__from_macro_new_unchecked_mut(buffer)
     }
 
     /// Shorthand for a combination of [new_unchecked] and [check_len].
     ///
     /// [new_unchecked]: #method.new_unchecked
     /// [check_len]: #method.check_len
-    pub fn new_checked(buffer: T) -> Result<Packet<T>> {
-        let packet = Self::new_unchecked(buffer);
+    pub fn new_checked(data: &[u8]) -> Result<&ipv4> {
+        let packet = Self::new_unchecked(data);
         packet.check_len()?;
         Ok(packet)
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
+        &mut self.0
     }
 
     /// Ensure that no accessor method will panic if called.
@@ -271,7 +290,7 @@ impl<T: AsRef<[u8]>> Packet<T> {
     /// [set_header_len]: #method.set_header_len
     /// [set_total_len]: #method.set_total_len
     pub fn check_len(&self) -> Result<()> {
-        let len = self.buffer.as_ref().len();
+        let len = self.0.len();
         if len < field::DST_ADDR.end {
             Err(Error::Truncated)
         } else if len < self.header_len() as usize {
@@ -285,105 +304,86 @@ impl<T: AsRef<[u8]>> Packet<T> {
         }
     }
 
-    /// Consume the packet, returning the underlying buffer.
-    pub fn into_inner(self) -> T {
-        self.buffer
-    }
-
     /// Return the version field.
     #[inline]
     pub fn version(&self) -> u8 {
-        let data = self.buffer.as_ref();
-        data[field::VER_IHL] >> 4
+        self.0[field::VER_IHL] >> 4
     }
 
     /// Return the header length, in octets.
     #[inline]
     pub fn header_len(&self) -> u8 {
-        let data = self.buffer.as_ref();
-        (data[field::VER_IHL] & 0x0f) * 4
+        (self.0[field::VER_IHL] & 0x0f) * 4
     }
 
     /// Return the Differential Services Code Point field.
     pub fn dscp(&self) -> u8 {
-        let data = self.buffer.as_ref();
-        data[field::DSCP_ECN] >> 2
+        self.0[field::DSCP_ECN] >> 2
     }
 
     /// Return the Explicit Congestion Notification field.
     pub fn ecn(&self) -> u8 {
-        let data = self.buffer.as_ref();
-        data[field::DSCP_ECN] & 0x03
+        self.0[field::DSCP_ECN] & 0x03
     }
 
     /// Return the total length field.
     #[inline]
     pub fn total_len(&self) -> u16 {
-        let data = self.buffer.as_ref();
-        NetworkEndian::read_u16(&data[field::LENGTH])
+        NetworkEndian::read_u16(&self.0[field::LENGTH])
     }
 
     /// Return the fragment identification field.
     #[inline]
     pub fn ident(&self) -> u16 {
-        let data = self.buffer.as_ref();
-        NetworkEndian::read_u16(&data[field::IDENT])
+        NetworkEndian::read_u16(&self.0[field::IDENT])
     }
 
     /// Return the "don't fragment" flag.
     #[inline]
     pub fn dont_frag(&self) -> bool {
-        let data = self.buffer.as_ref();
-        NetworkEndian::read_u16(&data[field::FLG_OFF]) & 0x4000 != 0
+        NetworkEndian::read_u16(&self.0[field::FLG_OFF]) & 0x4000 != 0
     }
 
     /// Return the "more fragments" flag.
     #[inline]
     pub fn more_frags(&self) -> bool {
-        let data = self.buffer.as_ref();
-        NetworkEndian::read_u16(&data[field::FLG_OFF]) & 0x2000 != 0
+        NetworkEndian::read_u16(&self.0[field::FLG_OFF]) & 0x2000 != 0
     }
 
     /// Return the fragment offset, in octets.
     #[inline]
     pub fn frag_offset(&self) -> u16 {
-        let data = self.buffer.as_ref();
-        NetworkEndian::read_u16(&data[field::FLG_OFF]) << 3
+        NetworkEndian::read_u16(&self.0[field::FLG_OFF]) << 3
     }
 
     /// Return the time to live field.
     #[inline]
     pub fn hop_limit(&self) -> u8 {
-        let data = self.buffer.as_ref();
-        data[field::TTL]
+        self.0[field::TTL]
     }
 
     /// Return the protocol field.
     #[inline]
     pub fn protocol(&self) -> Protocol {
-        let data = self.buffer.as_ref();
-        Protocol::from(data[field::PROTOCOL])
+        Protocol::from(self.0[field::PROTOCOL])
     }
 
     /// Return the header checksum field.
     #[inline]
     pub fn checksum(&self) -> u16 {
-        let data = self.buffer.as_ref();
-        NetworkEndian::read_u16(&data[field::CHECKSUM])
+        NetworkEndian::read_u16(&self.0[field::CHECKSUM])
     }
 
     /// Return the source address field.
     #[inline]
     pub fn src_addr(&self) -> Address {
-        let data = self.buffer.as_ref();
-        Address::from_bytes(&data[field::SRC_ADDR])
+        Address::from_bytes(&self.0[field::SRC_ADDR])
     }
 
     /// Return the destination address field.
     #[inline]
     pub fn dst_addr(&self) -> Address {
-        let data = self.buffer.as_ref();
-        Address::from_bytes(&data[field::DST_ADDR])
+        Address::from_bytes(&self.0[field::DST_ADDR])
     }
 
     /// Validate the header checksum.
@@ -393,155 +393,205 @@ impl<T: AsRef<[u8]>> Packet<T> {
     pub fn verify_checksum(&self) -> bool {
         if cfg!(fuzzing) { return true }
 
-        let data = self.buffer.as_ref();
-        checksum::data(&data[..self.header_len() as usize]) == !0
+        checksum::data(&self.0[..self.header_len() as usize]) == !0
     }
-}
 
-impl<'a, T: AsRef<[u8]> + ?Sized> Packet<&'a T> {
-    /// Return a pointer to the payload.
-    #[inline]
-    pub fn payload(&self) -> &'a [u8] {
-        let range = self.header_len() as usize..self.total_len() as usize;
-        let data = self.buffer.as_ref();
-        &data[range]
-    }
-}
-
-impl<T: AsRef<[u8]> + AsMut<[u8]>> Packet<T> {
     /// Set the version field.
     #[inline]
     pub fn set_version(&mut self, value: u8) {
-        let data = self.buffer.as_mut();
-        data[field::VER_IHL] = (data[field::VER_IHL] & !0xf0) | (value << 4);
+        self.0[field::VER_IHL] = (self.0[field::VER_IHL] & !0xf0) | (value << 4);
     }
 
     /// Set the header length, in octets.
     #[inline]
     pub fn set_header_len(&mut self, value: u8) {
-        let data = self.buffer.as_mut();
-        data[field::VER_IHL] = (data[field::VER_IHL] & !0x0f) | ((value / 4) & 0x0f);
+        self.0[field::VER_IHL] = (self.0[field::VER_IHL] & !0x0f) | ((value / 4) & 0x0f);
     }
 
     /// Set the Differential Services Code Point field.
     pub fn set_dscp(&mut self, value: u8) {
-        let data = self.buffer.as_mut();
-        data[field::DSCP_ECN] = (data[field::DSCP_ECN] & !0xfc) | (value << 2)
+        self.0[field::DSCP_ECN] = (self.0[field::DSCP_ECN] & !0xfc) | (value << 2)
     }
 
     /// Set the Explicit Congestion Notification field.
     pub fn set_ecn(&mut self, value: u8) {
-        let data = self.buffer.as_mut();
-        data[field::DSCP_ECN] = (data[field::DSCP_ECN] & !0x03) | (value & 0x03)
+        self.0[field::DSCP_ECN] = (self.0[field::DSCP_ECN] & !0x03) | (value & 0x03)
     }
 
     /// Set the total length field.
     #[inline]
     pub fn set_total_len(&mut self, value: u16) {
-        let data = self.buffer.as_mut();
-        NetworkEndian::write_u16(&mut data[field::LENGTH], value)
+        NetworkEndian::write_u16(&mut self.0[field::LENGTH], value)
     }
 
     /// Set the fragment identification field.
     #[inline]
     pub fn set_ident(&mut self, value: u16) {
-        let data = self.buffer.as_mut();
-        NetworkEndian::write_u16(&mut data[field::IDENT], value)
+        NetworkEndian::write_u16(&mut self.0[field::IDENT], value)
     }
 
     /// Clear the entire flags field.
     #[inline]
     pub fn clear_flags(&mut self) {
-        let data = self.buffer.as_mut();
-        let raw = NetworkEndian::read_u16(&data[field::FLG_OFF]);
+        let raw = NetworkEndian::read_u16(&self.0[field::FLG_OFF]);
         let raw = raw & !0xe000;
-        NetworkEndian::write_u16(&mut data[field::FLG_OFF], raw);
+        NetworkEndian::write_u16(&mut self.0[field::FLG_OFF], raw);
     }
 
     /// Set the "don't fragment" flag.
     #[inline]
     pub fn set_dont_frag(&mut self, value: bool) {
-        let data = self.buffer.as_mut();
-        let raw = NetworkEndian::read_u16(&data[field::FLG_OFF]);
+        let raw = NetworkEndian::read_u16(&self.0[field::FLG_OFF]);
         let raw = if value { raw | 0x4000 } else { raw & !0x4000 };
-        NetworkEndian::write_u16(&mut data[field::FLG_OFF], raw);
+        NetworkEndian::write_u16(&mut self.0[field::FLG_OFF], raw);
     }
 
     /// Set the "more fragments" flag.
     #[inline]
     pub fn set_more_frags(&mut self, value: bool) {
-        let data = self.buffer.as_mut();
-        let raw = NetworkEndian::read_u16(&data[field::FLG_OFF]);
+        let raw = NetworkEndian::read_u16(&self.0[field::FLG_OFF]);
         let raw = if value { raw | 0x2000 } else { raw & !0x2000 };
-        NetworkEndian::write_u16(&mut data[field::FLG_OFF], raw);
+        NetworkEndian::write_u16(&mut self.0[field::FLG_OFF], raw);
     }
 
     /// Set the fragment offset, in octets.
     #[inline]
     pub fn set_frag_offset(&mut self, value: u16) {
-        let data = self.buffer.as_mut();
-        let raw = NetworkEndian::read_u16(&data[field::FLG_OFF]);
+        let raw = NetworkEndian::read_u16(&self.0[field::FLG_OFF]);
         let raw = (raw & 0xe000) | (value >> 3);
-        NetworkEndian::write_u16(&mut data[field::FLG_OFF], raw);
+        NetworkEndian::write_u16(&mut self.0[field::FLG_OFF], raw);
     }
 
     /// Set the time to live field.
     #[inline]
     pub fn set_hop_limit(&mut self, value: u8) {
-        let data = self.buffer.as_mut();
-        data[field::TTL] = value
+        self.0[field::TTL] = value
     }
 
     /// Set the protocol field.
     #[inline]
     pub fn set_protocol(&mut self, value: Protocol) {
-        let data = self.buffer.as_mut();
-        data[field::PROTOCOL] = value.into()
+        self.0[field::PROTOCOL] = value.into()
     }
 
     /// Set the header checksum field.
     #[inline]
     pub fn set_checksum(&mut self, value: u16) {
-        let data = self.buffer.as_mut();
-        NetworkEndian::write_u16(&mut data[field::CHECKSUM], value)
+        NetworkEndian::write_u16(&mut self.0[field::CHECKSUM], value)
     }
 
     /// Set the source address field.
     #[inline]
     pub fn set_src_addr(&mut self, value: Address) {
-        let data = self.buffer.as_mut();
-        data[field::SRC_ADDR].copy_from_slice(value.as_bytes())
+        self.0[field::SRC_ADDR].copy_from_slice(value.as_bytes())
     }
 
     /// Set the destination address field.
     #[inline]
     pub fn set_dst_addr(&mut self, value: Address) {
-        let data = self.buffer.as_mut();
-        data[field::DST_ADDR].copy_from_slice(value.as_bytes())
+        self.0[field::DST_ADDR].copy_from_slice(value.as_bytes())
     }
 
     /// Compute and fill in the header checksum.
     pub fn fill_checksum(&mut self) {
         self.set_checksum(0);
         let checksum = {
-            let data = self.buffer.as_ref();
-            !checksum::data(&data[..self.header_len() as usize])
+            !checksum::data(&self.0[..self.header_len() as usize])
         };
         self.set_checksum(checksum)
     }
 
-    /// Return a mutable pointer to the payload.
-    #[inline]
-    pub fn payload_mut(&mut self) -> &mut [u8] {
-        let range = self.header_len() as usize..self.total_len() as usize;
-        let data = self.buffer.as_mut();
-        &mut data[range]
+    pub fn payload_range(&self) -> Field {
+        let header_end = usize::from(self.header_len());
+        let total_len = usize::from(self.total_len());
+        header_end..total_len
+    }
+
+    /// Return the payload as a byte slice.
+    pub fn payload_slice(&self) -> &[u8] {
+        let range = self.payload_range();
+        &self.0[range]
+    }
+
+    /// Return the payload as a mutable byte slice.
+    pub fn payload_mut_slice(&mut self) -> &mut [u8] {
+        let range = self.payload_range();
+        &mut self.0[range]
     }
 }
 
-impl<T: AsRef<[u8]>> AsRef<[u8]> for Packet<T> {
+impl AsRef<[u8]> for ipv4 {
     fn as_ref(&self) -> &[u8] {
-        self.buffer.as_ref()
+        &self.0
+    }
+}
+
+impl AsMut<[u8]> for ipv4 {
+    fn as_mut(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+}
+
+impl sealed::Sealed for ipv4 { }
+
+impl<T: Payload> Packet<T> {
+    /// Shorthand for a combination of [new_unchecked] and [check_len].
+    ///
+    /// [new_unchecked]: #method.new_unchecked
+    /// [check_len]: #method.check_len
+    pub fn new_checked(buffer: T, checksum: Checksum) -> Result<Packet<T>> {
+        let repr = {
+            let packet = ipv4::new_checked(buffer.payload())?;
+            Repr::parse(packet, checksum)?
+        };
+        Ok(Packet {
+            buffer,
+            repr,
+        })
+    }
+}
+
+impl<'a, T: Payload + ?Sized> Packet<&'a T> {
+    /// Return a pointer to the payload.
+    #[inline]
+    pub fn payload_bytes(&self) -> &'a [u8] {
+        let data = self.buffer.payload();
+        ipv4::new_unchecked(data).payload_slice()
+    }
+}
+
+impl<T: Payload> ops::Deref for Packet<T> {
+    type Target = ipv4;
+
+    fn deref(&self) -> &ipv4 {
+        // We checked the length at construction.
+        ipv4::new_unchecked(self.buffer.payload())
+    }
+}
+
+impl<T: Payload> AsRef<[u8]> for Packet<T> {
+    fn as_ref(&self) -> &[u8] {
+        self.buffer.payload().into()
+    }
+}
+
+impl<T: Payload> sealed::Sealed for Packet<T> { }
+
+impl<T: Payload> Payload for Packet<T> {
+    fn payload(&self) -> &payload {
+        self.payload_slice().into()
+    }
+}
+
+impl<T: Payload + PayloadMut> PayloadMut for Packet<T> {
+    fn payload_mut(&mut self) -> &mut payload {
+        ipv4::new_unchecked_mut(self.buffer.payload_mut())
+            .payload_mut_slice()
+            .into()
+    }
+
+    fn resize(&mut self, length: usize) -> core::result::Result<(), PayloadError> {
+        unimplemented!()
     }
 }
 
@@ -557,7 +607,8 @@ pub struct Repr {
 
 impl Repr {
     /// Parse an Internet Protocol version 4 packet and return a high-level representation.
-    pub fn parse<T: AsRef<[u8]> + ?Sized>(packet: &Packet<&T>, checksum: Checksum) -> Result<Repr> {
+    pub fn parse(packet: &ipv4, checksum: Checksum) -> Result<Repr> {
+        packet.check_len()?;
         // Version 4 is expected.
         if packet.version() != 4 { return Err(Error::Malformed) }
         // Valid checksum is expected.
@@ -566,7 +617,7 @@ impl Repr {
         if packet.more_frags() || packet.frag_offset() != 0 { return Err(Error::Unsupported) }
         // Since the packet is not fragmented, it must include the entire payload.
         let payload_len = packet.total_len() as usize - packet.header_len() as usize;
-        if packet.payload().len() < payload_len  { return Err(Error::Truncated) }
+        if packet.payload_slice().len() < payload_len  { return Err(Error::Truncated) }
 
         // All DSCP values are acceptable, since they are of no concern to receiving endpoint.
         // All ECN values are acceptable, since ECN requires opt-in from both endpoints.
@@ -587,7 +638,7 @@ impl Repr {
     }
 
     /// Emit a high-level representation into an Internet Protocol version 4 packet.
-    pub fn emit<T: AsRef<[u8]> + AsMut<[u8]>>(&self, packet: &mut Packet<T>, checksum: Checksum) {
+    pub fn emit(&self, packet: &mut ipv4, checksum: Checksum) {
         packet.set_version(4);
         packet.set_header_len(field::DST_ADDR.end as u8);
         packet.set_dscp(0);
@@ -614,7 +665,7 @@ impl Repr {
     }
 }
 
-impl<'a, T: AsRef<[u8]> + ?Sized> fmt::Display for Packet<&'a T> {
+impl<T: Payload> fmt::Display for Packet<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match Repr::parse(self, Checksum::Manual) {
             Ok(repr) => write!(f, "{}", repr),
@@ -662,26 +713,27 @@ impl fmt::Display for Repr {
 
 use super::pretty_print::{PrettyPrint, PrettyIndent};
 
-impl<T: AsRef<[u8]>> PrettyPrint for Packet<T> {
+impl PrettyPrint for ipv4 {
     fn pretty_print(buffer: &[u8], f: &mut fmt::Formatter,
                     indent: &mut PrettyIndent) -> fmt::Result {
         use crate::wire::ip::checksum::format_checksum;
 
-        let (ip_repr, payload) = match Packet::new_checked(buffer) {
+        // Verify the packet structure.
+        let packet = match ipv4::new_checked(buffer) {
             Err(err) => return write!(f, "{}({})", indent, err),
-            Ok(ip_packet) => {
-                match Repr::parse(&ip_packet, Checksum::Ignored) {
-                    Err(_) => return Ok(()),
-                    Ok(ip_repr) => {
-                        write!(f, "{}{}", indent, ip_repr)?;
-                        format_checksum(f, ip_packet.verify_checksum())?;
-                        (ip_repr, ip_packet.payload())
-                    }
-                }
-            }
+            Ok(frame) => frame,
         };
 
-        pretty_print_ip_payload(f, indent, ip_repr, payload)
+        // Verify the packet content
+        let repr = match Repr::parse(packet, Checksum::Ignored) {
+            Err(err) => return write!(f, "{}({})", indent, err),
+            Ok(ip_repr) => ip_repr,
+        };
+
+        write!(f, "{}{}", indent, repr)?;
+        format_checksum(f, packet.verify_checksum())?;
+
+        pretty_print_ip_payload(f, indent, repr, packet.payload_slice())
     }
 }
 
@@ -706,7 +758,7 @@ mod test {
 
     #[test]
     fn test_deconstruct() {
-        let packet = Packet::new_unchecked(&PACKET_BYTES[..]);
+        let packet = ipv4::new_unchecked(&PACKET_BYTES[..]);
         assert_eq!(packet.version(), 4);
         assert_eq!(packet.header_len(), 20);
         assert_eq!(packet.dscp(), 0);
@@ -722,13 +774,13 @@ mod test {
         assert_eq!(packet.src_addr(), Address([0x11, 0x12, 0x13, 0x14]));
         assert_eq!(packet.dst_addr(), Address([0x21, 0x22, 0x23, 0x24]));
         assert_eq!(packet.verify_checksum(), true);
-        assert_eq!(packet.payload(), &PAYLOAD_BYTES[..]);
+        assert_eq!(packet.payload_slice(), &PAYLOAD_BYTES[..]);
     }
 
     #[test]
     fn test_construct() {
         let mut bytes = vec![0xa5; 30];
-        let mut packet = Packet::new_unchecked(&mut bytes);
+        let packet = ipv4::new_unchecked_mut(&mut bytes);
         packet.set_version(4);
         packet.set_header_len(20);
         packet.clear_flags();
@@ -744,8 +796,8 @@ mod test {
         packet.set_src_addr(Address([0x11, 0x12, 0x13, 0x14]));
         packet.set_dst_addr(Address([0x21, 0x22, 0x23, 0x24]));
         packet.fill_checksum();
-        packet.payload_mut().copy_from_slice(&PAYLOAD_BYTES[..]);
-        assert_eq!(&packet.into_inner()[..], &PACKET_BYTES[..]);
+        packet.payload_mut_slice().copy_from_slice(&PAYLOAD_BYTES[..]);
+        assert_eq!(packet.as_bytes(), &PACKET_BYTES[..]);
     }
 
     #[test]
@@ -754,9 +806,9 @@ mod test {
         bytes.extend(&PACKET_BYTES[..]);
         bytes.push(0);
 
-        assert_eq!(Packet::new_unchecked(&bytes).payload().len(),
+        assert_eq!(ipv4::new_unchecked(&bytes).payload_slice().len(),
                    PAYLOAD_BYTES.len());
-        assert_eq!(Packet::new_unchecked(&mut bytes).payload_mut().len(),
+        assert_eq!(ipv4::new_unchecked_mut(&mut bytes).payload_mut_slice().len(),
                    PAYLOAD_BYTES.len());
     }
 
@@ -764,10 +816,10 @@ mod test {
     fn test_total_len_overflow() {
         let mut bytes = vec![];
         bytes.extend(&PACKET_BYTES[..]);
-        Packet::new_unchecked(&mut bytes).set_total_len(128);
+        ipv4::new_unchecked_mut(&mut bytes).set_total_len(128);
 
-        assert_eq!(Packet::new_checked(&bytes).unwrap_err(),
-                   Error::Truncated);
+        assert_eq!(Packet::new_checked(&bytes, Checksum::Manual),
+                   Err(Error::Truncated));
     }
 
     static REPR_PACKET_BYTES: [u8; 24] =
@@ -793,7 +845,7 @@ mod test {
 
     #[test]
     fn test_parse() {
-        let packet = Packet::new_unchecked(&REPR_PACKET_BYTES[..]);
+        let packet = ipv4::new_unchecked(&REPR_PACKET_BYTES[..]);
         let repr = Repr::parse(&packet, Checksum::Manual).unwrap();
         assert_eq!(repr, packet_repr());
     }
@@ -802,28 +854,27 @@ mod test {
     fn test_parse_bad_version() {
         let mut bytes = vec![0; 24];
         bytes.copy_from_slice(&REPR_PACKET_BYTES[..]);
-        let mut packet = Packet::new_unchecked(&mut bytes);
+        let packet = ipv4::new_unchecked_mut(&mut bytes);
         packet.set_version(6);
         packet.fill_checksum();
-        let packet = Packet::new_unchecked(&*packet.into_inner());
-        assert_eq!(Repr::parse(&packet, Checksum::Manual), Err(Error::Malformed));
+        assert_eq!(Repr::parse(packet, Checksum::Manual), Err(Error::Malformed));
     }
 
     #[test]
     fn test_parse_total_len_less_than_header_len() {
         let mut bytes = vec![0; 40];
         bytes[0] = 0x09;
-        assert_eq!(Packet::new_checked(&mut bytes), Err(Error::Malformed));
+        assert_eq!(Packet::new_checked(&mut bytes, Checksum::Manual), Err(Error::Malformed));
     }
 
     #[test]
     fn test_emit() {
         let repr = packet_repr();
         let mut bytes = vec![0xa5; repr.buffer_len() + REPR_PAYLOAD_BYTES.len()];
-        let mut packet = Packet::new_unchecked(&mut bytes);
+        let mut packet = ipv4::new_unchecked_mut(&mut bytes);
         repr.emit(&mut packet, Checksum::Manual);
-        packet.payload_mut().copy_from_slice(&REPR_PAYLOAD_BYTES);
-        assert_eq!(&packet.into_inner()[..], &REPR_PACKET_BYTES[..]);
+        packet.payload_mut_slice().copy_from_slice(&REPR_PAYLOAD_BYTES);
+        assert_eq!(packet.as_bytes(), &REPR_PACKET_BYTES[..]);
     }
 
     #[test]
