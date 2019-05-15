@@ -197,6 +197,10 @@ mod tests {
             .copy_from_slice(&PAYLOAD_BYTES[..]);
     }
 
+    fn simple_recv<P: Payload>(mut frame: Packet<NoHandler, &mut P>) {
+        assert_eq!(frame.frame().payload().as_slice(), &PAYLOAD_BYTES[..]);
+    }
+
     #[test]
     fn simple() {
         let endpoint = Endpoint::new(MAC_ADDR_1);
@@ -206,5 +210,11 @@ mod tests {
             endpoint
                 .send_with(simple_send));
         assert_eq!(sent, Ok(1));
+        nic.set_one_past_receive(1);
+        let recv = nic.rx(
+            1,
+            endpoint
+                .recv_with(simple_recv));
+        assert_eq!(recv, Ok(1));
     }
 }

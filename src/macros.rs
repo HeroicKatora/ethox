@@ -82,6 +82,7 @@ macro_rules! byte_wrapper {
     ($name:ident) => {
         #[allow(non_camel_case_types)]
         #[repr(transparent)]
+        #[derive(Debug, PartialEq, Eq, PartialOrd)]
         pub struct $name([u8]);
 
         impl $name {
