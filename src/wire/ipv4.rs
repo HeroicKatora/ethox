@@ -602,7 +602,7 @@ pub struct Repr {
     pub dst_addr:    Address,
     pub protocol:    Protocol,
     pub payload_len: usize,
-    pub hop_limit:   u8
+    pub hop_limit:   u8,
 }
 
 impl Repr {

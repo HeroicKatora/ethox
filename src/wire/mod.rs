@@ -254,6 +254,8 @@ pub use self::mld::{
 */
 
 pub use self::udp::{
+    udp as udp_packet,
+    Checksum as UdpChecksum,
     Packet as UdpPacket,
     Repr as UdpRepr};
 
