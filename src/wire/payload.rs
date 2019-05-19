@@ -2,15 +2,13 @@
 use core::ops;
 use crate::managed::Slice;
 
-use super::sealed;
-
 /// A specialized, internal variant of `Borrow<payload>`.
 ///
 /// This ensures that the implementation is also consistent and always resolves to the same memory
 /// region, an implementation detail that other parts of the crate could rely upon. The guarantee
 /// is that the values in the referred to byte region will not appear differently, which is trivial
 /// when we guarantee that the byte region is part of our object and does not change.
-pub trait Payload: sealed::Sealed {
+pub trait Payload {
     fn payload(&self) -> &payload;
 }
 
@@ -102,8 +100,6 @@ impl ops::DerefMut for payload {
     }
 }
 
-impl sealed::Sealed for [u8] { }
-
 impl Payload for [u8] {
     fn payload(&self) -> &payload {
         self.into()
@@ -124,8 +120,6 @@ impl PayloadMut for [u8] {
     }
 }
 
-impl sealed::Sealed for payload { }
-
 impl Payload for payload {
     fn payload(&self) -> &payload {
         self
@@ -142,15 +136,11 @@ impl PayloadMut for payload {
     }
 }
 
-impl<P: Payload + ?Sized> sealed::Sealed for &'_ P { }
-
 impl<P: Payload + ?Sized> Payload for &'_ P {
     fn payload(&self) -> &payload {
         (**self).payload()
     }
 }
-
-impl<P: Payload + ?Sized> sealed::Sealed for &'_ mut P { }
 
 impl<P: Payload + ?Sized> Payload for &'_ mut P {
     fn payload(&self) -> &payload {
@@ -167,8 +157,6 @@ impl<P: PayloadMut + ?Sized> PayloadMut for &'_ mut P {
         (**self).resize(length)
     }
 }
-
-impl sealed::Sealed for Slice<'_, u8> { }
 
 impl Payload for Slice<'_, u8> {
     fn payload(&self) -> &payload {
@@ -214,8 +202,6 @@ impl PayloadMut for Slice<'_, u8> {
 
 #[cfg(any(feature = "std", test))]
 mod std_impls {
-    impl super::sealed::Sealed for Vec<u8> { }
-
     impl super::Payload for Vec<u8> {
         fn payload(&self) -> &super::payload {
             self.as_slice().into()

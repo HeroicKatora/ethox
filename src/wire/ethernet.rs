@@ -201,8 +201,6 @@ impl AsMut<[u8]> for ethernet {
     }
 }
 
-impl wire::sealed::Sealed for ethernet { }
-
 impl<T: Payload> Frame<T> {
     /// Shorthand for a combination of [new_unchecked] and [check_len].
     ///
@@ -274,8 +272,6 @@ impl<T: Payload> AsRef<[u8]> for Frame<T> {
         self.buffer.payload().into()
     }
 }
-
-impl<T: Payload> wire::sealed::Sealed for Frame<T> { }
 
 impl<T: Payload> Payload for Frame<T> {
     fn payload(&self) -> &payload {

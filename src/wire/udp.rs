@@ -3,7 +3,7 @@ use core::fmt;
 use byteorder::{ByteOrder, NetworkEndian};
 
 use super::{Error, IpProtocol, IpAddress, Result};
-use super::{sealed, Payload, PayloadError, PayloadMut, payload};
+use super::{Payload, PayloadError, PayloadMut, payload};
 use super::ip::checksum;
 
 /// A read/write wrapper around an User Datagram Protocol packet buffer.
@@ -234,8 +234,6 @@ impl AsMut<[u8]> for udp {
     }
 }
 
-impl sealed::Sealed for udp { }
-
 impl<'a, T: Payload + ?Sized> Packet<&'a T> {
     /// Return a pointer to the payload.
     #[inline]
@@ -262,8 +260,6 @@ impl<T: Payload> ops::Deref for Packet<T> {
         udp::new_unchecked(self.buffer.payload())
     }
 }
-
-impl<T: Payload> sealed::Sealed for Packet<T> { }
 
 impl<T: Payload> Payload for Packet<T> {
     fn payload(&self) -> &payload {

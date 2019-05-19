@@ -139,10 +139,6 @@ pub enum Checksum {
     Ignored,
 }
 
-pub(crate) mod sealed {
-    pub trait Sealed { }
-}
-
 pub use self::payload_impl::{Payload, PayloadMut, Error as PayloadError, payload};
 
 pub use self::pretty_print::PrettyPrinter;

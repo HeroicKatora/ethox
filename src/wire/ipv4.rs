@@ -2,7 +2,7 @@ use core::fmt;
 use core::ops;
 use byteorder::{ByteOrder, NetworkEndian};
 
-use super::{sealed, Payload, PayloadError, PayloadMut, payload};
+use super::{Payload, PayloadError, PayloadMut, payload};
 use super::{Error, Checksum, Result};
 use super::ip::{checksum, pretty_print_ip_payload};
 use super::field::Field;
@@ -532,8 +532,6 @@ impl AsMut<[u8]> for ipv4 {
     }
 }
 
-impl sealed::Sealed for ipv4 { }
-
 impl<T: Payload> Packet<T> {
     /// Shorthand for a combination of [new_unchecked] and [check_len].
     ///
@@ -574,8 +572,6 @@ impl<T: Payload> AsRef<[u8]> for Packet<T> {
         self.buffer.payload().into()
     }
 }
-
-impl<T: Payload> sealed::Sealed for Packet<T> { }
 
 impl<T: Payload> Payload for Packet<T> {
     fn payload(&self) -> &payload {
