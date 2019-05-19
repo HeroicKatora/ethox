@@ -2,7 +2,7 @@ use core::fmt;
 use core::convert::From;
 
 use crate::wire::{Error, Checksum, Result};
-use super::{Ipv4Address, Ipv4Packet, Ipv4Repr, Ipv4Cidr, ipv4_frame};
+use super::{Ipv4Address, Ipv4Repr, Ipv4Cidr, ipv4_frame};
 use super::{Ipv6Address, Ipv6Cidr, Ipv6Packet, Ipv6Repr};
 
 /// Internet protocol version.
@@ -787,7 +787,7 @@ use super::pretty_print::PrettyIndent;
 
 pub fn pretty_print_ip_payload<T: Into<Repr>>(f: &mut fmt::Formatter, indent: &mut PrettyIndent,
                                               ip_repr: T, payload: &[u8]) -> fmt::Result {
-    use crate::wire::{TcpPacket, TcpRepr, UdpChecksum, UdpPacket, UdpRepr, udp_packet};
+    use crate::wire::{TcpPacket, TcpRepr, UdpChecksum, UdpRepr, udp_packet};
     use crate::wire::ip::checksum::format_checksum;
 
     let repr = ip_repr.into();

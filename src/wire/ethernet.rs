@@ -2,7 +2,7 @@ use core::ops;
 use core::fmt;
 use byteorder::{ByteOrder, NetworkEndian};
 
-use crate::wire::{self, Error, Result, Payload, PayloadError, PayloadMut, payload};
+use crate::wire::{Error, Result, Payload, PayloadError, PayloadMut, payload};
 
 enum_with_unknown! {
     /// Ethernet protocol type.
