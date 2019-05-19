@@ -180,7 +180,7 @@ mod test {
         // std::ops::Mul
         assert_eq!(Duration::from_millis(13) * 22, Duration::from_millis(286));
         // std::ops::Div
-        assert_eq!(Duration::from_millis(53) / 4, Duration::from_millis(13));
+        assert_eq!((Duration::from_millis(53) / 4).as_millis(), 13);
     }
 
     #[test]
@@ -193,7 +193,7 @@ mod test {
         duration *= 4;
         assert_eq!(duration, Duration::from_millis(20936));
         duration /= 5;
-        assert_eq!(duration, Duration::from_millis(4187));
+        assert_eq!(duration.as_millis(), 4187);
     }
 
     #[test]
@@ -203,7 +203,7 @@ mod test {
     }
 
     #[test]
-    #[should_panic(expected = "attempt to divide by zero")]
+    #[should_panic(expected = "divide by zero")]
     fn test_div_by_zero() {
         let _ = Duration::from_millis(4) / 0;
     }
