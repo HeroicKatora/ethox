@@ -178,7 +178,6 @@ impl PayloadMut for Slice<'_, u8> {
                 result = Err(Error::BadSize);
                 Slice::One(one)
             },
-            #[cfg(any(test, feature = "std"))]
             Slice::Many(mut vec) => {
                 vec.resize(length, 0);
                 result = Ok(());
@@ -200,8 +199,9 @@ impl PayloadMut for Slice<'_, u8> {
     }
 }
 
-#[cfg(any(feature = "std", test))]
 mod std_impls {
+    use crate::Vec;
+
     impl super::Payload for Vec<u8> {
         fn payload(&self) -> &super::payload {
             self.as_slice().into()
