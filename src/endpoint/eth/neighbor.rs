@@ -1,6 +1,7 @@
 // Heads up! Before working on this file you should read, at least,
 // the parts of RFC 1122 that discuss ARP.
 use core::cmp;
+use core::ops::Deref;
 
 use crate::managed::Ordered;
 use crate::time::{Duration, Instant};
@@ -79,6 +80,21 @@ pub struct Cache<'a> {
     silent_until: Instant,
 }
 
+/// A part of the neighbor table.
+///
+/// For lookup purposes only. Even without the additional metadata within the cache itself we can
+/// still use the slice of data to perform lookup, as its ordering guarantees are upheld. (We could
+/// also do strictly replacing updates which do not influence the table length but doing so is more
+/// intricate).
+///
+/// The advantage of this type is its lifetime bound of `'static`. Meanwhile, `Cache` is bound by
+/// its lifetime parameter from the encapsulated reference on the storage. This is a direct
+/// reference to the storage and skips the outer reference and thus lifetime layer. In total, this
+/// keeps the number of necessary lifetime bounds in check (hopefully).
+#[derive(Debug, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct Table([Neighbor]);
+
 impl<'a> Cache<'a> {
     /// Minimum delay between discovery requests, in milliseconds.
     pub(crate) const SILENT_TIME: Duration = Duration::from_millis(1_000);
@@ -124,12 +140,12 @@ impl<'a> Cache<'a> {
             assert!(self.storage[index].protocol_addr == new_neighbor.protocol_addr);
             let _old = self.storage.replace_at(index, new_neighbor)
                 .expect("Sorting didn't change since we only have one entry per protocol addr");
-            /* Why does this not work with current macros?????????
-            net_trace!("replaced {} => {} (was {})",
+            // Why does this not work with current macros?????????
+            /* net_trace!("replaced {} => {} (was {})",
                 protocol_addr,
                 hardware_addr,
-                old_neighbor.hardware_addr);*/
-            return Ok(())
+                old_neighbor.hardware_addr);
+            return Ok(()) */
         }
 
         // Not mapped, need to free an entry.
@@ -162,28 +178,6 @@ impl<'a> Cache<'a> {
         Ok(())
     }
 
-    pub fn lookup_pure(
-        &self,
-        protocol_addr: &IpAddress,
-        timestamp: Instant
-    ) -> Option<EthernetAddress> {
-        if protocol_addr.is_broadcast() {
-            return Some(EthernetAddress::BROADCAST)
-        }
-
-        let entries = self.storage.ordered_slice();
-        let existing = entries
-            .binary_search_by_key(protocol_addr, |neighbor| neighbor.protocol_addr)
-            .ok()?;
-
-        let entry = &entries[existing];
-        if When(timestamp) >= entry.expires_at {
-            return None;
-        }
-
-        Some(entry.hardware_addr)
-    }
-
     pub fn lookup(
         &mut self,
         protocol_addr: &IpAddress,
@@ -199,6 +193,53 @@ impl<'a> Cache<'a> {
                 Answer::NotFound
             }
         }
+    }
+}
+
+impl Table {
+    /// Create a table.
+    ///
+    /// The data should be ordered and have at most one entry per protocol address, according to
+    /// the internal invariants of the neighbor Cache.
+    fn from_slice(data: &[Neighbor]) -> &Self {
+        unsafe { &*(data as *const [Neighbor] as *const Self) }
+    }
+
+    pub fn lookup_pure(
+        &self,
+        protocol_addr: &IpAddress,
+        timestamp: Instant
+    ) -> Option<EthernetAddress> {
+        if protocol_addr.is_broadcast() {
+            return Some(EthernetAddress::BROADCAST)
+        }
+
+        let existing = self
+            .binary_search_by_key(protocol_addr, |neighbor| neighbor.protocol_addr)
+            .ok()?;
+
+        let entry = &self[existing];
+        if When(timestamp) >= entry.expires_at {
+            return None;
+        }
+
+        Some(entry.hardware_addr)
+    }
+}
+
+impl Deref for Cache<'_> {
+    type Target = Table;
+
+    fn deref(&self) -> &Table {
+        Table::from_slice(self.storage.ordered_slice())
+    }
+}
+
+impl Deref for Table {
+    type Target = [Neighbor];
+
+    fn deref(&self) -> &[Neighbor] {
+        &self.0
     }
 }
 

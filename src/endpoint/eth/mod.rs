@@ -9,7 +9,8 @@ mod neighbor;
 pub use neighbor::{
     Neighbor,
     Answer as NeighborAnswer,
-    Cache as NeighborCache};
+    Cache as NeighborCache,
+    Table as NeighborTable};
 
 pub trait Recv<H: Handle, P: Payload> {
     fn receive(&mut self, frame: Packet<H, P>);
