@@ -1,4 +1,2 @@
-use super::Slice;
-
-
+use super::Ordered;
 

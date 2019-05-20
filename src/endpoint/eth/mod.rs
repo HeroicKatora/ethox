@@ -4,6 +4,12 @@ use crate::wire::{EthernetFrame, EthernetRepr, Payload, PayloadMut};
 use crate::nic;
 
 pub mod simple;
+mod neighbor;
+
+pub use neighbor::{
+    Neighbor,
+    Answer as NeighborAnswer,
+    Cache as NeighborCache};
 
 pub trait Recv<H: Handle, P: Payload> {
     fn receive(&mut self, frame: Packet<H, P>);

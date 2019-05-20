@@ -1,3 +1,5 @@
+//! CIDR, relevant rfc1519, rfc4632.
+//!
 use core::ops::Bound;
 
 use crate::{Error, Result};
@@ -19,7 +21,6 @@ pub struct Route {
 
 impl Route {
     /// Returns a route to 0.0.0.0/0 via the `gateway`, with no expiry.
-    #[cfg(feature = "proto-ipv4")]
     pub fn new_ipv4_gateway(gateway: Ipv4Address) -> Route {
         Route {
             via_router: gateway.into(),
@@ -29,7 +30,6 @@ impl Route {
     }
 
     /// Returns a route to ::/0 via the `gateway`, with no expiry.
-    #[cfg(feature = "proto-ipv6")]
     pub fn new_ipv6_gateway(gateway: Ipv6Address) -> Route {
         Route {
             via_router: gateway.into(),
@@ -80,7 +80,6 @@ impl<'a> Routes<'a> {
     /// Add a default ipv4 gateway (ie. "ip route add 0.0.0.0/0 via `gateway`").
     ///
     /// On success, returns the previous default route, if any.
-    #[cfg(feature = "proto-ipv4")]
     pub fn add_default_ipv4_route(&mut self, gateway: Ipv4Address) -> Result<Option<Route>> {
         let cidr = IpCidr::new(IpAddress::v4(0, 0, 0, 0), 0);
         let route = Route::new_ipv4_gateway(gateway);
@@ -93,7 +92,6 @@ impl<'a> Routes<'a> {
     /// Add a default ipv6 gateway (ie. "ip -6 route add ::/0 via `gateway`").
     ///
     /// On success, returns the previous default route, if any.
-    #[cfg(feature = "proto-ipv6")]
     pub fn add_default_ipv6_route(&mut self, gateway: Ipv6Address) -> Result<Option<Route>> {
         let cidr = IpCidr::new(IpAddress::v6(0, 0, 0, 0, 0, 0, 0, 0), 0);
         let route = Route::new_ipv6_gateway(gateway);

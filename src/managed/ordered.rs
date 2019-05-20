@@ -1,4 +1,5 @@
-use core::ops::Index;
+use core::mem;
+use core::ops::{Deref, Index};
 use core::slice::SliceIndex;
 
 use super::Slice;
@@ -6,6 +7,8 @@ use super::Slice;
 /// Maintains an ordered slice.
 ///
 /// Highly inefficient for anything but its logarithmic query time.
+// TODO: PartialEq, Eq, PartialOrd, Ord
+#[derive(Debug)]
 pub struct Ordered<'a, T> {
     inner: Slice<'a, T>,
     start: usize,
@@ -31,7 +34,8 @@ impl<'a, T> Ordered<'a, T> {
     pub fn push(&mut self) -> Option<usize>
         where T: Ord,
     {
-        let next = self.inner.as_slice().get(self.start)?;
+        let next = self.inner.as_slice()
+            .get(self.start)?;
         let idx = self.ordered_slice()
             .binary_search(next)
             .unwrap_or_else(|x| x);
@@ -70,6 +74,38 @@ impl<'a, T> Ordered<'a, T> {
     {
         self.ordered_slice().get(idx)
     }
+
+    /// Try to modify an entry inline.
+    pub fn replace_at(&mut self, idx: usize, new: T) -> Option<T>
+        where T: Ord,
+    {
+        let mutable = &mut self.inner[..self.start];
+        assert!(mutable.len() < usize::max_value());
+
+        // Wrappings all lead to invalid index.
+        if let Some(prev) = mutable.get(idx.wrapping_sub(1)) {
+            if !(prev <= &new) {
+                return None;
+            }
+        }
+
+        if let Some(next) = mutable.get(idx.wrapping_add(1)) {
+            if !(&new <= next) {
+                return None;
+            }
+        }
+
+        mutable.get_mut(idx)
+            .map(|slot| mem::replace(slot, new))
+    }
+}
+
+impl<'a, C, T> From<C> for Ordered<'a, T>
+    where Slice<'a, T>: From<C>
+{
+    fn from(collection: C) -> Self {
+        Self::new(collection.into())
+    }
 }
 
 impl<T, I: SliceIndex<[T]>> Index<I> for Ordered<'_, T> {
@@ -77,5 +113,13 @@ impl<T, I: SliceIndex<[T]>> Index<I> for Ordered<'_, T> {
 
     fn index(&self, idx: I) -> &I::Output {
         self.ordered_slice().index(idx)
+    }
+}
+
+impl<T> Deref for Ordered<'_, T> {
+    type Target = [T];
+
+    fn deref(&self) -> &[T] {
+        self.ordered_slice()
     }
 }

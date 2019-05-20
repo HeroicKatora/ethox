@@ -6,8 +6,7 @@ no_std)]
 pub mod endpoint;
 pub mod nic;
 mod managed;
-#[macro_use]
-mod macros;
+#[macro_use] mod macros;
 pub mod storage;
 pub mod time;
 pub mod wire;
