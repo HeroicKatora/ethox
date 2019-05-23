@@ -1,6 +1,6 @@
 //! The ethernet layer.
 use crate::endpoint::Result;
-use crate::wire::{EthernetFrame, EthernetRepr, Payload, PayloadMut};
+use crate::wire::{EthernetAddress, EthernetFrame, EthernetProtocol, Payload, PayloadMut};
 use crate::nic;
 
 pub mod simple;
@@ -12,37 +12,33 @@ pub use neighbor::{
     Cache as NeighborCache,
     Table as NeighborTable};
 
-pub trait Recv<H: Handle, P: Payload> {
-    fn receive(&mut self, frame: Packet<H, P>);
+use self::simple::WithSender as EthHandler;
+
+pub trait Recv<P: Payload> {
+    fn receive(&mut self, frame: Packet<P>);
 }
 
-pub trait Send<H: Handle, P: Payload> {
-    fn send(&mut self, raw: RawPacket<H, P>);
+pub trait Send<P: Payload> {
+    fn send(&mut self, raw: RawPacket<P>);
 }
 
-/// A trait-object to something implementing the eth-layer.
-pub trait Handle {
-    /// Initialize the frame and return the supposed representation.
-    fn initialize<P: PayloadMut>(&mut self, handle: &mut nic::Handle, frame: &mut P) -> Result<EthernetRepr>;
-}
-
-pub struct Packet<'a, H: Handle, P: Payload> {
+pub struct Packet<'a, P: Payload> {
     nic_handle: &'a mut nic::Handle,
-    handle: &'a mut H,
-    frame: EthernetFrame<P>,
+    handle: &'a mut EthHandler,
+    frame: EthernetFrame<&'a mut P>,
 }
 
-pub struct RawPacket<'a, H: Handle, P: Payload> {
+pub struct RawPacket<'a, P: Payload> {
     nic_handle: &'a mut nic::Handle,
-    handle: &'a mut H,
-    payload: P,
+    handle: &'a mut EthHandler,
+    payload: &'a mut P,
 }
 
-impl<'a, H: Handle, P: Payload> Packet<'a, H, P> {
-    pub fn new(
+impl<'a, P: Payload> Packet<'a, P> {
+    pub(crate) fn new(
         nic_handle: &'a mut nic::Handle,
-        handle: &'a mut H,
-        frame: EthernetFrame<P>)
+        handle: &'a mut EthHandler,
+        frame: EthernetFrame<&'a mut P>)
     -> Self {
         Packet {
             nic_handle,
@@ -51,15 +47,11 @@ impl<'a, H: Handle, P: Payload> Packet<'a, H, P> {
         }
     }
 
-    pub fn handle(&mut self) -> &mut H {
-        self.handle
-    }
-
-    pub fn frame(&mut self) -> &mut EthernetFrame<P> {
+    pub fn frame(&mut self) -> &mut EthernetFrame<&'a mut P> {
         &mut self.frame
     }
 
-    pub fn deinit(self) -> RawPacket<'a, H, P> {
+    pub fn deinit(self) -> RawPacket<'a, P> {
         RawPacket {
             nic_handle: self.nic_handle,
             handle: self.handle,
@@ -68,11 +60,11 @@ impl<'a, H: Handle, P: Payload> Packet<'a, H, P> {
     }
 }
 
-impl<'a, H: Handle, P: Payload + PayloadMut> RawPacket<'a, H, P> {
-    pub fn new(
+impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
+    pub(crate) fn new(
         nic_handle: &'a mut nic::Handle,
-        handle: &'a mut H,
-        payload: P
+        handle: &'a mut EthHandler,
+        payload: &'a mut P,
     ) -> Self {
         RawPacket {
             nic_handle,
@@ -81,15 +73,23 @@ impl<'a, H: Handle, P: Payload + PayloadMut> RawPacket<'a, H, P> {
         }
     }
 
-    pub fn handle(&mut self) -> &mut H {
-        self.handle
+    pub fn set_dst_addr(&mut self, addr: EthernetAddress) {
+        self.handle.set_dst_addr(addr)
+    }
+
+    pub fn set_ethertype(&mut self, ethertype: EthernetProtocol) {
+        self.handle.set_ethertype(ethertype)
+    }
+
+    pub fn set_payload_len(&mut self, length: usize) {
+        self.handle.set_payload_len(length)
     }
 
     pub fn payload(&mut self) -> &mut P {
         &mut self.payload
     }
 
-    pub fn prepare(self) -> Result<Packet<'a, H, P>> {
+    pub fn prepare(self) -> Result<Packet<'a, P>> {
         let mut payload = self.payload;
         let repr = self.handle.initialize(self.nic_handle, &mut payload)?;
         Ok(Packet {

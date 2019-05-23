@@ -2,7 +2,7 @@ use crate::endpoint::{Error, Result};
 use crate::wire::{ethernet_frame, EthernetAddress, EthernetFrame, EthernetRepr, EthernetProtocol, Payload, PayloadMut};
 use crate::nic;
 
-use super::{Handle, Packet, RawPacket, Recv, Send};
+use super::{Packet, RawPacket, Recv, Send};
 
 pub struct Endpoint {
     /// Our own address.
@@ -16,7 +16,7 @@ pub struct Endpoint {
 /// Dispatching to higher protocols is configurerd here, and not in the endpoint state.
 pub struct Receiver<'a, H> {
     inner: &'a Endpoint,
-    eth_handler: NoHandler,
+    eth_handler: WithSender,
     handler: H,
 }
 
@@ -26,9 +26,7 @@ pub struct Sender<'a, H> {
     handler: H,
 }
 
-pub struct NoHandler;
-
-pub struct WithSender {
+pub(crate) struct WithSender {
     from: EthernetAddress,
     to: Option<EthernetAddress>,
     ethertype: Option<EthernetProtocol>,
@@ -45,7 +43,7 @@ impl Endpoint {
     }
 
     pub fn recv<H>(&self, handler: H) -> Receiver<H> {
-        Receiver { inner: self, eth_handler: NoHandler, handler, }
+        Receiver { inner: self, eth_handler: self.addr.into(), handler, }
     }
 
     pub fn recv_with<H>(&self, handler: H) -> Receiver<FnHandle<H>> {
@@ -53,14 +51,7 @@ impl Endpoint {
     }
 
     pub fn send<H>(&self, handler: H) -> Sender<H> {
-        let eth_handler = WithSender {
-            from: self.addr,
-            to: None,
-            ethertype: None,
-            payload: 0,
-        };
-
-        Sender { _inner: self, eth_handler, handler, }
+        Sender { _inner: self, eth_handler: self.addr.into(), handler, }
     }
 
     pub fn send_with<H>(&self, handler: H) -> Sender<FnHandle<H>> {
@@ -87,15 +78,8 @@ impl WithSender {
     }
 }
 
-impl Handle for NoHandler {
-    fn initialize<P: PayloadMut>(&mut self, _: &mut nic::Handle, _: &mut P) -> Result<EthernetRepr> {
-        // this context is not able to construct immediate responses.
-        Err(Error::Illegal)
-    }
-}
-
-impl Handle for WithSender {
-    fn initialize<P: PayloadMut>(&mut self, nic: &mut nic::Handle, payload: &mut P) -> Result<EthernetRepr> {
+impl WithSender {
+    pub(crate) fn initialize<P: PayloadMut>(&mut self, nic: &mut nic::Handle, payload: &mut P) -> Result<EthernetRepr> {
         let dst_addr = self.to.ok_or(Error::Illegal)?;
         let ethertype = self.ethertype.ok_or(Error::Illegal)?;
 
@@ -115,8 +99,8 @@ impl Handle for WithSender {
 impl<H, P, T> nic::Recv<H, P> for Receiver<'_, T>
 where
     H: nic::Handle,
-    P: Payload + ?Sized,
-    T: for<'a> Recv<NoHandler, &'a mut P>,
+    P: Payload,
+    T: Recv<P>,
 {
     fn receive(&mut self, packet: nic::Packet<H, P>) {
         let frame = match EthernetFrame::new_checked(packet.payload) {
@@ -140,8 +124,8 @@ where
 impl<H, P, T> nic::Send<H, P> for Sender<'_, T>
 where
     H: nic::Handle,
-    P: Payload + PayloadMut + ?Sized,
-    T: for<'a> Send<WithSender, &'a mut P>,
+    P: Payload + PayloadMut,
+    T: Send<P>,
 {
     fn send(&mut self, packet: nic::Packet<H, P>) {
         let packet = RawPacket::new(
@@ -152,19 +136,30 @@ where
     }
 }
 
-impl<'a, H: Handle, P: Payload, F> Recv<H, &'a mut P> for FnHandle<F>
-    where F: FnMut(Packet<H, &mut P>)
+impl<'a, P: Payload, F> Recv<P> for FnHandle<F>
+    where F: FnMut(Packet<P>)
 {
-    fn receive(&mut self, frame: Packet<H, &'a mut P>) {
+    fn receive(&mut self, frame: Packet<P>) {
         self.0(frame)
     }
 }
 
-impl<'a, H: Handle, P: Payload, F> Send<H, &'a mut P> for FnHandle<F>
-    where F: FnMut(RawPacket<H, &mut P>)
+impl<'a, P: Payload, F> Send<P> for FnHandle<F>
+    where F: FnMut(RawPacket<P>)
 {
-    fn send(&mut self, frame: RawPacket<H, &'a mut P>) {
+    fn send(&mut self, frame: RawPacket<P>) {
         self.0(frame)
+    }
+}
+
+impl From<EthernetAddress> for WithSender {
+    fn from(addr: EthernetAddress) -> Self {
+        WithSender {
+            from: addr,
+            to: None,
+            ethertype: None,
+            payload: 0,
+        }
     }
 }
 
@@ -185,10 +180,10 @@ mod tests {
          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
          0x00, 0xff];
 
-    fn simple_send<P: Payload + PayloadMut>(mut frame: RawPacket<WithSender, &mut P>) {
-        frame.handle().set_dst_addr(MAC_ADDR_1);
-        frame.handle().set_ethertype(EthernetProtocol::Unknown(0xBEEF));
-        frame.handle().set_payload_len(PAYLOAD_BYTES.len());
+    fn simple_send<P: Payload + PayloadMut>(mut frame: RawPacket<P>) {
+        frame.set_dst_addr(MAC_ADDR_1);
+        frame.set_ethertype(EthernetProtocol::Unknown(0xBEEF));
+        frame.set_payload_len(PAYLOAD_BYTES.len());
         let mut prepared = frame.prepare()
             .expect("Preparing frame mustn't fail in controlled environment");
         prepared
@@ -197,7 +192,7 @@ mod tests {
             .copy_from_slice(&PAYLOAD_BYTES[..]);
     }
 
-    fn simple_recv<P: Payload>(mut frame: Packet<NoHandler, &mut P>) {
+    fn simple_recv<P: Payload>(mut frame: Packet<P>) {
         assert_eq!(frame.frame().payload().as_slice(), &PAYLOAD_BYTES[..]);
     }
 
