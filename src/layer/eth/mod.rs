@@ -1,10 +1,18 @@
 //! The ethernet layer.
-use crate::endpoint::Result;
+use crate::layer::Result;
 use crate::wire::{EthernetAddress, EthernetFrame, EthernetProtocol, Payload, PayloadMut};
 use crate::nic;
 
-pub mod simple;
+mod endpoint;
 mod neighbor;
+
+use self::endpoint::WithSender as EthHandler;
+
+pub use endpoint::{
+    Endpoint,
+    FnHandler,
+    Receiver,
+    Sender};
 
 pub use neighbor::{
     Neighbor,
@@ -12,7 +20,6 @@ pub use neighbor::{
     Cache as NeighborCache,
     Table as NeighborTable};
 
-use self::simple::WithSender as EthHandler;
 
 pub trait Recv<P: Payload> {
     fn receive(&mut self, frame: Packet<P>);

@@ -7,7 +7,7 @@ pub mod external;
 mod personality;
 
 use crate::wire::Payload;
-use crate::endpoint::{Error, Result};
+use crate::layer::Result;
 
 pub use self::personality::{
     Capabilities,

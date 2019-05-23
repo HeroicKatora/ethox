@@ -1,5 +1,6 @@
 //! Useful base types for implementing a nic.
-use super::{Error, Handle, Result};
+use crate::layer::{Error, Result};
+use super::Handle;
 
 /// A handle representation allowing to set a flag for queueing a packet.
 pub enum EnqueueFlag {

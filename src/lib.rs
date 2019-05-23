@@ -3,8 +3,8 @@
     not(test)),
 no_std)]
 
-pub mod endpoint;
 pub mod nic;
+pub mod layer;
 mod managed;
 #[macro_use] mod macros;
 pub mod storage;

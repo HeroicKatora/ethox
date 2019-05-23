@@ -1,4 +1,4 @@
-use crate::endpoint::{Error, Result};
+use crate::layer::{Error, Result};
 use crate::wire::{ethernet_frame, EthernetAddress, EthernetFrame, EthernetRepr, EthernetProtocol, Payload, PayloadMut};
 use crate::nic;
 
@@ -33,7 +33,7 @@ pub(crate) struct WithSender {
     payload: usize,
 }
 
-pub struct FnHandle<F>(pub F);
+pub struct FnHandler<F>(pub F);
 
 impl Endpoint {
     pub fn new(addr: EthernetAddress) -> Self {
@@ -46,16 +46,16 @@ impl Endpoint {
         Receiver { inner: self, eth_handler: self.addr.into(), handler, }
     }
 
-    pub fn recv_with<H>(&self, handler: H) -> Receiver<FnHandle<H>> {
-        self.recv(FnHandle(handler))
+    pub fn recv_with<H>(&self, handler: H) -> Receiver<FnHandler<H>> {
+        self.recv(FnHandler(handler))
     }
 
     pub fn send<H>(&self, handler: H) -> Sender<H> {
         Sender { _inner: self, eth_handler: self.addr.into(), handler, }
     }
 
-    pub fn send_with<H>(&self, handler: H) -> Sender<FnHandle<H>> {
-        self.send(FnHandle(handler))
+    pub fn send_with<H>(&self, handler: H) -> Sender<FnHandler<H>> {
+        self.send(FnHandler(handler))
     }
 
     fn accepts(&self, dst_addr: EthernetAddress) -> bool {
@@ -136,7 +136,7 @@ where
     }
 }
 
-impl<'a, P: Payload, F> Recv<P> for FnHandle<F>
+impl<'a, P: Payload, F> Recv<P> for FnHandler<F>
     where F: FnMut(Packet<P>)
 {
     fn receive(&mut self, frame: Packet<P>) {
@@ -144,7 +144,7 @@ impl<'a, P: Payload, F> Recv<P> for FnHandle<F>
     }
 }
 
-impl<'a, P: Payload, F> Send<P> for FnHandle<F>
+impl<'a, P: Payload, F> Send<P> for FnHandler<F>
     where F: FnMut(RawPacket<P>)
 {
     fn send(&mut self, frame: RawPacket<P>) {
