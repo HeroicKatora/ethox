@@ -7,6 +7,8 @@ pub use self::slice::Slice;
 pub use self::ordered::Ordered;
 pub use self::partial::Partial;
 
+pub type List<'a, T> = Partial<Slice<'a, T>>;
+
 #[cfg(all(
     not(feature = "std"),
     not(test)))]
