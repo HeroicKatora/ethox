@@ -59,7 +59,7 @@ pub enum Error {
 /// ```rust
 /// # #[cfg(feature = "std")] {
 /// // Only available with feature = "std"
-/// use ethox::endpoint::eth::{Neighbor, NeighborCache};
+/// use ethox::layer::eth::{Neighbor, NeighborCache};
 ///
 /// let mut entry_set = vec![Neighbor::default(); 10];
 /// let mut neighbor_cache = NeighborCache::new(entry_set);
@@ -69,7 +69,7 @@ pub enum Error {
 /// On systems without heap, use:
 ///
 /// ```rust
-/// use ethox::endpoint::eth::{Neighbor, NeighborCache};
+/// use ethox::layer::eth::{Neighbor, NeighborCache};
 ///
 /// let mut neighbor_cache_storage = [Neighbor::default(); 10];
 /// let mut neighbor_cache = NeighborCache::new(&mut neighbor_cache_storage[..]);

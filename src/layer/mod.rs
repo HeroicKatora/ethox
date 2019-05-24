@@ -63,6 +63,15 @@ pub enum Error {
     /// fulfilled. In contrast to `Illegal` this would signal that a smaller size may be possible.
     BadSize,
 
+    /// Unable to find a route towards the destination address.
+    Unreachable,
+
+    /// The action could not be completed because there were not enough resources.
+    ///
+    /// The main difference towards `Illegal` is that implies that it would have been legal with
+    /// more resources. If you get this return value you may want to perform manual cleanup if
+    /// possible or gargabe collect.
+    Exhausted,
     // TODO
 }
 

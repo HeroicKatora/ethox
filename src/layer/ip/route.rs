@@ -1,9 +1,7 @@
 //! CIDR, relevant rfc1519, rfc4632.
 //!
-use core::ops::Bound;
-
-use crate::{Error, Result};
-// use crate::managed::ManagedMap;
+use crate::layer::{Error, Result};
+use crate::managed::List;
 use crate::time::Instant;
 use crate::wire::{IpCidr, IpAddress};
 use crate::wire::{Ipv4Address, Ipv4Cidr};
@@ -12,27 +10,64 @@ use crate::wire::{Ipv6Address, Ipv6Cidr};
 /// A prefix of addresses that should be routed via a router
 #[derive(Debug, Clone, Copy)]
 pub struct Route {
-    pub via_router: IpAddress,
+    /// The network targetted by the route.
+    pub net: IpCidr,
+
+    /// Next hop for this network.
+    pub next_hop: IpAddress,
+
     /// `None` means "forever".
     pub preferred_until: Option<Instant>,
+
     /// `None` means "forever".
     pub expires_at: Option<Instant>,
 }
 
 impl Route {
-    /// Returns a route to 0.0.0.0/0 via the `gateway`, with no expiry.
-    pub fn new_ipv4_gateway(gateway: Ipv4Address) -> Route {
+    /// Establishes a routing `0.0.0.0/0` to `0.0.0.0`.
+    ///
+    /// You can freely use this as an initializer for a slice of routes. Network addresses within
+    /// `0.0.0.0/8` are only valid as source addresses.
+    pub fn ipv4_invalid() -> Self {
         Route {
-            via_router: gateway.into(),
+            net: IpCidr::new(IpAddress::v4(0, 0, 0, 0), 0),
+            next_hop: IpAddress::v4(0, 0, 0, 0).into(),
             preferred_until: None,
             expires_at: None,
         }
     }
 
-    /// Returns a route to ::/0 via the `gateway`, with no expiry.
+    /// A route `::/0` to the reserved, 'unspecified' `::/128` address.
+    pub fn ipv6_invalid() -> Self {
+        Route {
+            net: IpCidr::new(IpAddress::v6(0, 0, 0, 0, 0, 0, 0, 0), 0), 
+            next_hop: IpAddress::v6(0, 0, 0, 0, 0, 0, 0, 0).into(),
+            preferred_until: None,
+            expires_at: None,
+        }
+    }
+
+    /// Returns a route match `0.0.0.0/0` via the `gateway`, with no expiry.
+    ///
+    /// This route is a worst match for all addresses so that it can be used as a sink, for
+    /// example.
+    pub fn new_ipv4_gateway(gateway: Ipv4Address) -> Route {
+        Route {
+            net: IpCidr::new(IpAddress::v4(0, 0, 0, 0), 0),
+            next_hop: gateway.into(),
+            preferred_until: None,
+            expires_at: None,
+        }
+    }
+
+    /// Returns a route match `::/0` via the `gateway`, with no expiry.
+    ///
+    /// This route is a worst match for all addresses so that it can be used as a sink, for
+    /// example.
     pub fn new_ipv6_gateway(gateway: Ipv6Address) -> Route {
         Route {
-            via_router: gateway.into(),
+            net: IpCidr::new(IpAddress::v6(0, 0, 0, 0, 0, 0, 0, 0), 0), 
+            next_hop: gateway.into(),
             preferred_until: None,
             expires_at: None,
         }
@@ -60,49 +95,34 @@ impl Route {
 /// ```
 #[derive(Debug)]
 pub struct Routes<'a> {
-    storage: ManagedMap<'a, IpCidr, Route>,
+    storage: List<'a, Route>,
 }
 
 impl<'a> Routes<'a> {
     /// Creates a routing tables. The backing storage is **not** cleared
     /// upon creation.
-    pub fn new<T>(storage: T) -> Routes<'a>
-            where T: Into<ManagedMap<'a, IpCidr, Route>> {
-        let storage = storage.into();
+    pub fn new(storage: List<'a, Route>) -> Self {
         Routes { storage }
     }
 
     /// Update the routes of this node.
-    pub fn update<F: FnOnce(&mut ManagedMap<'a, IpCidr, Route>)>(&mut self, f: F) {
+    pub fn update<F: FnOnce(&mut [Route])>(&mut self, f: F) {
         f(&mut self.storage);
-    }
-
-    /// Add a default ipv4 gateway (ie. "ip route add 0.0.0.0/0 via `gateway`").
-    ///
-    /// On success, returns the previous default route, if any.
-    pub fn add_default_ipv4_route(&mut self, gateway: Ipv4Address) -> Result<Option<Route>> {
-        let cidr = IpCidr::new(IpAddress::v4(0, 0, 0, 0), 0);
-        let route = Route::new_ipv4_gateway(gateway);
-        match self.storage.insert(cidr, route) {
-            Ok(route) => Ok(route),
-            Err((_cidr, _route)) => Err(Error::Exhausted)
-        }
     }
 
     /// Add a default ipv6 gateway (ie. "ip -6 route add ::/0 via `gateway`").
     ///
     /// On success, returns the previous default route, if any.
-    pub fn add_default_ipv6_route(&mut self, gateway: Ipv6Address) -> Result<Option<Route>> {
-        let cidr = IpCidr::new(IpAddress::v6(0, 0, 0, 0, 0, 0, 0, 0), 0);
-        let route = Route::new_ipv6_gateway(gateway);
-        match self.storage.insert(cidr, route) {
-            Ok(route) => Ok(route),
-            Err((_cidr, _route)) => Err(Error::Exhausted)
+    pub fn add_route(&mut self, route: Route) -> Result<()> {
+        match self.storage.push() {
+            Some(place) => Ok(*place = route),
+            None => Err(Error::Exhausted),
         }
     }
 
-    pub(crate) fn lookup(&self, addr: &IpAddress, timestamp: Instant) ->
-            Option<IpAddress> {
+    pub(crate) fn lookup(&self, addr: &IpAddress, timestamp: Instant)
+        -> Option<IpAddress>
+    {
         assert!(addr.is_unicast());
 
         let cidr = match addr {
@@ -111,26 +131,33 @@ impl<'a> Routes<'a> {
             _ => unimplemented!()
         };
 
-        for (prefix, route) in self.storage.range((Bound::Unbounded, Bound::Included(cidr))).rev() {
-            // TODO: do something with route.preferred_until
+        // The rules say to find the subnet with longest prefix.
+        let mut best_match = None;
+        for route in self.storage.iter() {
             if let Some(expires_at) = route.expires_at {
                 if timestamp > expires_at {
                     continue;
                 }
             }
 
-            if prefix.contains_addr(addr) {
-                return Some(route.via_router);
+            if !route.net.contains_addr(addr) {
+                continue;
+            }
+
+            let best = best_match.get_or_insert(route);
+            if best.net.prefix_len() < route.net.prefix_len() {
+                *best = route;
             }
         }
-
-        None
+        best_match.map(|route| route.next_hop)
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::managed::Partial;
+
     mod mock {
         use super::super::*;
         pub const ADDR_1A: Ipv6Address = Ipv6Address(
@@ -158,8 +185,8 @@ mod test {
 
     #[test]
     fn test_fill() {
-        let mut routes_storage = [None, None, None];
-        let mut routes = Routes::new(&mut routes_storage[..]);
+        let routes_storage = vec![Route::ipv4_invalid(); 3];
+        let mut routes = Routes::new(Partial::new(routes_storage.into()));
 
         assert_eq!(routes.lookup(&ADDR_1A.into(), Instant::from_millis(0)), None);
         assert_eq!(routes.lookup(&ADDR_1B.into(), Instant::from_millis(0)), None);
@@ -168,12 +195,14 @@ mod test {
         assert_eq!(routes.lookup(&ADDR_2B.into(), Instant::from_millis(0)), None);
 
         let route = Route {
-            via_router: ADDR_1A.into(),
-            preferred_until: None, expires_at: None,
+            net: cidr_1().into(),
+            next_hop: ADDR_1A.into(),
+            preferred_until: None,
+            expires_at: None,
         };
-        routes.update(|storage| {
-            storage.insert(cidr_1().into(), route).unwrap();
-        });
+
+        routes.add_route(route)
+            .expect("Can add single route");
 
         assert_eq!(routes.lookup(&ADDR_1A.into(), Instant::from_millis(0)), Some(ADDR_1A.into()));
         assert_eq!(routes.lookup(&ADDR_1B.into(), Instant::from_millis(0)), Some(ADDR_1A.into()));
@@ -182,13 +211,14 @@ mod test {
         assert_eq!(routes.lookup(&ADDR_2B.into(), Instant::from_millis(0)), None);
 
         let route2 = Route {
-            via_router: ADDR_2A.into(),
+            net: cidr_2().into(),
+            next_hop: ADDR_2A.into(),
             preferred_until: Some(Instant::from_millis(10)),
             expires_at: Some(Instant::from_millis(10)),
         };
-        routes.update(|storage| {
-            storage.insert(cidr_2().into(), route2).unwrap();
-        });
+
+        routes.add_route(route2)
+            .expect("Can add second route");
 
         assert_eq!(routes.lookup(&ADDR_1A.into(), Instant::from_millis(0)), Some(ADDR_1A.into()));
         assert_eq!(routes.lookup(&ADDR_1B.into(), Instant::from_millis(0)), Some(ADDR_1A.into()));
