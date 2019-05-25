@@ -10,8 +10,9 @@ categories = ["network-programming", "no-std"]
 
 [dependencies]
 byteorder = "1.0"
+libc = { version = "0.2", optional = true }
 
 [features]
-default = []
-std = []
+default = ["std"]
+std = ["libc"]
 log = []
