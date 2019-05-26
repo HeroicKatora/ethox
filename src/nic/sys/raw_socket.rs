@@ -6,7 +6,16 @@ use std::{mem, io};
 use std::os::unix::io::{RawFd, AsRawFd};
 
 use libc;
-use super::{ifreq, imp, test_result, FdResult, IoLenResult};
+use super::{ifreq, linux, test_result, FdResult, IoLenResult};
+
+mod tap_traits {
+    #[cfg(target_os = "linux")]
+    pub use super::linux::IfIndex;
+    #[cfg(target_os = "linux")]
+    pub use super::linux::NetdeviceMtu;
+}
+
+use tap_traits::{IfIndex, NetdeviceMtu};
 
 #[derive(Debug)]
 pub struct RawSocketDesc {
@@ -26,7 +35,7 @@ impl RawSocketDesc {
             libc::socket(
                 libc::AF_PACKET,
                 libc::SOCK_RAW | libc::SOCK_NONBLOCK,
-                imp::ETH_P_ALL.to_be() as i32)
+                linux::ETH_P_ALL.to_be() as i32)
         };
 
         test_result(FdResult(lower))?;
@@ -38,15 +47,15 @@ impl RawSocketDesc {
     }
 
     pub fn interface_mtu(&mut self) -> io::Result<usize> {
-        self.ifreq.ioctl(self.lower, imp::SIOCGIFMTU)
+        self.ifreq.get_mtu(self.lower)
             .map(|mtu| mtu as usize)
     }
 
     pub fn bind_interface(&mut self) -> io::Result<()> {
         let sockaddr = libc::sockaddr_ll {
             sll_family:   libc::AF_PACKET as u16,
-            sll_protocol: imp::ETH_P_ALL.to_be() as u16,
-            sll_ifindex:  self.ifreq.ioctl(self.lower, imp::SIOCGIFINDEX)?,
+            sll_protocol: linux::ETH_P_ALL.to_be() as u16,
+            sll_ifindex:  self.ifreq.get_if_index(self.lower)?,
             sll_hatype:   1,
             sll_pkttype:  0,
             sll_halen:    6,

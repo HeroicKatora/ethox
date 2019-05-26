@@ -17,8 +17,7 @@ use libc;
 use crate::time::Duration;
 
 #[cfg(target_os = "linux")]
-#[path = "linux.rs"]
-mod imp;
+mod linux;
 
 #[cfg(target_os = "linux")]
 mod raw_socket;
@@ -102,12 +101,13 @@ impl LibcResult for IoLenResult {
     }
 }
 
+/// Base for an if ioctl request.
+///
+/// Contains the name of the interface.
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 struct ifreq {
     ifr_name: [libc::c_char; libc::IF_NAMESIZE],
-    /// ifr_ifindex or ifr_mtu
-    ifr_data: libc::c_int,
 }
 
 impl ifreq {
@@ -120,25 +120,7 @@ impl ifreq {
 
         ifreq {
             ifr_name,
-            ifr_data: 0,
         }
-    }
-
-    // TODO: properly abstract this.
-    //
-    // The `ifreq` is not valid for all `lower` commands.
-    fn ioctl(
-        &mut self,
-        lower: libc::c_int,
-        cmd: libc::c_ulong,
-    ) -> io::Result<libc::c_int> {
-        let res = unsafe {
-            libc::ioctl(lower, cmd, self as *mut ifreq)
-        };
-
-        test_result(IoctlResult(res))?;
-
-        Ok(self.ifr_data)
     }
 }
 

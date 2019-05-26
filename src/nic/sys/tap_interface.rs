@@ -6,7 +6,17 @@ use std::io;
 use std::os::unix::io::{RawFd, AsRawFd};
 
 use libc;
-use super::{FdResult, IoLenResult, ifreq, imp, test_result};
+use super::{FdResult, IoLenResult, ifreq, test_result};
+
+mod tap_traits {
+    #[cfg(target_os = "linux")]
+    pub use super::super::linux::TunSetIf;
+
+    #[cfg(target_os = "linux")]
+    pub use super::super::linux::NetdeviceMtu;
+}
+
+use tap_traits::{NetdeviceMtu, TunSetIf};
 
 #[derive(Debug)]
 pub struct TapInterfaceDesc {
@@ -39,24 +49,22 @@ impl TapInterfaceDesc {
     }
 
     pub fn attach_interface(&mut self) -> io::Result<()> {
-        self.ifreq.ifr_data = imp::IFF_TAP | imp::IFF_NO_PI;
-        self.ifreq.ioctl(self.lower, imp::TUNSETIFF)
-            .map(|_| ())
+        self.ifreq.tun_set_tap(self.lower)
     }
 
-    // Private for now until I've resolved what happens here.
-    // FIXME: see comment inside.
-    fn interface_mtu(&mut self) -> io::Result<usize> {
+    /// Try to find the mtu of the tap.
+    ///
+    /// Works (more or less) by opening an `AF_INET/PROTO_IP` socket and querying its mtu.
+    pub fn interface_mtu(&mut self) -> io::Result<usize> {
         let lower = unsafe {
             libc::socket(libc::AF_INET, libc::SOCK_DGRAM, libc::IPPROTO_IP)
         };
 
         test_result(FdResult(lower))?;
 
-        let mtu = self.ifreq.ioctl(lower, imp::SIOCGIFMTU)
+        let mtu = self.ifreq.get_mtu(self.lower)
             .map(|mtu| mtu as usize);
 
-        // FIXME: what???
         unsafe { libc::close(lower); }
 
         mtu
