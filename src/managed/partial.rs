@@ -28,6 +28,10 @@ impl<C> Partial<C> {
         }
     }
 
+    pub fn inner(&self) -> &C {
+        &self.inner
+    }
+
     /// Set the length to which to refer.
     ///
     /// This does not check that the underlying storage actually has the claimed length. Setting a
@@ -67,6 +71,15 @@ impl<C, T> Partial<C>
 
     pub fn as_slice(&self) -> &[T] {
         &self.inner[..self.end]
+    }
+
+    /// Retrieve the logical path of the underlying container if possible.
+    ///
+    /// This is a non-panicking variant of index access.
+    pub fn get<'a, I>(&'a self, idx: I) -> Option<&'a I::Output>
+        where I: SliceIndex<[T]>, T: 'a,
+    {
+        self.inner.get(idx)
     }
 }
 
@@ -130,19 +143,10 @@ impl<C, T> Partial<C>
     /// Retrieve the logical path of the underlying container if possible.
     ///
     /// This is a non-panicking variant of index access.
-    pub fn get<I>(&self, idx: I) -> Option<&I::Output>
-        where I: SliceIndex<[T]>
+    pub fn get_mut<'a, I>(&'a mut self, idx: I) -> Option<&'a mut I::Output>
+        where I: SliceIndex<[T]>, T: 'a,
     {
-        unimplemented!()
-    }
-
-    /// Retrieve the logical path of the underlying container if possible.
-    ///
-    /// This is a non-panicking variant of index access.
-    pub fn get_mut<I>(&mut self, idx: I) -> Option<&mut I::Output>
-        where I: SliceIndex<[T]>
-    {
-        unimplemented!()
+        self.inner.get_mut(idx)
     }
 }
 

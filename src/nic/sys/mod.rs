@@ -30,7 +30,7 @@ mod tap_interface;
 /// the super module.
 pub mod exports {
     #[cfg(target_os = "linux")]
-    pub use super::tap_interface::TapInterfaceDesc;
+    pub use super::tap_interface::{TapInterface, TapInterfaceDesc};
     #[cfg(target_os = "linux")]
     pub use super::raw_socket::RawSocketDesc;
 }
