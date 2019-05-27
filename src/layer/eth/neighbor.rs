@@ -32,6 +32,15 @@ pub enum Answer {
     RateLimited
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mapping {
+    /// An address is present.
+    Address(EthernetAddress),
+
+    /// We don't have a mapping but are looking for one.
+    LookingFor,
+}
+
 /// An expiration time, inversion of `Option`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Expiration {

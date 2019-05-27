@@ -43,6 +43,7 @@
 //! provided by each layer endpoint (which should be implementable by a user as well). The
 //! functionality that provides the packet representation is called `Payload` and `PayloadMut`.
 
+pub mod arp;
 pub mod eth;
 pub mod ip;
 pub mod udp;
