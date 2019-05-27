@@ -2,7 +2,7 @@ use core::ops;
 use core::fmt;
 use byteorder::{ByteOrder, NetworkEndian};
 
-use crate::wire::{Error, Result, Payload, PayloadError, PayloadMut, payload};
+use crate::wire::{Error, Reframe, Result, Payload, PayloadError, PayloadMut, payload};
 
 enum_with_unknown! {
     /// Ethernet protocol type.
@@ -285,7 +285,14 @@ impl<T: Payload + PayloadMut> PayloadMut for Frame<T> {
     }
 
     fn resize(&mut self, length: usize) -> core::result::Result<(), PayloadError> {
-        unimplemented!()
+        self.buffer.resize(length + field::PAYLOAD.start)
+    }
+
+    fn reframe(&mut self, mut reframe: Reframe)
+        -> core::result::Result<(), PayloadError> 
+    {
+        reframe.within_header(field::PAYLOAD.start);
+        self.buffer.reframe(reframe)
     }
 }
 

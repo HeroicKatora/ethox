@@ -139,7 +139,7 @@ pub enum Checksum {
     Ignored,
 }
 
-pub use self::payload_impl::{Payload, PayloadMut, Error as PayloadError, payload};
+pub use self::payload_impl::{Reframe, Payload, PayloadMut, Error as PayloadError, payload};
 
 pub use self::pretty_print::PrettyPrinter;
 

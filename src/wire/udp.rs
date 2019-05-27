@@ -1,9 +1,8 @@
-use core::ops;
-use core::fmt;
+use core::{fmt, ops};
 use byteorder::{ByteOrder, NetworkEndian};
 
 use super::{Error, IpProtocol, IpAddress, Result};
-use super::{Payload, PayloadError, PayloadMut, payload};
+use super::{Reframe, Payload, PayloadError, PayloadMut, payload};
 use super::ip::checksum;
 
 /// A read/write wrapper around an User Datagram Protocol packet buffer.
@@ -275,7 +274,14 @@ impl<T: Payload + PayloadMut> PayloadMut for Packet<T> {
     }
 
     fn resize(&mut self, length: usize) -> core::result::Result<(), PayloadError> {
-        unimplemented!()
+        self.buffer.resize(length + field::CHECKSUM.end)
+    }
+
+    fn reframe(&mut self, mut reframe: Reframe)
+        -> core::result::Result<(), PayloadError> 
+    {
+        reframe.within_header(field::CHECKSUM.end);
+        self.buffer.reframe(reframe)
     }
 }
 

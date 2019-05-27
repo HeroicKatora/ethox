@@ -1,8 +1,7 @@
-use core::fmt;
-use core::ops;
+use core::{fmt, ops};
 use byteorder::{ByteOrder, NetworkEndian};
 
-use super::{Payload, PayloadError, PayloadMut, payload};
+use super::{Reframe, Payload, PayloadError, PayloadMut, payload};
 use super::{Error, Checksum, Result};
 use super::ip::{checksum, pretty_print_ip_payload};
 use super::field::Field;
@@ -587,7 +586,16 @@ impl<T: Payload + PayloadMut> PayloadMut for Packet<T> {
     }
 
     fn resize(&mut self, length: usize) -> core::result::Result<(), PayloadError> {
-        unimplemented!()
+        let hdr_len = self.payload_range().start;
+        self.buffer.resize(length + hdr_len)
+    }
+
+    fn reframe(&mut self, mut reframe: Reframe)
+        -> core::result::Result<(), PayloadError> 
+    {
+        let hdr_len = self.payload_range().start;
+        reframe.within_header(hdr_len);
+        self.buffer.reframe(reframe)
     }
 }
 

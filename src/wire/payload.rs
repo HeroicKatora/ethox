@@ -1,5 +1,6 @@
 //! Newtype wrappers of the fundamental byte-buffer `[u8]`.
 use core::ops;
+
 use crate::managed::Slice;
 
 /// A specialized, internal variant of `Borrow<payload>`.
@@ -22,10 +23,27 @@ pub trait PayloadMut: Payload {
     /// Resize the payload.
     ///
     /// New bytes will be intialized with some value, likely `0` but not guaranteed.
-    fn resize(&mut self, _: usize) -> Result<(), Error>;
+    fn resize(&mut self, length: usize) -> Result<(), Error>;
+
+    /// Resize the payload while keeping some data.
+    ///
+    /// Should either fully work or outright fail. The given range of payload data must be
+    /// logically unchanged. In particular it should also be placed at the same relative position
+    /// in the payload.
+    ///
+    /// The implementation only ever has to preserve the overlap between `keep` and the current and
+    /// the new payload length. It is valid to pass in `0..usize::MAX` to keep all of the payload
+    /// which fits into the resize length. When resized to a larger frame the initialization should
+    /// be `0` but this must not be relied upon.
+    fn reframe(&mut self, reframe: Reframe) -> Result<(), Error>;
 
     /// Retrieve the mutable, inner payload.
     fn payload_mut(&mut self) -> &mut payload;
+}
+
+pub struct Reframe {
+    pub length: usize,
+    pub range: ops::Range<usize>,
 }
 
 /// A dynamically sized type representing a packet payload.
@@ -47,6 +65,15 @@ impl payload {
 
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         &mut self.0
+    }
+}
+
+impl Reframe {
+    /// Modify to include a header structure.
+    pub fn within_header(&mut self, header: usize) {
+        self.range.start = 0;
+        self.range.end += header;
+        self.length += header;
     }
 }
 
@@ -118,6 +145,10 @@ impl PayloadMut for [u8] {
             Err(Error::BadSize)
         }
     }
+
+    fn reframe(&mut self, reframe: Reframe) -> Result<(), Error> {
+        self.resize(reframe.length)
+    }
 }
 
 impl Payload for payload {
@@ -133,6 +164,10 @@ impl PayloadMut for payload {
 
     fn resize(&mut self, len: usize) -> Result<(), Error> {
         self.as_mut_slice().resize(len)
+    }
+
+    fn reframe(&mut self, reframe: Reframe) -> Result<(), Error> {
+        self.resize(reframe.length)
     }
 }
 
@@ -156,6 +191,10 @@ impl<P: PayloadMut + ?Sized> PayloadMut for &'_ mut P {
     fn resize(&mut self, length: usize) -> Result<(), Error> {
         (**self).resize(length)
     }
+
+    fn reframe(&mut self, reframe: Reframe) -> Result<(), Error> {
+        (**self).reframe(reframe)
+    }
 }
 
 impl Payload for Slice<'_, u8> {
@@ -174,8 +213,14 @@ impl PayloadMut for Slice<'_, u8> {
 
         let result;
         let inner = match inner {
-            Slice::One(one) => {
+            // Not the requested length.
+            Slice::One(one) if length != 1 => {
                 result = Err(Error::BadSize);
+                Slice::One(one)
+            },
+            // Can fulfil exactly.
+            Slice::One(one) => {
+                result = Ok(());
                 Slice::One(one)
             },
             Slice::Many(mut vec) => {
@@ -197,24 +242,35 @@ impl PayloadMut for Slice<'_, u8> {
         core::mem::replace(self, inner);
         result
     }
+
+    fn reframe(&mut self, reframe: Reframe) -> Result<(), Error> {
+        // We always preserve the full prefix.
+        self.resize(reframe.length)
+    }
 }
 
 mod std_impls {
     use crate::Vec;
+    use super::{Error, Reframe, Payload, PayloadMut, payload};
 
-    impl super::Payload for Vec<u8> {
+    impl Payload for Vec<u8> {
         fn payload(&self) -> &super::payload {
             self.as_slice().into()
         }
     }
 
-    impl super::PayloadMut for Vec<u8> {
-        fn payload_mut(&mut self) -> &mut super::payload {
+    impl PayloadMut for Vec<u8> {
+        fn payload_mut(&mut self) -> &mut payload {
             self.as_mut_slice().into()
         }
 
-        fn resize(&mut self, length: usize) -> Result<(), super::Error> {
+        fn resize(&mut self, length: usize) -> Result<(), Error> {
             Ok(self.resize(length, 0u8))
+        }
+
+        fn reframe(&mut self, reframe: Reframe) -> Result<(), Error> {
+            // We always preserve the full prefix.
+            PayloadMut::resize(self, reframe.length)
         }
     }
 }

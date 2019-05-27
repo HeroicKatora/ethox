@@ -1,7 +1,7 @@
 use core::ops::{Deref, DerefMut};
 use core::slice::SliceIndex;
 
-use crate::wire::{Payload, PayloadError, PayloadMut, payload};
+use crate::wire::{Reframe, Payload, PayloadError, PayloadMut, payload};
 
 /// Refer to a part of some storage.
 ///
@@ -207,6 +207,10 @@ impl<C: PayloadMut> PayloadMut for Partial<C> {
             self.end = len;
             Ok(())
         }
+    }
+
+    fn reframe(&mut self, reframe: Reframe) -> Result<(), PayloadError> {
+        self.resize(reframe.length)
     }
 }
 
