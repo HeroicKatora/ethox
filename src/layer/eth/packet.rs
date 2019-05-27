@@ -10,7 +10,7 @@ pub struct Packet<'a, P: Payload> {
 pub struct RawPacket<'a, P: Payload> {
     pub handle: Handle<'a>,
     pub payload: &'a mut P,
-    pub init: Init,
+    pub init: Option<Init>,
 }
 
 pub struct Handle<'a> {
@@ -20,15 +20,15 @@ pub struct Handle<'a> {
 
 /// Initializer for a packet.
 pub struct Init {
-    pub from: EthernetAddress,
-    pub to: Option<EthernetAddress>,
-    pub ethertype: Option<EthernetProtocol>,
+    pub src_addr: EthernetAddress,
+    pub dst_addr: EthernetAddress,
+    pub ethertype: EthernetProtocol,
     pub payload: usize,
 }
 
 /// The interface to the endpoint.
 pub(crate) trait Endpoint{
-    fn init(&mut self) -> Init;
+    fn src_addr(&mut self) -> EthernetAddress;
     fn resolve(&mut self, _: IpAddress) -> Result<EthernetAddress>;
 }
 
@@ -71,17 +71,35 @@ impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
         handle: Handle<'a>,
         payload: &'a mut P,
     ) -> Self {
-        let init = handle.endpoint.init();
         RawPacket {
             handle,
-            init,
+            init: None,
             payload,
         }
     }
 
+    pub fn src_addr(&mut self) -> EthernetAddress {
+        self.handle.endpoint.src_addr()
+    }
+
+    /// Try to initialize the destination from an upper layer protocol address.
+    ///
+    /// Failure to satisfy the request is clearly signalled.
+    pub fn resolve(&mut self, dst_addr: IpAddress) -> Result<()> {
+        let init = match &mut self.init {
+            Some(init) => init,
+            None => return Err(Error::Illegal),
+        };
+        init.dst_addr = self.handle.endpoint.resolve(dst_addr)?;
+        Ok(())
+    }
+
     pub fn prepare(mut self) -> Result<Packet<'a, P>> {
         let mut payload = self.payload;
-        let repr = self.init.initialize(&mut payload)?;
+        let repr = self.init
+            .as_mut()
+            .ok_or(Error::Illegal)?
+            .initialize(&mut payload)?;
         self.handle.nic_handle.queue()?;
         Ok(Packet {
             handle: self.handle,
@@ -91,41 +109,18 @@ impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
 }
 
 impl Init {
-    pub fn set_dst_addr(&mut self, addr: EthernetAddress) {
-        self.to = Some(addr);
-    }
-
-    pub fn set_ethertype(&mut self, ethertype: EthernetProtocol) {
-        self.ethertype = Some(ethertype);
-    }
-
-    pub fn set_payload_len(&mut self, length: usize) {
-        self.payload = length;
-    }
-
     fn initialize<P: PayloadMut>(&mut self, payload: &mut P) -> Result<EthernetRepr> {
-        let dst_addr = self.to.ok_or(Error::Illegal)?;
-        let ethertype = self.ethertype.ok_or(Error::Illegal)?;
         let real_len = ethernet_frame::buffer_len(self.payload);
+        let repr = EthernetRepr {
+            src_addr: self.src_addr,
+            dst_addr: self.dst_addr,
+            ethertype: self.ethertype,
+        };
 
         payload.resize(real_len)?;
+        let ethernet = ethernet_frame::new_unchecked_mut(payload.payload_mut());
+        repr.emit(ethernet);
 
-        Ok(EthernetRepr {
-            src_addr: self.from,
-            dst_addr,
-            ethertype,
-        })
-    }
-}
-
-
-impl From<EthernetAddress> for Init {
-    fn from(addr: EthernetAddress) -> Self {
-        Init {
-            from: addr,
-            to: None,
-            ethertype: None,
-            payload: 0,
-        }
+        Ok(repr)
     }
 }

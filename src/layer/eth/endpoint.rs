@@ -4,7 +4,7 @@ use crate::wire::{EthernetAddress, EthernetFrame, IpAddress,  Payload, PayloadMu
 use crate::nic;
 
 use super::{Recv, Send};
-use super::packet::{self, Init, Handle, Packet, RawPacket};
+use super::packet::{self, Handle, Packet, RawPacket};
 use super::neighbor::{Cache};
 
 pub struct Endpoint<'a> {
@@ -86,8 +86,8 @@ impl<'a> Endpoint<'a> {
 }
 
 impl packet::Endpoint for EthEndpoint<'_, '_> {
-    fn init(&mut self) -> Init {
-        self.inner.addr.into()
+    fn src_addr(&mut self) -> EthernetAddress {
+        self.inner.addr
     }
 
     fn resolve(&mut self, addr: IpAddress) -> Result<EthernetAddress> {
@@ -155,7 +155,7 @@ mod tests {
     use super::*;
     use crate::managed::Slice;
     use crate::nic::{external::External, Device};
-    use crate::layer::eth::NeighborCache;
+    use crate::layer::eth::{Init, NeighborCache};
     use crate::wire::{EthernetAddress, EthernetProtocol};
 
     const MAC_ADDR_1: EthernetAddress = EthernetAddress([0, 1, 2, 3, 4, 5]);
@@ -170,9 +170,13 @@ mod tests {
          0x00, 0xff];
 
     fn simple_send<P: Payload + PayloadMut>(mut frame: RawPacket<P>) {
-        frame.init.set_dst_addr(MAC_ADDR_1);
-        frame.init.set_ethertype(EthernetProtocol::Unknown(0xBEEF));
-        frame.init.set_payload_len(PAYLOAD_BYTES.len());
+        let src_addr = frame.src_addr();
+        frame.init = Some(Init {
+            src_addr,
+            dst_addr: MAC_ADDR_1,
+            ethertype: EthernetProtocol::Unknown(0xBEEF),
+            payload: PAYLOAD_BYTES.len(),
+        });
         let mut prepared = frame.prepare()
             .expect("Preparing frame mustn't fail in controlled environment");
         prepared
