@@ -5,7 +5,7 @@ no_std)]
 
 pub mod nic;
 pub mod layer;
-mod managed;
+pub mod managed;
 #[macro_use] mod macros;
 pub mod storage;
 pub mod time;

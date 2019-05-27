@@ -1,11 +1,11 @@
 //! CIDR, relevant rfc1519, rfc4632.
 //!
 use crate::layer::{Error, Result};
-use crate::managed::List;
+use crate::managed::{List, Slice};
 use crate::time::Instant;
 use crate::wire::{IpCidr, IpAddress};
-use crate::wire::{Ipv4Address, Ipv4Cidr};
-use crate::wire::{Ipv6Address, Ipv6Cidr};
+use crate::wire::Ipv4Address;
+use crate::wire::Ipv6Address;
 
 /// A prefix of addresses that should be routed via a router
 #[derive(Debug, Clone, Copy)]
@@ -24,6 +24,19 @@ pub struct Route {
 }
 
 impl Route {
+    /// A route without specified target.
+    ///
+    /// May be used as a placeholder for storage where the address is not assigned yet and where
+    /// the more specific placeholders `ipv4_invalid` and `ipv6_invalid` are less precise.
+    pub fn unspecified() -> Self {
+        Route {
+            net: IpCidr::new(IpAddress::v4(0, 0, 0, 0), 0),
+            next_hop: IpAddress::Unspecified,
+            preferred_until: None,
+            expires_at: None,
+        }
+    }
+
     /// Establishes a routing `0.0.0.0/0` to `0.0.0.0`.
     ///
     /// You can freely use this as an initializer for a slice of routes. Network addresses within
@@ -81,16 +94,21 @@ impl Route {
 /// On systems with heap, this table can be created with:
 ///
 /// ```rust
-/// use std::collections::BTreeMap;
-/// use smoltcp::iface::Routes;
-/// let mut routes = Routes::new(BTreeMap::new());
+/// # #[cfg(feature = "std")] {
+/// use ethox::layer::ip::{Route, Routes};
+/// use ethox::managed::List;
+/// 
+/// let mut routes_storage = vec![Route::unspecified(); 10];
+/// let mut routes = Routes::new(routes_storage);
+/// # }
 /// ```
 ///
 /// On systems without heap, use:
 ///
 /// ```rust
-/// use smoltcp::iface::Routes;
-/// let mut routes_storage = [];
+/// use ethox::layer::ip::{Route, Routes};
+///
+/// let mut routes_storage = [Route::unspecified(); 10];
 /// let mut routes = Routes::new(&mut routes_storage[..]);
 /// ```
 #[derive(Debug)]
@@ -99,9 +117,19 @@ pub struct Routes<'a> {
 }
 
 impl<'a> Routes<'a> {
+    /// Creates an empty routing tables.
+    ///
+    /// The storage is not touched but no element within it is used for route searching by default.
+    /// See `import` for creating routes from a pre-filled list.
+    pub fn new<T>(storage: T) -> Self
+        where T: Into<Slice<'a, Route>>
+    {
+        Routes::import(List::new(storage.into()))
+    }
+
     /// Creates a routing tables. The backing storage is **not** cleared
     /// upon creation.
-    pub fn new(storage: List<'a, Route>) -> Self {
+    pub fn import(storage: List<'a, Route>) -> Self {
         Routes { storage }
     }
 
@@ -120,16 +148,10 @@ impl<'a> Routes<'a> {
         }
     }
 
-    pub(crate) fn lookup(&self, addr: &IpAddress, timestamp: Instant)
+    pub fn lookup(&self, addr: &IpAddress, timestamp: Instant)
         -> Option<IpAddress>
     {
         assert!(addr.is_unicast());
-
-        let cidr = match addr {
-            IpAddress::Ipv4(addr) => IpCidr::Ipv4(Ipv4Cidr::new(*addr, 32)),
-            IpAddress::Ipv6(addr) => IpCidr::Ipv6(Ipv6Cidr::new(*addr, 128)),
-            _ => unimplemented!()
-        };
 
         // The rules say to find the subnet with longest prefix.
         let mut best_match = None;
@@ -156,10 +178,11 @@ impl<'a> Routes<'a> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::managed::Partial;
 
     mod mock {
         use super::super::*;
+        use crate::wire::Ipv6Cidr;
+
         pub const ADDR_1A: Ipv6Address = Ipv6Address(
                 [0xfe, 0x80, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 1]);
         pub const ADDR_1B: Ipv6Address = Ipv6Address(
@@ -186,7 +209,7 @@ mod test {
     #[test]
     fn test_fill() {
         let routes_storage = vec![Route::ipv4_invalid(); 3];
-        let mut routes = Routes::new(Partial::new(routes_storage.into()));
+        let mut routes = Routes::new(routes_storage);
 
         assert_eq!(routes.lookup(&ADDR_1A.into(), Instant::from_millis(0)), None);
         assert_eq!(routes.lookup(&ADDR_1B.into(), Instant::from_millis(0)), None);

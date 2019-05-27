@@ -15,9 +15,12 @@ pub struct Ordered<'a, T> {
 }
 
 impl<'a, T> Ordered<'a, T> {
-    pub fn new(slice: Slice<'a, T>) -> Self {
+    /// Create an empty ordered slice with a backing storage.
+    pub fn new<S>(slice: S) -> Self
+        where S: Into<Slice<'a, T>>
+    {
         Ordered {
-            inner: slice,
+            inner: slice.into(),
             start: 0,
         }
     }
@@ -104,7 +107,7 @@ impl<'a, C, T> From<C> for Ordered<'a, T>
     where Slice<'a, T>: From<C>
 {
     fn from(collection: C) -> Self {
-        Self::new(collection.into())
+        Self::new(collection)
     }
 }
 

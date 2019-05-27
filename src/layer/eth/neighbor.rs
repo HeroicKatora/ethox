@@ -104,14 +104,20 @@ impl<'a> Cache<'a> {
 
     /// Create a cache.
     ///
-    /// The backing storage can be prefilled before creation. Be careful as having duplicate
-    /// entries for the same protocol address may make some functions panic. This is currently not
-    /// checked!
-    // TODO: remove duplicate entires, e.g. `slice::partition_dedup_by_key` once stable.
+    /// The backing storage is created logically empty.
     pub fn new<T>(storage: T) -> Cache<'a>
         where T: Into<Ordered<'a, Neighbor>>
     {
-        let storage = storage.into();
+        Self::import(storage.into())
+    }
+
+    /// Create a cache from pre-filled neighbor data.
+    ///
+    /// The backing storage is not cleared and can be arbitrarily pre-filled. Be careful as having
+    /// duplicate entries for the same protocol address may make some functions panic. This is
+    /// currently not checked beforehand!
+    // TODO: remove duplicate entires, e.g. `slice::partition_dedup_by_key` once stable.
+    pub fn import(storage: Ordered<'a, Neighbor>) -> Self {
         Cache { storage, silent_until: Instant::from_millis(0) }
     }
 
