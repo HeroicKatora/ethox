@@ -256,6 +256,7 @@ impl ipv4 {
         Self::__from_macro_new_unchecked(buffer)
     }
 
+    /// Imbue a mutable octet buffer with IPv4 packet structure.
     pub fn new_unchecked_mut(buffer: &mut [u8]) -> &mut ipv4 {
         Self::__from_macro_new_unchecked_mut(buffer)
     }
@@ -270,10 +271,12 @@ impl ipv4 {
         Ok(packet)
     }
 
+    /// Unwrap the packet as a raw byte slice.
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 
+    /// Unwrap the packet as a mutable raw byte slice.
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
         &mut self.0
     }

@@ -28,8 +28,19 @@ impl<C> Partial<C> {
         }
     }
 
+    /// Get a reference to the underlying buffer.
     pub fn inner(&self) -> &C {
         &self.inner
+    }
+
+    /// Get a mutable reference to the underlying buffer.
+    pub fn inner_mut(&mut self) -> &mut C {
+        &mut self.inner
+    }
+
+    /// Unwrap the inner buffer.
+    pub fn into_inner(self) -> C {
+        self.inner
     }
 
     /// Set the length to which to refer.
@@ -69,6 +80,7 @@ impl<C, T> Partial<C>
         }
     }
 
+    /// Get the logically active elements as a slice.
     pub fn as_slice(&self) -> &[T] {
         &self.inner[..self.end]
     }
@@ -136,6 +148,7 @@ impl<C, T> Partial<C>
         self.remove_at(self.end.wrapping_sub(1))
     }
 
+    /// Get the logically active elements as a mutable slice.
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         &mut self.inner[..self.end]
     }

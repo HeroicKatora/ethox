@@ -99,10 +99,12 @@ mod field {
 }
 
 impl ethernet {
+    /// Imbue a raw octet buffer with IPv4 packet structure.
     pub fn new_unchecked(data: &[u8]) -> &Self {
         Self::__from_macro_new_unchecked(data)
     }
 
+    /// Imbue a mutable octet buffer with IPv4 packet structure.
     pub fn new_unchecked_mut(data: &mut [u8]) -> &mut Self {
         Self::__from_macro_new_unchecked_mut(data)
     }
@@ -117,10 +119,12 @@ impl ethernet {
         Ok(Self::new_unchecked_mut(data))
     }
 
+    /// Unwrap the packet as a raw byte slice.
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 
+    /// Unwrap the packet as a mutable raw byte slice.
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
         &mut self.0
     }
