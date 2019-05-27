@@ -1,4 +1,4 @@
-use crate::layer::{Result, Error};
+use crate::layer::{Result, Error, FnHandler};
 use crate::time::Instant;
 use crate::wire::{EthernetAddress, EthernetFrame, IpAddress,  Payload, PayloadMut};
 use crate::nic;
@@ -45,8 +45,6 @@ struct EthEndpoint<'a, 'e> {
     /// The current timestamp for this operation.
     time: Instant,
 }
-
-pub struct FnHandler<F>(pub F);
 
 impl<'a> Endpoint<'a> {
     pub fn new<C>(addr: EthernetAddress, neighbors: C) -> Self 

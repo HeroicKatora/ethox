@@ -75,6 +75,12 @@ pub enum Error {
     // TODO
 }
 
+/// A standard wrapper for a function implementing receive or send traits.
+///
+/// Keeps the type alias overhead low by providing a single wrapper type that implements the send
+/// and receive traits for all layers, where applicable.
+pub struct FnHandler<F>(pub F);
+
 /// Can convert from a wire error.
 ///
 /// This indicates some layer tried to operate on a packet but failed.

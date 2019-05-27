@@ -75,6 +75,12 @@ pub trait PrettyPrint {
                     indent: &mut PrettyIndent) -> fmt::Result;
 }
 
+/// Zero-sized marker type for pretty printers.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Formatter<T: PrettyPrint + ?Sized> {
+    _inner: PhantomData<T>,
+}
+
 /// Wrapper for using a `PrettyPrint` where a `Display` is expected.
 pub struct PrettyPrinter<'a, T: PrettyPrint + ?Sized> {
     prefix:  &'static str,
@@ -107,5 +113,19 @@ impl<'a, T: PrettyPrint + AsRef<[u8]> + ?Sized> PrettyPrinter<'a, T> {
 impl<'a, T: PrettyPrint + ?Sized> fmt::Display for PrettyPrinter<'a, T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         T::pretty_print(&self.buffer, f, &mut PrettyIndent::new(self.prefix))
+    }
+}
+
+impl<T: PrettyPrint + ?Sized> Clone for Formatter<T> {
+    fn clone(&self) -> Self {
+        Formatter { ..*self } 
+    }
+}
+
+impl<T: PrettyPrint + ?Sized> Copy for Formatter<T> { }
+
+impl<T: PrettyPrint + ?Sized> Default for Formatter<T> {
+    fn default() -> Self {
+        Formatter { _inner: PhantomData::default() } 
     }
 }

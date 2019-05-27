@@ -41,6 +41,7 @@ impl ifreq {
 impl TunSetIf for ifreq {
     fn tun_set_if(&mut self, fd: libc::c_int, kind: libc::c_int) -> io::Result<()> {
         #[repr(C)]
+        #[derive(Debug)]
         struct Request {
             interface: ifreq,
             kind: libc::c_int,
@@ -51,9 +52,13 @@ impl TunSetIf for ifreq {
             kind,
         };
 
+        dbg!((fd, &request));
+
         let res = unsafe {
             libc::ioctl(fd, Self::TUNSETIFF, &mut request as *mut _)
         };
+
+        dbg!(res);
 
         test_result(IoctlResult(res))?;
 

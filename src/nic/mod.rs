@@ -9,7 +9,9 @@ mod personality;
 mod sys;
 
 use crate::wire::Payload;
-use crate::layer::Result;
+use crate::layer::{Result, FnHandler};
+#[cfg(feature = "std")]
+use crate::wire::{ethernet_frame, pretty_print::{Formatter, PrettyPrinter}};
 
 pub use self::personality::{
     Capabilities,
@@ -87,6 +89,32 @@ pub trait Send<H: Handle + ?Sized, P: Payload + ?Sized> {
         for packet in packets.into_iter() {
             self.send(packet)
         }
+    }
+}
+
+impl<F, H: Handle + ?Sized, P: Payload + ?Sized> Recv<H, P> for FnHandler<F>
+    where F: FnMut(Packet<H, P>)
+{
+    fn receive(&mut self, packet: Packet<H, P>) {
+        (self.0)(packet)
+    }
+}
+
+impl<F, H: Handle + ?Sized, P: Payload + ?Sized> Send<H, P> for FnHandler<F>
+    where F: FnMut(Packet<H, P>)
+{
+    fn send(&mut self, packet: Packet<H, P>) {
+        (self.0)(packet)
+    }
+}
+
+/// Available only on `std` because it prints to standard out.
+#[cfg(feature = "std")]
+impl<H: Handle + ?Sized, P: Payload + ?Sized> Recv<H, P> for Formatter<ethernet_frame> {
+    fn receive(&mut self, frame: Packet<H, P>) {
+        let printer = PrettyPrinter::<ethernet_frame>
+            ::new("", frame.payload.payload().as_slice());
+        eprintln!("{}", printer);
     }
 }
 

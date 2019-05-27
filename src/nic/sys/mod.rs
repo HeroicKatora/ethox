@@ -32,7 +32,7 @@ pub mod exports {
     #[cfg(target_os = "linux")]
     pub use super::tap_interface::{TapInterface, TapInterfaceDesc};
     #[cfg(target_os = "linux")]
-    pub use super::raw_socket::RawSocketDesc;
+    pub use super::raw_socket::{RawSocket, RawSocketDesc};
 }
 
 /// Wait until given file descriptor becomes readable, but no longer than given timeout.

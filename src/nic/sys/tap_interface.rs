@@ -35,6 +35,12 @@ pub struct TapInterface<C> {
     last_err: Option<io::Error>,
 }
 
+enum Received {
+    NoData,
+    Ok,
+    Err(crate::layer::Error),
+}
+
 impl AsRawFd for TapInterfaceDesc {
     fn as_raw_fd(&self) -> RawFd {
         self.lower
@@ -145,12 +151,16 @@ impl<C: PayloadMut> TapInterface<C> {
         }
     }
 
-    fn recv(&mut self) -> nic::Result<()> {
+    fn recv(&mut self) -> Received {
         self.recycle();
         let result = self.inner.recv(self.buffer.payload_mut().as_mut_slice());
         match result {
-            Ok(len) => Ok(self.buffer.set_len_unchecked(len)),
-            Err(err) => Err(self.store_err(err)),
+            Ok(len) => {
+                self.buffer.set_len_unchecked(len);
+                Received::Ok
+            },
+            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => Received::NoData,
+            Err(err) => Received::Err(self.store_err(err)),
         }
     }
 
@@ -199,7 +209,11 @@ impl<'a, C: PayloadMut + 'a> Device<'a> for TapInterface<C> {
     fn rx(&mut self, _: usize, mut receptor: impl nic::Recv<Self::Handle, Self::Payload>)
         -> nic::Result<usize>
     {
-        self.recv()?;
+        match self.recv() {
+            Received::Ok => (),
+            Received::Err(err) => return Err(err),
+            Received::NoData => return Ok(0),
+        }
 
         let mut handle = EnqueueFlag::NotPossible;
         receptor.receive(Packet {
