@@ -14,6 +14,11 @@ pub use packet::{
     RawPacket,
 };
 
+pub use route::{
+    Route,
+    Routes,
+};
+
 pub trait Recv<P: Payload> {
     fn receive(&mut self, frame: Packet<P>);
 }

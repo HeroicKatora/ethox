@@ -42,6 +42,10 @@ pub trait Handle {
     /// ad-hoc allocation for this purpose. Another reason for failure is simply a lack of
     /// resources to queue the packet.
     fn queue(&mut self) -> Result<()>;
+
+    // FIXME: capabilities and checksums.
+
+    // TODO: multiple interfaces (=zerocopy forwarding).
 }
 
 pub trait Device<'a> {
