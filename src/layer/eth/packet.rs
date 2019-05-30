@@ -13,6 +13,11 @@ pub struct RawPacket<'a, P: Payload> {
     pub init: Option<Init>,
 }
 
+/// A reference to the endpoint of layers below (phy + eth).
+///
+/// This is not really useful on its own but should instead be used either within a `Packet` or a
+/// `RawPacket`. Some of the methods offered there will access the non-public members of this
+/// struct to fulfill their task.
 pub struct Handle<'a> {
     nic_handle: &'a mut nic::Handle,
     endpoint: &'a mut (Endpoint + 'a),
@@ -40,6 +45,14 @@ impl<'a> Handle<'a> {
         Handle {
             nic_handle,
             endpoint,
+        }
+    }
+
+    /// Proof to the compiler that we can shorten the lifetime arbitrarily.
+    pub fn coerce_lifetime<'b>(self) -> Handle<'b> where 'a: 'b {
+        Handle {
+            nic_handle: self.nic_handle,
+            endpoint: self.endpoint,
         }
     }
 }
@@ -119,6 +132,8 @@ impl Init {
 
         payload.resize(real_len)?;
         let ethernet = ethernet_frame::new_unchecked_mut(payload.payload_mut());
+        ethernet.check_len()
+            .map_err(|_| Error::BadSize)?;
         repr.emit(ethernet);
 
         Ok(repr)

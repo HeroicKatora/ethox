@@ -6,10 +6,20 @@
 // mod route;
 use crate::wire::Payload;
 
+mod endpoint;
 mod packet;
 mod route;
 
+pub use endpoint::{
+    Endpoint,
+    Receiver,
+    Sender,
+};
+
 pub use packet::{
+    Handle,
+    Init,
+    IpPacket,
     Packet,
     RawPacket,
 };

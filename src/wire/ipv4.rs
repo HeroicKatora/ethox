@@ -549,6 +549,29 @@ impl<T: Payload> Packet<T> {
             repr,
         })
     }
+
+    /// Get the repr of the packet header.
+    pub fn repr(&self) -> Repr {
+        self.repr
+    }
+
+    /// Create a new packet without checking the representation.
+    ///
+    /// Misuse may lead to panics from out-of-bounds access or other subtle inconsistencies. Since
+    /// the representation might not represent the actual content in the payload, this also might
+    /// mean that seemingly inconsistent values are returned. The usage is still memory safe
+    /// though.
+    pub fn new_unchecked(buffer: T, repr: Repr) -> Self {
+        Packet {
+            buffer,
+            repr,
+        }
+    }
+
+    /// Return the raw underlying buffer.
+    pub fn into_inner(self) -> T {
+        self.buffer
+    }
 }
 
 impl<'a, T: Payload + ?Sized> Packet<&'a T> {
