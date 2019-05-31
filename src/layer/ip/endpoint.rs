@@ -1,4 +1,4 @@
-use crate::layer::{eth, Result, FnHandler};
+use crate::layer::{eth, FnHandler};
 use crate::managed::Slice;
 use crate::wire::{Checksum, EthernetProtocol, IpAddress, IpCidr, Ipv4Packet, Ipv6Packet, Payload, PayloadMut};
 use crate::time::Instant;
@@ -104,7 +104,7 @@ where
 {
     fn receive(&mut self, packet: eth::Packet<P>) {
         let capabilities = packet.handle.info().capabilities();
-        let eth::Packet { handle, frame } = packet;
+        let eth::Packet { mut handle, frame } = packet;
         let packet = match frame.repr().ethertype {
             EthernetProtocol::Ipv4 => {
                 match Ipv4Packet::new_checked(frame, capabilities.ipv4().rx_checksum()) {
@@ -122,7 +122,7 @@ where
             return
         }
 
-        let handle = Handle::new(handle.coerce_lifetime(), &mut self.endpoint);
+        let handle = Handle::new(handle.borrow_mut(), &mut self.endpoint);
         let packet = Packet::new(handle, packet);
         self.handler.receive(packet)
     }
@@ -133,10 +133,11 @@ where
     P: Payload + PayloadMut,
     T: Send<P>,
 {
-    fn send(&mut self, packet: eth::RawPacket<P>) {
-        let handle = Handle::new(packet.handle.coerce_lifetime(), &mut self.endpoint);
-        let packet = RawPacket::new(handle, packet.payload);
-        self.handler.send(packet);
-        // TODO: calculate checksum ?
+    fn send<'a>(&mut self, packet: eth::RawPacket<'a, P>) {
+        let eth::RawPacket { handle: mut eth_handle, payload } = packet;
+        let handle = Handle::new(eth_handle.borrow_mut(), &mut self.endpoint);
+        let packet = RawPacket::new(handle, payload);
+
+        self.handler.send(packet)
     }
 }

@@ -574,6 +574,20 @@ impl<T: Payload> Packet<T> {
     }
 }
 
+impl<T: Payload + PayloadMut> Packet<T> {
+    /// Recalculate the checksum if necessary.
+    ///
+    /// Note that the checksum test can be elided even in a checked parse of the ipv4 frame. This
+    /// provides in opportunity to recalculate it if necessary even though the header structure is
+    /// not otherwise mutably accessible while in `Packet` representation.
+    pub fn fill_checksum(&mut self, checksum: Checksum) {
+        if checksum.manual() {
+            ipv4::new_unchecked_mut(self.buffer.payload_mut())
+                .fill_checksum()
+        }
+    }
+}
+
 impl<'a, T: Payload + ?Sized> Packet<&'a T> {
     /// Return a pointer to the payload.
     #[inline]

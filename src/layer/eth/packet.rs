@@ -11,7 +11,6 @@ pub struct Packet<'a, P: Payload> {
 pub struct RawPacket<'a, P: Payload> {
     pub handle: Handle<'a>,
     pub payload: &'a mut P,
-    pub init: Option<Init>,
 }
 
 /// A reference to the endpoint of layers below (phy + eth).
@@ -20,8 +19,8 @@ pub struct RawPacket<'a, P: Payload> {
 /// `RawPacket`. Some of the methods offered there will access the non-public members of this
 /// struct to fulfill their task.
 pub struct Handle<'a> {
-    nic_handle: &'a mut nic::Handle,
-    endpoint: &'a mut (Endpoint + 'a),
+    pub(crate) nic_handle: &'a mut nic::Handle,
+    pub(crate) endpoint: &'a mut (Endpoint + 'a),
 }
 
 /// Initializer for a packet.
@@ -50,7 +49,7 @@ impl<'a> Handle<'a> {
     }
 
     /// Proof to the compiler that we can shorten the lifetime arbitrarily.
-    pub fn coerce_lifetime<'b>(self) -> Handle<'b> where 'a: 'b {
+    pub fn borrow_mut(&mut self) -> Handle {
         Handle {
             nic_handle: self.nic_handle,
             endpoint: self.endpoint,
@@ -61,6 +60,10 @@ impl<'a> Handle<'a> {
         self.nic_handle.info()
     }
 
+    /// Try to initialize the destination from an upper layer protocol address.
+    ///
+    /// Failure to satisfy the request is clearly signalled. Use the result to initialize the
+    /// representation to a valid eth frame.
     pub fn resolve(&mut self, dst_addr: IpAddress)
         -> Result<EthernetAddress>
     {
@@ -89,6 +92,11 @@ impl<'a, P: Payload> Packet<'a, P> {
     {
         RawPacket::new(self.handle, self.frame.into_inner())
     }
+
+    /// Try to send that packet.
+    pub fn send(self) -> Result<()> {
+        self.handle.nic_handle.queue()
+    }
 }
 
 impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
@@ -98,7 +106,6 @@ impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
     ) -> Self {
         RawPacket {
             handle,
-            init: None,
             payload,
         }
     }
@@ -107,25 +114,9 @@ impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
         self.handle.endpoint.src_addr()
     }
 
-    /// Try to initialize the destination from an upper layer protocol address.
-    ///
-    /// Failure to satisfy the request is clearly signalled.
-    pub fn resolve(&mut self, dst_addr: IpAddress) -> Result<()> {
-        let init = match &mut self.init {
-            Some(init) => init,
-            None => return Err(Error::Illegal),
-        };
-        init.dst_addr = self.handle.resolve(dst_addr)?;
-        Ok(())
-    }
-
-    pub fn prepare(mut self) -> Result<Packet<'a, P>> {
+    pub fn prepare(self, init: Init) -> Result<Packet<'a, P>> {
         let mut payload = self.payload;
-        let repr = self.init
-            .as_mut()
-            .ok_or(Error::Illegal)?
-            .initialize(&mut payload)?;
-        self.handle.nic_handle.queue()?;
+        let repr = init.initialize(&mut payload)?;
         Ok(Packet {
             handle: self.handle,
             frame: EthernetFrame::new_unchecked(payload, repr),
@@ -134,7 +125,7 @@ impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
 }
 
 impl Init {
-    fn initialize<P: PayloadMut>(&mut self, payload: &mut P) -> Result<EthernetRepr> {
+    fn initialize<P: PayloadMut>(&self, payload: &mut P) -> Result<EthernetRepr> {
         let real_len = ethernet_frame::buffer_len(self.payload);
         let repr = EthernetRepr {
             src_addr: self.src_addr,

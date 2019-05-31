@@ -1,6 +1,7 @@
 use crate::layer::{Error, Result, eth};
+use crate::nic::Info;
 use crate::time::Instant;
-use crate::wire::{Checksum, EthernetAddress, EthernetFrame, EthernetProtocol, Payload, PayloadMut};
+use crate::wire::{Checksum, EthernetFrame, EthernetProtocol, Payload, PayloadMut};
 use crate::wire::{IpAddress, IpProtocol, IpRepr, Ipv4Packet, Ipv6Packet};
 
 pub struct Packet<'a, P: Payload> {
@@ -54,10 +55,15 @@ impl<'a> Handle<'a> {
         }
     }
 
+    /// Get the hardware info for that packet.
+    pub fn info(&self) -> &Info {
+        self.eth.info()
+    }
+
     /// Proof to the compiler that we can shorten the lifetime arbitrarily.
-    pub fn coerce_lifetime<'b>(self) -> Handle<'b> where 'a: 'b {
+    pub fn borrow_mut(&mut self) -> Handle {
         Handle {
-            eth: self.eth.coerce_lifetime(),
+            eth: self.eth.borrow_mut(),
             endpoint: self.endpoint,
         }
     }
@@ -78,6 +84,24 @@ impl<'a, P: Payload> Packet<'a, P> {
         where P: PayloadMut,
     {
         RawPacket::new(self.handle, self.packet.into_raw())
+    }
+
+    /// Called last after having initialized the payload.
+    pub fn send(mut self) -> Result<()>
+        where P: PayloadMut,
+    {
+        let capabilities = self.handle.info().capabilities();
+        match &mut self.packet {
+            IpPacket::V4(ipv4) => {
+                // Recalculate the checksum if necessary.
+                ipv4.fill_checksum(capabilities.ipv4().tx_checksum());
+            },
+            _ => (),
+        }
+        let lower = eth::Packet::new(
+            self.handle.eth,
+            self.packet.into_inner());
+        lower.send()
     }
 }
 
@@ -109,28 +133,25 @@ impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
         Ok(())
     }
 
-    pub fn prepare(self) -> Result<Packet<'a, P>> {
+    /// Initialize to a valid ip packet.
+    pub fn prepare(self, init: Init) -> Result<Packet<'a, P>> {
         let mut lower = eth::RawPacket::new(
             self.handle.eth,
             self.payload);
-        let mut init = self.init.ok_or(Error::Illegal)?;
 
         let src_addr = lower.src_addr();
-        lower.init = Some(eth::Init {
+        let lower_init = eth::Init {
             src_addr,
-            dst_addr: EthernetAddress::BROADCAST, //overwritten later
+            dst_addr: lower.handle.resolve(init.dst_addr)?,
             ethertype: match init.dst_addr {
                 IpAddress::Ipv4(_) => EthernetProtocol::Ipv4,
                 IpAddress::Ipv6(_) => EthernetProtocol::Ipv6,
                 _ => return Err(Error::Illegal),
             },
             payload: init.payload + 20, // FIXME: hard coded length.
-        });
+        };
 
-        // Overwrite the dst_addr.
-        lower.resolve(init.dst_addr)?;
-
-        let mut prepared = lower.prepare()?;
+        let mut prepared = lower.prepare(lower_init)?;
         let repr = init.initialize(&mut prepared.frame)?;
 
         // Reconstruct the handle.
@@ -144,7 +165,7 @@ impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
 }
 
 impl Init {
-    fn initialize<P: PayloadMut>(&mut self, payload: &mut P) -> Result<IpRepr> {
+    fn initialize<P: PayloadMut>(&self, payload: &mut P) -> Result<IpRepr> {
         let repr = IpRepr::Unspecified {
             src_addr: self.src_addr,
             dst_addr: self.dst_addr,
@@ -175,10 +196,14 @@ impl<'a, P: Payload> IpPacket<'a, P> {
         }
     }
 
-    fn into_raw(self) -> &'a mut P {
+    pub fn into_inner(self) -> EthernetFrame<&'a mut P> {
         match self {
-            IpPacket::V4(packet) => packet.into_inner().into_inner(),
-            IpPacket::V6(packet) => packet.into_inner().into_inner(),
+            IpPacket::V4(packet) => packet.into_inner(),
+            IpPacket::V6(packet) => packet.into_inner(),
         }
+    }
+
+    pub fn into_raw(self) -> &'a mut P {
+        self.into_inner().into_inner()
     }
 }
