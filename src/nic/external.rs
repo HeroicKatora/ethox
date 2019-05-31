@@ -1,9 +1,10 @@
 //! A stub nic whose buffers come from an external source.
 use core::ops::{Deref, DerefMut};
 use crate::wire::Payload;
+use crate::time::Instant;
 
-use super::{Personality, Recv, Send, Result};
-use super::common::EnqueueFlag;
+use super::{Capabilities, Info, Personality, Recv, Send, Result};
+use super::common::{EnqueueFlag, PacketInfo};
 
 pub struct Handle(EnqueueFlag);
 
@@ -19,6 +20,9 @@ pub struct External<T> {
 
     /// The index of the split.
     split: usize,
+
+    /// The info struct just copied for each packet.
+    info: PacketInfo,
 }
 
 impl<T> External<T> {
@@ -46,6 +50,10 @@ impl<T, P> External<T> where T: Deref<Target=[P]> {
             recv: 0,
             sent: 0,
             split: 0,
+            info: PacketInfo {
+                timestamp: Instant::from_millis(0),
+                capabilities: Capabilities::no_support(),
+            },
         }
     }
 
@@ -57,6 +65,10 @@ impl<T, P> External<T> where T: Deref<Target=[P]> {
             recv: 0,
             sent: 0,
             split: len,
+            info: PacketInfo {
+                timestamp: Instant::from_millis(0),
+                capabilities: Capabilities::no_support(),
+            },
         }
     }
 
@@ -72,6 +84,11 @@ impl<T, P> External<T> where T: Deref<Target=[P]> {
         self.buffer.len()
             .saturating_sub(self.split)
             .saturating_sub(self.sent)
+    }
+
+    /// Update the timestamp on all future received packets.
+    pub fn set_current_time(&mut self, instant: Instant) {
+        self.info.timestamp = instant;
     }
 
     fn next_recv(&self) -> usize {
@@ -105,7 +122,7 @@ where
         let next_id = self.next_send();
         let buffer = &mut self.buffer[next_id];
 
-        let mut flag = Handle(EnqueueFlag::SetTrue(false));
+        let mut flag = Handle(EnqueueFlag::set_true(self.info));
         sender.send(super::Packet {
             handle: &mut flag,
             payload: buffer,
@@ -129,7 +146,7 @@ where
         let next_id = self.next_recv();
         let buffer = &mut self.buffer[next_id];
 
-        let mut flag = Handle(EnqueueFlag::NotPossible);
+        let mut flag = Handle(EnqueueFlag::not_possible(self.info));
         receptor.receive(super::Packet {
             handle: &mut flag,
             payload: buffer,
@@ -143,5 +160,9 @@ where
 impl super::Handle for Handle {
     fn queue(&mut self) -> super::Result<()> {
         self.0.queue()
+    }
+
+    fn info(&self) -> &Info {
+        self.0.info()
     }
 }

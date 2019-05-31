@@ -16,7 +16,7 @@ pub struct Personality {
 /// Such as offloading of checksum algorithms, ... The usage for a `Device` is simply to
 /// instantiate a baseline with no support for any upper layer and then adjust those for which
 /// support can be provided.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Capabilities {
     ipv4: Protocol,
     udp: Protocol,
@@ -26,7 +26,7 @@ pub struct Capabilities {
 ///
 /// This is mostly about checksums in a particular protocol. If at all support, it concerns both
 /// directions of packet flow for that protocol.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Protocol {
     send: Checksum,
     receive: Checksum,

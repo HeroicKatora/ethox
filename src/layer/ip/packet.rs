@@ -1,4 +1,5 @@
 use crate::layer::{Error, Result, eth};
+use crate::time::Instant;
 use crate::wire::{Checksum, EthernetAddress, EthernetFrame, EthernetProtocol, Payload, PayloadMut};
 use crate::wire::{IpAddress, IpProtocol, IpRepr, Ipv4Packet, Ipv6Packet};
 
@@ -31,8 +32,15 @@ pub struct Init {
     pub payload: usize,
 }
 
+/// Source and destination chosen for a particular routing.
+pub(crate) struct Route {
+    pub next_hop: IpAddress,
+    pub src_addr: IpAddress,
+}
+
 /// The interface to the endpoint.
 pub(crate) trait Endpoint{
+    fn route(&self, dst_addr: IpAddress, time: Instant) -> Option<Route>;
 }
 
 impl<'a> Handle<'a> {
@@ -85,6 +93,22 @@ impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
         }
     }
 
+    pub fn route_to(&mut self, dst_addr: IpAddress) -> Result<()> {
+        let init = match &mut self.init {
+            Some(init) => init,
+            None => return Err(Error::Illegal),
+        };
+
+        let now = self.handle.eth.info().timestamp();
+        let route = self.handle.endpoint.route(dst_addr, now)
+            .ok_or(Error::Unreachable)?;
+
+        init.dst_addr = route.next_hop;
+        init.src_addr = route.src_addr;
+
+        Ok(())
+    }
+
     pub fn prepare(self) -> Result<Packet<'a, P>> {
         let mut lower = eth::RawPacket::new(
             self.handle.eth,
@@ -95,9 +119,14 @@ impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
         lower.init = Some(eth::Init {
             src_addr,
             dst_addr: EthernetAddress::BROADCAST, //overwritten later
-            ethertype: EthernetProtocol::Ipv4, // FIXME: hard coded proto.
+            ethertype: match init.dst_addr {
+                IpAddress::Ipv4(_) => EthernetProtocol::Ipv4,
+                IpAddress::Ipv6(_) => EthernetProtocol::Ipv6,
+                _ => return Err(Error::Illegal),
+            },
             payload: init.payload + 20, // FIXME: hard coded length.
         });
+
         // Overwrite the dst_addr.
         lower.resolve(init.dst_addr)?;
 
@@ -142,7 +171,7 @@ impl<'a, P: Payload> IpPacket<'a, P> {
     pub fn repr(&self) -> IpRepr {
         match self {
             IpPacket::V4(packet) => packet.repr().into(),
-            IpPacket::V6(packet) => unimplemented!("Need to rework ipv6 repr first"),
+            IpPacket::V6(_packet) => unimplemented!("Need to rework ipv6 repr first"),
         }
     }
 

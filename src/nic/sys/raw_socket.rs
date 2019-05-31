@@ -4,11 +4,13 @@
 // in large parts from `smoltcp` originally distributed under 0-clause BSD
 use std::{mem, io};
 use std::os::unix::io::{RawFd, AsRawFd};
+use std::time::Instant;
 
 use libc;
 use super::{ifreq, linux, test_result, FdResult, IoLenResult};
 
-use crate::nic::{self, Device, Packet, Personality, common::EnqueueFlag};
+use crate::nic::{self, Capabilities, Device, Packet, Personality};
+use crate::nic::common::{EnqueueFlag, PacketInfo};
 use crate::managed::Partial;
 use crate::wire::PayloadMut;
 
@@ -173,6 +175,13 @@ impl<C: PayloadMut> RawSocket<C> {
         self.last_err = Some(err);
         as_nic
     }
+
+    fn current_info() -> PacketInfo {
+        PacketInfo {
+            timestamp: Instant::now().into(),
+            capabilities: Capabilities::no_support(),
+        }
+    }
 }
 
 impl Drop for RawSocketDesc {
@@ -196,7 +205,7 @@ impl<'a, C: PayloadMut + 'a> Device<'a> for RawSocket<C> {
     fn tx(&mut self, _: usize, mut sender: impl nic::Send<Self::Handle, Self::Payload>)
         -> nic::Result<usize>
     {
-        let mut handle = EnqueueFlag::SetTrue(false);
+        let mut handle = EnqueueFlag::set_true(Self::current_info());
         self.recycle();
         sender.send(Packet {
             handle: &mut handle,
@@ -219,7 +228,7 @@ impl<'a, C: PayloadMut + 'a> Device<'a> for RawSocket<C> {
             Received::NoData => return Ok(0),
         }
 
-        let mut handle = EnqueueFlag::NotPossible;
+        let mut handle = EnqueueFlag::not_possible(Self::current_info());
         receptor.receive(Packet {
             handle: &mut handle,
             payload: &mut self.buffer,

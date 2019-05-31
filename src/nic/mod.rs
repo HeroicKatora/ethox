@@ -12,6 +12,7 @@ use crate::wire::Payload;
 use crate::layer::{Result, FnHandler};
 #[cfg(feature = "std")]
 use crate::wire::{ethernet_frame, pretty_print::{Formatter, PrettyPrinter}};
+use crate::time::Instant;
 
 pub use self::personality::{
     Capabilities,
@@ -43,9 +44,23 @@ pub trait Handle {
     /// resources to queue the packet.
     fn queue(&mut self) -> Result<()>;
 
-    // FIXME: capabilities and checksums.
-
+    /// Information on the packet intended for lower layers.
+    ///
+    /// Note that technically the information may change after a call to `queue` or in the future
+    /// after changing the target interface of an outgoing packet. That is intentional.
+    fn info(&self) -> &Info;
     // TODO: multiple interfaces (=zerocopy forwarding).
+}
+
+pub trait Info {
+    /// The reference timestamp for this packet.
+    fn timestamp(&self) -> Instant;
+
+    /// Capabilities used for the packet.
+    ///
+    /// Indicates pre-checked checksums for incoming packets and hardware support for checksums of
+    /// outgoing packets across the layers of the network stack.
+    fn capabilities(&self) -> Capabilities;
 }
 
 pub trait Device<'a> {

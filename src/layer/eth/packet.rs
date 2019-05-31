@@ -1,6 +1,7 @@
-use crate::layer::{Error, Result};
-use crate::wire::{ethernet_frame, EthernetAddress, EthernetFrame, EthernetProtocol, EthernetRepr, IpAddress, Payload, PayloadMut};
 use crate::nic;
+use crate::layer::{Error, Result};
+use crate::time::Instant;
+use crate::wire::{ethernet_frame, EthernetAddress, EthernetFrame, EthernetProtocol, EthernetRepr, IpAddress, Payload, PayloadMut};
 
 pub struct Packet<'a, P: Payload> {
     pub handle: Handle<'a>,
@@ -34,7 +35,7 @@ pub struct Init {
 /// The interface to the endpoint.
 pub(crate) trait Endpoint{
     fn src_addr(&mut self) -> EthernetAddress;
-    fn resolve(&mut self, _: IpAddress) -> Result<EthernetAddress>;
+    fn resolve(&mut self, _: IpAddress, _: Instant) -> Result<EthernetAddress>;
 }
 
 impl<'a> Handle<'a> {
@@ -54,6 +55,17 @@ impl<'a> Handle<'a> {
             nic_handle: self.nic_handle,
             endpoint: self.endpoint,
         }
+    }
+
+    pub fn info(&self) -> &nic::Info {
+        self.nic_handle.info()
+    }
+
+    pub fn resolve(&mut self, dst_addr: IpAddress)
+        -> Result<EthernetAddress>
+    {
+        let time = self.nic_handle.info().timestamp();
+        self.endpoint.resolve(dst_addr, time)
     }
 }
 
@@ -103,7 +115,7 @@ impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
             Some(init) => init,
             None => return Err(Error::Illegal),
         };
-        init.dst_addr = self.handle.endpoint.resolve(dst_addr)?;
+        init.dst_addr = self.handle.resolve(dst_addr)?;
         Ok(())
     }
 

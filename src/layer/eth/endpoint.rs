@@ -41,9 +41,6 @@ struct EthEndpoint<'a, 'e> {
     // TODO: could be immutable as well, just disallowing updates. Evaluate whether this is useful
     // or needed somewhere.
     inner: &'a mut Endpoint<'e>,
-
-    /// The current timestamp for this operation.
-    time: Instant,
 }
 
 impl<'a> Endpoint<'a> {
@@ -56,26 +53,25 @@ impl<'a> Endpoint<'a> {
         }
     }
 
-    pub fn recv<H>(&mut self, handler: H, time: Instant) -> Receiver<'_, 'a, H> {
-        Receiver { endpoint: self.eth(time), handler, }
+    pub fn recv<H>(&mut self, handler: H) -> Receiver<'_, 'a, H> {
+        Receiver { endpoint: self.eth(), handler, }
     }
 
-    pub fn recv_with<H>(&mut self, handler: H, time: Instant) -> Receiver<'_, 'a, FnHandler<H>> {
-        self.recv(FnHandler(handler), time)
+    pub fn recv_with<H>(&mut self, handler: H) -> Receiver<'_, 'a, FnHandler<H>> {
+        self.recv(FnHandler(handler))
     }
 
-    pub fn send<H>(&mut self, handler: H, time: Instant) -> Sender<'_, 'a, H> {
-        Sender { endpoint: self.eth(time), handler, }
+    pub fn send<H>(&mut self, handler: H) -> Sender<'_, 'a, H> {
+        Sender { endpoint: self.eth(), handler, }
     }
 
-    pub fn send_with<H>(&mut self, handler: H, time: Instant) -> Sender<'_, 'a, FnHandler<H>> {
-        self.send(FnHandler(handler), time)
+    pub fn send_with<H>(&mut self, handler: H) -> Sender<'_, 'a, FnHandler<H>> {
+        self.send(FnHandler(handler))
     }
 
-    fn eth(&mut self, time: Instant) -> EthEndpoint<'_, 'a> {
+    fn eth(&mut self) -> EthEndpoint<'_, 'a> {
         EthEndpoint {
             inner: self,
-            time,
         }
     }
 
@@ -90,10 +86,10 @@ impl packet::Endpoint for EthEndpoint<'_, '_> {
         self.inner.addr
     }
 
-    fn resolve(&mut self, addr: IpAddress) -> Result<EthernetAddress> {
+    fn resolve(&mut self, addr: IpAddress, time: Instant) -> Result<EthernetAddress> {
         // TODO: should we automatically try to send an ARP request?  And if so, should lookup be
         // used instead.
-        self.inner.neighbors.lookup_pure(&addr, self.time)
+        self.inner.neighbors.lookup_pure(&addr, time)
             .ok_or(Error::Unreachable)
     }
 }
@@ -194,19 +190,17 @@ mod tests {
         let mut endpoint = Endpoint::new(MAC_ADDR_1, NeighborCache::new(&mut [][..]));
         let mut nic = External::new_send(Slice::One(vec![0; 1024]));
 
-        let time = Instant::from_millis(0);
         let sent = nic.tx(
             1,
             endpoint
-                .send_with(simple_send, time));
+                .send_with(simple_send));
         assert_eq!(sent, Ok(1));
 
-        let time = Instant::from_millis(1);
         nic.set_one_past_receive(1);
         let recv = nic.rx(
             1,
             endpoint
-                .recv_with(simple_recv, time));
+                .recv_with(simple_recv));
         assert_eq!(recv, Ok(1));
     }
 }

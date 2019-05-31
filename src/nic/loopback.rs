@@ -1,13 +1,15 @@
 use crate::managed::Slice;
+use crate::time::Instant;
 
-use super::common::EnqueueFlag;
-use super::{Personality, Recv, Send, Result};
+use super::common::{EnqueueFlag, PacketInfo};
+use super::{Capabilities, Info, Personality, Recv, Send, Result};
 
 pub struct Loopback<'r> {
     buffer: Slice<'r, u8>,
     mtu: usize,
     next_recv: usize,
     sent: usize,
+    info: PacketInfo,
 }
 
 pub struct Handle(EnqueueFlag);
@@ -32,7 +34,16 @@ impl<'r> Loopback<'r> {
             mtu,
             next_recv: 0,
             sent: 0,
+            info: PacketInfo {
+                timestamp: Instant::from_millis(0),
+                capabilities: Capabilities::no_support(),
+            },
         }
+    }
+
+    /// Update the timestamp on all future received packets.
+    pub fn set_current_time(&mut self, instant: Instant) {
+        self.info.timestamp = instant;
     }
 
     fn next_recv(&mut self) -> Option<(AckRecv, &mut [u8])> {
@@ -87,6 +98,7 @@ impl<'a> super::Device<'a> for Loopback<'a> {
         -> Result<usize> 
     {
         let mut count = 0;
+        let info = self.info;
 
         for _ in 0..max {
             let (ack, packet) = match self.next_send() {
@@ -94,7 +106,7 @@ impl<'a> super::Device<'a> for Loopback<'a> {
                 Some(packet) => packet,
             };
 
-            let mut flag = Handle(EnqueueFlag::SetTrue(false));
+            let mut flag = Handle(EnqueueFlag::set_true(info));
             sender.send(super::Packet {
                 handle: &mut flag,
                 payload: packet,
@@ -113,6 +125,7 @@ impl<'a> super::Device<'a> for Loopback<'a> {
         -> Result<usize>
     {
         let mut count = 0;
+        let info = self.info;
 
         for _ in 0..max {
             let (ack, packet) = match self.next_recv() {
@@ -120,7 +133,7 @@ impl<'a> super::Device<'a> for Loopback<'a> {
                 Some(packet) => packet,
             };
 
-            let mut flag = Handle(EnqueueFlag::NotPossible);
+            let mut flag = Handle(EnqueueFlag::not_possible(info));
             receptor.receive(super::Packet {
                 handle: &mut flag,
                 payload: packet,
@@ -137,6 +150,10 @@ impl<'a> super::Device<'a> for Loopback<'a> {
 impl super::Handle for Handle {
     fn queue(&mut self) -> Result<()> {
         self.0.queue()
+    }
+
+    fn info(&self) -> &Info {
+        self.0.info()
     }
 }
 

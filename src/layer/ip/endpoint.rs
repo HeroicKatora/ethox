@@ -4,7 +4,7 @@ use crate::wire::{Checksum, EthernetProtocol, IpAddress, IpCidr, Ipv4Packet, Ipv
 use crate::time::Instant;
 
 use super::{Recv, Send};
-use super::packet::{self, IpPacket, Handle, Packet, RawPacket};
+use super::packet::{self, IpPacket, Handle, Packet, RawPacket, Route};
 use super::route::Routes;
 
 pub struct Endpoint<'a> {
@@ -32,19 +32,10 @@ pub struct Sender<'a, 'e, H> {
     handler: H,
 }
 
-/// Source and destination chosen for a particular routing.
-pub(crate) struct Route {
-    next_hop: IpAddress,
-    src_addr: IpAddress,
-}
-
 struct IpEndpoint<'a, 'e> {
     // TODO: could be immutable as well, just disallowing updates. Evaluate whether this is useful
     // or needed somewhere.
     inner: &'a mut Endpoint<'e>,
-
-    // /// The current timestamp for this operation.
-    // time: Instant,
 }
 
 impl<'a> Endpoint<'a> {
@@ -101,6 +92,9 @@ impl<'a> Endpoint<'a> {
 }
 
 impl packet::Endpoint for IpEndpoint<'_, '_> {
+    fn route(&self, dst_addr: IpAddress, time: Instant) -> Option<Route> {
+        self.inner.route(dst_addr, time)
+    }
 }
 
 impl<P, T> eth::Recv<P> for Receiver<'_, '_, T>
@@ -109,10 +103,11 @@ where
     T: Recv<P>,
 {
     fn receive(&mut self, packet: eth::Packet<P>) {
+        let capabilities = packet.handle.info().capabilities();
         let eth::Packet { handle, frame } = packet;
         let packet = match frame.repr().ethertype {
             EthernetProtocol::Ipv4 => {
-                match Ipv4Packet::new_checked(frame, Checksum::Manual) {
+                match Ipv4Packet::new_checked(frame, capabilities.ipv4().rx_checksum()) {
                     Ok(packet) => IpPacket::V4(packet),
                     Err(_) => return,
                 }
@@ -142,5 +137,6 @@ where
         let handle = Handle::new(packet.handle.coerce_lifetime(), &mut self.endpoint);
         let packet = RawPacket::new(handle, packet.payload);
         self.handler.send(packet);
+        // TODO: calculate checksum ?
     }
 }
