@@ -331,23 +331,21 @@ impl Cidr {
         }
     }
 
-    /*
     /// Query whether the subnetwork described by this CIDR block contains
     /// the subnetwork described by the given CIDR block.
-    pub fn contains_subnet(&self, subnet: &Cidr) -> bool {
+    pub fn contains_subnet(&self, subnet: Cidr) -> bool {
         match (self, subnet) {
             (Cidr::Ipv4(ref cidr), Cidr::Ipv4(ref other)) =>
                 cidr.contains_subnet(other),
             (Cidr::Ipv6(ref cidr), Cidr::Ipv6(ref other)) =>
-                cidr.contains_subnet(other),
+                unimplemented!("TODO"),
             (Cidr::Ipv4(_), Cidr::Ipv6(_)) | (Cidr::Ipv6(_), Cidr::Ipv4(_)) =>
                 false,
             (Cidr::__Nonexhaustive, _) |
-            (_, &Cidr::__Nonexhaustive) =>
+            (_, Cidr::__Nonexhaustive) =>
                 unreachable!()
         }
     }
-    */
 }
 
 impl From<Ipv4Cidr> for Cidr {

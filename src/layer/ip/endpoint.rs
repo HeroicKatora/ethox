@@ -1,6 +1,7 @@
 use crate::layer::{eth, FnHandler};
 use crate::managed::Slice;
-use crate::wire::{Checksum, EthernetProtocol, IpAddress, IpCidr, Ipv4Packet, Ipv6Packet, Payload, PayloadMut};
+use crate::wire::{Checksum, EthernetProtocol, Payload, PayloadMut};
+use crate::wire::{IpAddress, IpCidr, Ipv4Cidr, Ipv6Cidr, Ipv4Packet, Ipv6Packet};
 use crate::time::Instant;
 
 use super::{Recv, Send};
@@ -75,7 +76,40 @@ impl<'a> Endpoint<'a> {
     }
 
     /// Find the route to use.
+    ///
+    /// Typically is a three stage process:
+    /// * If it is a local address, then only route loopback.
+    /// * If dst is in the network of an assigned ip then route directly.
+    /// * Lookup in routing table for all other addresses.
+    ///
+    /// For lack of direct loopback mechanism (TODO) we only implement the second two stages.
     fn route(&self, dst_addr: IpAddress, time: Instant) -> Option<Route> {
+        if let Some(route) = self.find_local_route(dst_addr, time) {
+            return Some(route)
+        }
+
+        self.find_outer_route(dst_addr, time)
+    }
+
+    fn find_local_route(&self, dst_addr: IpAddress, _: Instant) -> Option<Route> {
+        let dst_cidr = match dst_addr {
+            IpAddress::Ipv4(addr) => Ipv4Cidr::new(addr, 32).into(),
+            IpAddress::Ipv6(addr) => Ipv6Cidr::new(addr, 128).into(),
+            addr => panic!("Invalid address to find route to: {}", addr),
+        };
+
+        let matching_src = self.addr
+            .iter()
+            .filter(|addr| addr.contains_subnet(dst_cidr))
+            .nth(0)?;
+
+        Some(Route {
+            src_addr: matching_src.address(),
+            next_hop: dst_addr,
+        })
+    }
+
+    fn find_outer_route(&self, dst_addr: IpAddress, time: Instant) -> Option<Route> {
         let next_hop = self.routes.lookup(dst_addr, time)?;
 
         // Which source to use?
