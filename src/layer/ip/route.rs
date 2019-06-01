@@ -10,7 +10,11 @@ use crate::wire::Ipv6Address;
 /// A prefix of addresses that should be routed via a router
 #[derive(Debug, Clone, Copy)]
 pub struct Route {
-    /// The network targetted by the route.
+    /// The network routed through this route.
+    ///
+    /// Better only set actual networks here. Although host identifiers (where not all bits outside
+    /// the subnet mask are zero) and broadcast (where these bits are all ones) are accepted, they
+    /// may lead to unexpected routing decisions.
     pub net: IpCidr,
 
     /// Next hop for this network.
@@ -148,7 +152,7 @@ impl<'a> Routes<'a> {
         }
     }
 
-    pub fn lookup(&self, addr: &IpAddress, timestamp: Instant)
+    pub fn lookup(&self, addr: IpAddress, timestamp: Instant)
         -> Option<IpAddress>
     {
         assert!(addr.is_unicast());
@@ -162,7 +166,7 @@ impl<'a> Routes<'a> {
                 }
             }
 
-            if !route.net.contains_addr(addr) {
+            if !route.net.contains(addr) {
                 continue;
             }
 

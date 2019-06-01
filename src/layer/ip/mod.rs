@@ -8,6 +8,8 @@ use crate::wire::Payload;
 mod endpoint;
 mod packet;
 mod route;
+#[cfg(test)]
+mod tests;
 
 pub use endpoint::{
     Endpoint,

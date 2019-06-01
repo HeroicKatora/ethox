@@ -141,6 +141,8 @@ pub enum Checksum {
 
 pub use self::payload_impl::{Reframe, Payload, PayloadMut, Error as PayloadError, payload};
 
+pub type PayloadResult<T> = core::result::Result<T, PayloadError>;
+
 pub use self::pretty_print::PrettyPrinter;
 
 pub use self::ethernet::{

@@ -93,13 +93,16 @@ pub enum Address {
 
 impl Address {
     /// Create an address wrapping an IPv4 address with the given octets.
-    pub fn v4(a0: u8, a1: u8, a2: u8, a3: u8) -> Address {
+    pub const fn v4(a0: u8, a1: u8, a2: u8, a3: u8) -> Address {
         Address::Ipv4(Ipv4Address::new(a0, a1, a2, a3))
     }
 
     /// Create an address wrapping an IPv6 address with the given octets.
-    pub fn v6(a0: u16, a1: u16, a2: u16, a3: u16,
-              a4: u16, a5: u16, a6: u16, a7: u16) -> Address {
+    // TODO: `const` fn
+    pub fn v6(
+        a0: u16, a1: u16, a2: u16, a3: u16,
+        a4: u16, a5: u16, a6: u16, a7: u16,
+    ) -> Address {
         Address::Ipv6(Ipv6Address::new(a0, a1, a2, a3, a4, a5, a6, a7))
     }
 
@@ -292,12 +295,12 @@ impl Cidr {
 
     /// Query whether the subnetwork described by this CIDR block contains
     /// the given address.
-    pub fn contains_addr(&self, addr: &Address) -> bool {
+    pub fn contains(&self, addr: Address) -> bool {
         match (self, addr) {
-            (Cidr::Ipv4(ref cidr), Address::Ipv4(ref addr)) =>
-                cidr.contains_addr(addr),
-            (Cidr::Ipv6(ref cidr), Address::Ipv6(ref addr)) =>
-                cidr.contains_addr(addr),
+            (Cidr::Ipv4(ref cidr), Address::Ipv4(addr)) =>
+                cidr.contains(addr),
+            (Cidr::Ipv6(ref cidr), Address::Ipv6(addr)) =>
+                cidr.contains_addr(&addr),
             (Cidr::Ipv4(_), Address::Ipv6(_)) | (Cidr::Ipv6(_), Address::Ipv4(_)) =>
                 false,
             (_, Address::Unspecified) =>
@@ -305,11 +308,30 @@ impl Cidr {
                 // and no CIDR block can do that.
                 false,
             (Cidr::__Nonexhaustive, _) |
-            (_, &Address::__Nonexhaustive) =>
+            (_, Address::__Nonexhaustive) =>
                 unreachable!()
         }
     }
 
+    pub fn accepts(&self, addr: Address) -> bool {
+        match (self, addr) {
+            (Cidr::Ipv4(ref cidr), Address::Ipv4(addr)) =>
+                cidr.accepts(addr),
+            (Cidr::Ipv6(ref cidr), Address::Ipv6(addr)) =>
+                unimplemented!("TODO"),
+            (Cidr::Ipv4(_), Address::Ipv6(_)) | (Cidr::Ipv6(_), Address::Ipv4(_)) =>
+                false,
+            (_, Address::Unspecified) =>
+                // a fully unspecified address covers both IPv4 and IPv6,
+                // and no CIDR block can do that.
+                false,
+            (Cidr::__Nonexhaustive, _) |
+            (_, Address::__Nonexhaustive) =>
+                unreachable!()
+        }
+    }
+
+    /*
     /// Query whether the subnetwork described by this CIDR block contains
     /// the subnetwork described by the given CIDR block.
     pub fn contains_subnet(&self, subnet: &Cidr) -> bool {
@@ -325,6 +347,7 @@ impl Cidr {
                 unreachable!()
         }
     }
+    */
 }
 
 impl From<Ipv4Cidr> for Cidr {

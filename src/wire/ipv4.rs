@@ -40,7 +40,7 @@ impl Address {
     pub const MULTICAST_ALL_ROUTERS: Address = Address([224, 0, 0, 2]);
 
     /// Construct an IPv4 address from parts.
-    pub fn new(a0: u8, a1: u8, a2: u8, a3: u8) -> Address {
+    pub const fn new(a0: u8, a1: u8, a2: u8, a3: u8) -> Address {
         Address([a0, a1, a2, a3])
     }
 
@@ -57,6 +57,16 @@ impl Address {
     /// Return an IPv4 address as a sequence of octets, in big-endian.
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
+    }
+
+    /// Encode the address into a `u32` in network endian byte order.
+    pub fn to_network_integer(self) -> u32 {
+        u32::from_be_bytes(self.0)
+    }
+
+    /// Decode a network endian `u32` into an address.
+    pub fn from_network_integer(num: u32) -> Self {
+        Address(num.to_be_bytes())
     }
 
     /// Query whether the address is an unicast address.
@@ -115,6 +125,13 @@ impl fmt::Display for Address {
 
 /// A specification of an IPv4 CIDR block, containing an address and a variable-length
 /// subnet masking prefix length.
+///
+/// Relevant RFCs:
+/// * [RFC 1519: Classless Inter-Domain Routing (CIDR)][RFC1519]
+/// * [RFC 3021: Using 31-Bit Prefixes on IPv4 Point-to-Point Links][RFC3021]
+///
+/// [RFC1519]: https://tools.ietf.org/html/rfc1519
+/// [RFC3021]: https://tools.ietf.org/html/rfc3021
 #[derive(Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Default)]
 pub struct Cidr {
     address:    Address,
@@ -133,7 +150,7 @@ impl Cidr {
 
     /// Create an IPv4 CIDR block from the given address and network mask.
     pub fn from_netmask(addr: Address, netmask: Address) -> Option<Cidr> {
-        let netmask = NetworkEndian::read_u32(&netmask.0[..]);
+        let netmask = netmask.to_network_integer();
         if netmask.leading_zeros() == 0 && netmask.trailing_zeros() == netmask.count_zeros() {
             Some(Cidr { address: addr, prefix_len: netmask.count_ones() as u8 })
         } else {
@@ -158,65 +175,105 @@ impl Cidr {
         }
 
         let number = 0xffffffffu32 << (32 - self.prefix_len);
-        let data = [
-            ((number >> 24) & 0xff) as u8,
-            ((number >> 16) & 0xff) as u8,
-            ((number >>  8) & 0xff) as u8,
-            ((number >>  0) & 0xff) as u8,
-        ];
+        Address::from_network_integer(number)
+    }
 
-        Address(data)
+    /// Determines if the subnet contains a reserved network and broadcast address.
+    ///
+    /// This is the cast if the prefix is shorter than 31 bits according to
+    /// [RFC3021](https://tools.ietf.org/html/rfc3021).
+    pub fn has_network_and_broadcast(&self) -> bool {
+        self.prefix_len < 31
     }
 
     /// Return the broadcast address of this IPv4 CIDR.
-    pub fn broadcast(&self) -> Option<Address> {
-        let network = self.network();
-
-        if network.prefix_len == 31 || network.prefix_len == 32 {
+    pub fn broadcast(&self) -> Option<Cidr> {
+        if !self.has_network_and_broadcast() {
             return None;
         }
 
-        let network_number = NetworkEndian::read_u32(&network.address.0[..]);
-        let number = network_number | 0xffffffffu32 >> network.prefix_len;
-        let data = [
-            ((number >> 24) & 0xff) as u8,
-            ((number >> 16) & 0xff) as u8,
-            ((number >>  8) & 0xff) as u8,
-            ((number >>  0) & 0xff) as u8,
-        ];
+        let netaddr = self.address.to_network_integer();
+        let netmask = self.netmask().to_network_integer();
 
-        Some(Address(data))
+        Some(Cidr {
+            address: Address::from_network_integer(netaddr | !netmask),
+            .. *self
+        })
     }
 
     /// Return the network block of this IPv4 CIDR.
-    pub fn network(&self) -> Cidr {
-        let mask = self.netmask().0;
-        let network = [
-            self.address.0[0] & mask[0],
-            self.address.0[1] & mask[1],
-            self.address.0[2] & mask[2],
-            self.address.0[3] & mask[3],
-        ];
-        Cidr { address: Address(network), prefix_len: self.prefix_len }
+    pub fn network(&self) -> Option<Cidr> {
+        if !self.has_network_and_broadcast() {
+            return None;
+        }
+
+        let netaddr = self.address.to_network_integer();
+        let netmask = self.netmask().to_network_integer();
+
+        Some(Cidr {
+            address: Address::from_network_integer(netaddr & netmask),
+            .. *self
+        })
     }
 
-    /// Query whether the subnetwork described by this IPv4 CIDR block contains
-    /// the given address.
-    pub fn contains_addr(&self, addr: &Address) -> bool {
-        // right shift by 32 is not legal
-        if self.prefix_len == 0 { return true }
+    /// Find out if the Cidr address identifies the host.
+    ///
+    /// If the prefix of the `Cidr` is 31 or 32 simply does a full match of the address. Otherwise,
+    /// interprets the Cidr according to reserved host address semantics. That is:
+    /// * A host address of all zeroes for any address in the subnet (including `0` and broadcast).
+    /// * A host address of all ones for any address other than the all zeroes address.
+    /// * Any other host address matches its host address exactly.
+    ///
+    /// To query if an address is contained in the subnet identified by this Cidr, use `network`.
+    pub fn contains(&self, address: Address) -> bool {
+        if !self.has_network_and_broadcast() {
+            return self.address == address
+        }
 
-        let shift = 32 - self.prefix_len;
-        let self_prefix = NetworkEndian::read_u32(self.address.as_bytes()) >> shift;
-        let addr_prefix = NetworkEndian::read_u32(addr.as_bytes()) >> shift;
-        self_prefix == addr_prefix
+        let address = address.to_network_integer();
+        let netaddr = self.address.to_network_integer();
+        let netmask = self.netmask().to_network_integer();
+
+        // Network
+        if netaddr & !netmask == 0 {
+            return address & netmask == netaddr & netmask;
+        }
+
+        // Broadcast
+        if !netaddr & !netmask == 0 {
+            let same_net = address & netmask == netaddr & netmask;
+            let is_net = address & !netmask == 0;
+            return same_net && !is_net;
+        }
+
+        // Host address.
+        netaddr == address
     }
 
+    /// Whether to accept a packet directed at some address.
+    ///
+    /// See section 3.3. of [RFC1519].
+	///
+	/// [RFC1519]: https://tools.ietf.org/html/rfc1519
+    pub fn accepts(&self, address: Address) -> bool {
+		let broadcast = self.broadcast()
+            .map(|cidr| cidr.address == address)
+            .unwrap_or(false);
+        let network = self.network()
+            .map(|cidr| cidr.address == address)
+            .unwrap_or(false);
+		// We MAY accept packets to the network address. We don't because we would have to treat
+        // them like broadcasts and thus probably mangle the address.
+		(self.address == address || broadcast) && !network
+    }
+
+    /*
     /// Query whether the subnetwork described by this IPv4 CIDR block contains
     /// the subnetwork described by the given IPv4 CIDR block.
     pub fn contains_subnet(&self, subnet: &Cidr) -> bool {
         self.prefix_len <= subnet.prefix_len && self.contains_addr(&subnet.address)
     }
+    */
 }
 
 impl fmt::Display for Cidr {

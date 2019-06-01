@@ -44,8 +44,10 @@ impl Address {
                  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]);
 
     /// Construct an IPv6 address from parts.
-    pub fn new(a0: u16, a1: u16, a2: u16, a3: u16,
-               a4: u16, a5: u16, a6: u16, a7: u16) -> Address {
+    pub fn new(
+        a0: u16, a1: u16, a2: u16, a3: u16,
+        a4: u16, a5: u16, a6: u16, a7: u16,
+    ) -> Address {
         let mut addr = [0u8; 16];
         NetworkEndian::write_u16(&mut addr[0..2], a0);
         NetworkEndian::write_u16(&mut addr[2..4], a1);
@@ -301,6 +303,7 @@ impl Cidr {
     /// Query whether the subnetwork described by this IPv6 CIDR block contains
     /// the given address.
     pub fn contains_addr(&self, addr: &Address) -> bool {
+        // FIXME: this is not correct like Ipv4
         // right shift by 128 is not legal
         if self.prefix_len == 0 { return true }
 

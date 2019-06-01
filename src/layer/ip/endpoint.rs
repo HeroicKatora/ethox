@@ -71,17 +71,17 @@ impl<'a> Endpoint<'a> {
     }
 
     fn accepts(&self, dst_addr: IpAddress) -> bool {
-        self.addr.iter().any(|own_addr| own_addr.address() == dst_addr)
+        self.addr.iter().any(|own_addr| own_addr.accepts(dst_addr))
     }
 
     /// Find the route to use.
     fn route(&self, dst_addr: IpAddress, time: Instant) -> Option<Route> {
-        let next_hop = self.routes.lookup(&dst_addr, time)?;
+        let next_hop = self.routes.lookup(dst_addr, time)?;
 
         // Which source to use?
         let src_addr = self.addr
             .iter()
-            .filter(|addr| addr.contains_addr(&dst_addr))
+            .filter(|addr| addr.contains(dst_addr))
             .nth(0)?;
 
         Some(Route {

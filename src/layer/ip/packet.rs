@@ -1,8 +1,9 @@
 use crate::layer::{Error, Result, eth};
 use crate::nic::Info;
 use crate::time::Instant;
-use crate::wire::{Checksum, EthernetFrame, EthernetProtocol, Payload, PayloadMut};
-use crate::wire::{IpAddress, IpProtocol, IpRepr, Ipv4Packet, Ipv6Packet};
+use crate::wire::{Checksum, EthernetAddress, EthernetFrame, EthernetProtocol};
+use crate::wire::{Reframe, Payload, PayloadMut, PayloadResult, payload};
+use crate::wire::{IpAddress, IpCidr, IpProtocol, IpRepr, Ipv4Packet, Ipv6Packet};
 
 pub struct Packet<'a, P: Payload> {
     pub handle: Handle<'a>,
@@ -10,9 +11,8 @@ pub struct Packet<'a, P: Payload> {
 }
 
 pub struct RawPacket<'a, P: Payload> {
-    handle: Handle<'a>,
-    init: Option<Init>,
-    payload: &'a mut P,
+    pub handle: Handle<'a>,
+    pub payload: &'a mut P,
 }
 
 pub struct Handle<'a> {
@@ -27,7 +27,7 @@ pub enum IpPacket<'a, P: Payload> {
 
 /// Initializer for a packet.
 pub struct Init {
-    pub src_addr: IpAddress,
+    pub src_mask: IpCidr,
     pub dst_addr: IpAddress,
     pub protocol: IpProtocol,
     pub payload: usize,
@@ -37,6 +37,12 @@ pub struct Init {
 pub(crate) struct Route {
     pub next_hop: IpAddress,
     pub src_addr: IpAddress,
+}
+
+struct EthRoute {
+    next_hop: IpAddress,
+    next_mac: EthernetAddress,
+    src_addr: IpAddress,
 }
 
 /// The interface to the endpoint.
@@ -112,29 +118,28 @@ impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
     ) -> Self {
         RawPacket {
             handle,
-            init: None,
             payload,
         }
     }
 
-    pub fn route_to(&mut self, dst_addr: IpAddress) -> Result<()> {
-        let init = match &mut self.init {
-            Some(init) => init,
-            None => return Err(Error::Illegal),
-        };
-
+    fn route_to(&mut self, dst_addr: IpAddress) -> Result<EthRoute> {
         let now = self.handle.eth.info().timestamp();
-        let route = self.handle.endpoint.route(dst_addr, now)
+        let Route { next_hop, src_addr } = self.handle.endpoint
+            .route(dst_addr, now)
             .ok_or(Error::Unreachable)?;
+        let next_mac = self.handle.eth.resolve(next_hop)?;
 
-        init.dst_addr = route.next_hop;
-        init.src_addr = route.src_addr;
-
-        Ok(())
+        Ok(EthRoute {
+            next_hop,
+            next_mac,
+            src_addr,
+        })
     }
 
     /// Initialize to a valid ip packet.
-    pub fn prepare(self, init: Init) -> Result<Packet<'a, P>> {
+    pub fn prepare(mut self, init: Init) -> Result<Packet<'a, P>> {
+        let route = self.route_to(init.dst_addr)?;
+
         let mut lower = eth::RawPacket::new(
             self.handle.eth,
             self.payload);
@@ -142,7 +147,7 @@ impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
         let src_addr = lower.src_addr();
         let lower_init = eth::Init {
             src_addr,
-            dst_addr: lower.handle.resolve(init.dst_addr)?,
+            dst_addr: route.next_mac,
             ethertype: match init.dst_addr {
                 IpAddress::Ipv4(_) => EthernetProtocol::Ipv4,
                 IpAddress::Ipv6(_) => EthernetProtocol::Ipv6,
@@ -152,7 +157,7 @@ impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
         };
 
         let mut prepared = lower.prepare(lower_init)?;
-        let repr = init.initialize(&mut prepared.frame)?;
+        let repr = init.initialize(route.src_addr, &mut prepared.frame)?;
 
         // Reconstruct the handle.
         let handle = Handle::new(prepared.handle, self.handle.endpoint);
@@ -165,9 +170,9 @@ impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
 }
 
 impl Init {
-    fn initialize<P: PayloadMut>(&self, payload: &mut P) -> Result<IpRepr> {
+    fn initialize<P: PayloadMut>(&self, src_addr: IpAddress, payload: &mut P) -> Result<IpRepr> {
         let repr = IpRepr::Unspecified {
-            src_addr: self.src_addr,
+            src_addr,
             dst_addr: self.dst_addr,
             hop_limit: u8::max_value(),
             protocol: self.protocol,
@@ -207,3 +212,35 @@ impl<'a, P: Payload> IpPacket<'a, P> {
         self.into_inner().into_inner()
     }
 }
+
+impl<'a, P: Payload> Payload for IpPacket<'a, P> {
+    fn payload(&self) -> &payload {
+        match self {
+            IpPacket::V4(packet) => packet.payload(),
+            IpPacket::V6(_packet) => unimplemented!("TODO"),
+        }
+    }
+} 
+
+impl<'a, P: PayloadMut> PayloadMut for IpPacket<'a, P> {
+    fn payload_mut(&mut self) -> &mut payload {
+        match self {
+            IpPacket::V4(packet) => packet.payload_mut(),
+            IpPacket::V6(_packet) => unimplemented!("TODO"),
+        }
+    }
+
+    fn resize(&mut self, length: usize) -> PayloadResult<()> {
+        match self {
+            IpPacket::V4(packet) => packet.resize(length),
+            IpPacket::V6(_packet) => unimplemented!("TODO"),
+        }
+    }
+
+    fn reframe(&mut self, frame: Reframe) -> PayloadResult<()> {
+        match self {
+            IpPacket::V4(packet) => packet.reframe(frame),
+            IpPacket::V6(_packet) => unimplemented!("TODO"),
+        }
+    }
+} 
