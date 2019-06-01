@@ -139,6 +139,16 @@ pub struct Cidr {
 }
 
 impl Cidr {
+    /// The address identifying all networks.
+    ///
+    /// This must never be used as a source address (like other network addresses) but MAY be used
+    /// to identify a host in a local network that has not yet been assigned an address while it is
+    /// requesting one.
+    ///
+    /// Additionally, it may also be used as a mask in address selection when the ip address can be
+    /// chosen arbitrarily.
+    pub const UNSPECIFIED: Self = Cidr { address: Address::UNSPECIFIED, prefix_len: 0 };
+
     /// Create an IPv4 CIDR block from the given address and prefix length.
     ///
     /// # Panics
@@ -264,16 +274,23 @@ impl Cidr {
             .unwrap_or(false);
 		// We MAY accept packets to the network address. We don't because we would have to treat
         // them like broadcasts and thus probably mangle the address.
-		(self.address == address || broadcast) && !network
+		(self.address == address || broadcast || address == Address::BROADCAST) && !network
     }
 
-    /*
-    /// Query whether the subnetwork described by this IPv4 CIDR block contains
-    /// the subnetwork described by the given IPv4 CIDR block.
+    /// Query whether the host is in a subnetwork contained in the subnetwork of `self`.
+    ///
+    /// In contrast to `contains` this only checks the relation of the subnets described by the
+    /// both address blocks. It completely ignores the host identifiers. Consequently this will
+    /// also successfully work for blocks that do not have an address identifying the network
+    /// itself, that is for prefix lengths 31 and 32.
     pub fn contains_subnet(&self, subnet: &Cidr) -> bool {
-        self.prefix_len <= subnet.prefix_len && self.contains_addr(&subnet.address)
+        self.prefix_len <= subnet.prefix_len && {
+            let netmask = self.netmask().to_network_integer();
+            let netaddr = self.address.to_network_integer();
+            let othaddr = subnet.address.to_network_integer();
+            netaddr & netmask == othaddr & netmask
+        }
     }
-    */
 }
 
 impl fmt::Display for Cidr {
@@ -1026,11 +1043,11 @@ mod test {
         ];
 
         for addr in inside_subnet.iter().map(|a| Address::from_bytes(a)) {
-            assert!(cidr.contains_addr(&addr));
+            assert!(cidr.network().unwrap().contains(addr));
         }
 
         for addr in outside_subnet.iter().map(|a| Address::from_bytes(a)) {
-            assert!(!cidr.contains_addr(&addr));
+            assert!(!cidr.contains(addr));
         }
 
         for subnet in subnets.iter().map(
@@ -1042,9 +1059,6 @@ mod test {
             |&(a, p)| Cidr::new(Address::new(a[0], a[1], a[2], a[3]), p)) {
             assert!(!cidr.contains_subnet(&subnet));
         }
-
-        let cidr_without_prefix = Cidr::new(cidr.address(), 0);
-        assert!(cidr_without_prefix.contains_addr(&Address::new(127, 0, 0, 1)));
     }
 
     #[test]
@@ -1091,27 +1105,27 @@ mod test {
 
     #[test]
     fn test_cidr_broadcast() {
-        assert_eq!(Cidr::new(Address([0, 0, 0, 0]), 0).broadcast(),
+        assert_eq!(Cidr::new(Address([0, 0, 0, 0]), 0).broadcast().map(|x| x.address()),
                    Some(Address([255, 255, 255, 255])));
-        assert_eq!(Cidr::new(Address([0, 0, 0, 1]), 24).broadcast(),
+        assert_eq!(Cidr::new(Address([0, 0, 0, 1]), 24).broadcast().map(|x| x.address()),
                    Some(Address([0, 0, 0, 255])));
-        assert_eq!(Cidr::new(Address([0, 0, 0, 0]), 32).broadcast(),
+        assert_eq!(Cidr::new(Address([0, 0, 0, 0]), 32).broadcast().map(|x| x.address()),
                    None);
-        assert_eq!(Cidr::new(Address([127, 0, 0, 0]), 8).broadcast(),
+        assert_eq!(Cidr::new(Address([127, 0, 0, 0]), 8).broadcast().map(|x| x.address()),
                    Some(Address([127, 255, 255, 255])));
-        assert_eq!(Cidr::new(Address([192, 168, 0, 0]), 16).broadcast(),
+        assert_eq!(Cidr::new(Address([192, 168, 0, 0]), 16).broadcast().map(|x| x.address()),
                    Some(Address([192, 168, 255, 255])));
-        assert_eq!(Cidr::new(Address([192, 168, 1, 1]), 16).broadcast(),
+        assert_eq!(Cidr::new(Address([192, 168, 1, 1]), 16).broadcast().map(|x| x.address()),
                    Some(Address([192, 168, 255, 255])));
-        assert_eq!(Cidr::new(Address([192, 168, 1, 1]), 17).broadcast(),
+        assert_eq!(Cidr::new(Address([192, 168, 1, 1]), 17).broadcast().map(|x| x.address()),
                    Some(Address([192, 168, 127, 255])));
-        assert_eq!(Cidr::new(Address([172, 16, 0, 1]), 12).broadcast(),
+        assert_eq!(Cidr::new(Address([172, 16, 0, 1]), 12).broadcast().map(|x| x.address()),
                    Some(Address([172, 31, 255, 255])));
-        assert_eq!(Cidr::new(Address([255, 255, 255, 1]), 24).broadcast(),
+        assert_eq!(Cidr::new(Address([255, 255, 255, 1]), 24).broadcast().map(|x| x.address()),
                    Some(Address([255, 255, 255, 255])));
-        assert_eq!(Cidr::new(Address([255, 255, 255, 254]), 31).broadcast(),
+        assert_eq!(Cidr::new(Address([255, 255, 255, 254]), 31).broadcast().map(|x| x.address()),
                    None);
-        assert_eq!(Cidr::new(Address([255, 255, 255, 255]), 32).broadcast(),
+        assert_eq!(Cidr::new(Address([255, 255, 255, 255]), 32).broadcast().map(|x| x.address()),
                    None);
 
     }
@@ -1119,24 +1133,26 @@ mod test {
     #[test]
     fn test_cidr_network() {
         assert_eq!(Cidr::new(Address([0, 0, 0, 0]), 0).network(),
-                   Cidr::new(Address([0, 0, 0, 0]), 0));
+                   Some(Cidr::new(Address([0, 0, 0, 0]), 0)));
         assert_eq!(Cidr::new(Address([0, 0, 0, 1]), 24).network(),
-                   Cidr::new(Address([0, 0, 0, 0]), 24));
+                   Some(Cidr::new(Address([0, 0, 0, 0]), 24)));
         assert_eq!(Cidr::new(Address([0, 0, 0, 0]), 32).network(),
-                   Cidr::new(Address([0, 0, 0, 0]), 32));
+                   None);
         assert_eq!(Cidr::new(Address([127, 0, 0, 0]), 8).network(),
-                   Cidr::new(Address([127, 0, 0, 0]), 8));
+                   Some(Cidr::new(Address([127, 0, 0, 0]), 8)));
         assert_eq!(Cidr::new(Address([192, 168, 0, 0]), 16).network(),
-                   Cidr::new(Address([192, 168, 0, 0]), 16));
+                   Some(Cidr::new(Address([192, 168, 0, 0]), 16)));
         assert_eq!(Cidr::new(Address([192, 168, 1, 1]), 16).network(),
-                   Cidr::new(Address([192, 168, 0, 0]), 16));
+                   Some(Cidr::new(Address([192, 168, 0, 0]), 16)));
         assert_eq!(Cidr::new(Address([192, 168, 1, 1]), 17).network(),
-                   Cidr::new(Address([192, 168, 0, 0]), 17));
+                   Some(Cidr::new(Address([192, 168, 0, 0]), 17)));
         assert_eq!(Cidr::new(Address([172,  16, 0, 1]), 12).network(),
-                   Cidr::new(Address([172,  16, 0, 0]), 12));
+                   Some(Cidr::new(Address([172,  16, 0, 0]), 12)));
         assert_eq!(Cidr::new(Address([255, 255, 255, 1]), 24).network(),
-                   Cidr::new(Address([255, 255, 255, 0]), 24));
+                   Some(Cidr::new(Address([255, 255, 255, 0]), 24)));
+        assert_eq!(Cidr::new(Address([255, 255, 255, 255]), 31).network(),
+                   None);
         assert_eq!(Cidr::new(Address([255, 255, 255, 255]), 32).network(),
-                   Cidr::new(Address([255, 255, 255, 255]), 32));
+                   None);
     }
 }

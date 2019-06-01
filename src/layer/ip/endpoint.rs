@@ -141,3 +141,19 @@ where
         self.handler.send(packet)
     }
 }
+
+impl<P: Payload, F> Recv<P> for FnHandler<F>
+    where F: FnMut(Packet<P>)
+{
+    fn receive(&mut self, frame: Packet<P>) {
+        self.0(frame)
+    }
+}
+
+impl<P: Payload, F> Send<P> for FnHandler<F>
+    where F: FnMut(RawPacket<P>)
+{
+    fn send(&mut self, frame: RawPacket<P>) {
+        self.0(frame)
+    }
+}

@@ -2,7 +2,7 @@
 //!
 use crate::layer::{Error, Result};
 use crate::managed::{List, Slice};
-use crate::time::Instant;
+use crate::time::{Expiration, Instant};
 use crate::wire::{IpCidr, IpAddress};
 use crate::wire::Ipv4Address;
 use crate::wire::Ipv6Address;
@@ -20,11 +20,8 @@ pub struct Route {
     /// Next hop for this network.
     pub next_hop: IpAddress,
 
-    /// `None` means "forever".
-    pub preferred_until: Option<Instant>,
-
-    /// `None` means "forever".
-    pub expires_at: Option<Instant>,
+    /// Expired routes are never considered.
+    pub expires_at: Expiration,
 }
 
 impl Route {
@@ -36,8 +33,7 @@ impl Route {
         Route {
             net: IpCidr::new(IpAddress::v4(0, 0, 0, 0), 0),
             next_hop: IpAddress::Unspecified,
-            preferred_until: None,
-            expires_at: None,
+            expires_at: Expiration::Never,
         }
     }
 
@@ -49,8 +45,7 @@ impl Route {
         Route {
             net: IpCidr::new(IpAddress::v4(0, 0, 0, 0), 0),
             next_hop: IpAddress::v4(0, 0, 0, 0).into(),
-            preferred_until: None,
-            expires_at: None,
+            expires_at: Expiration::Never,
         }
     }
 
@@ -59,8 +54,7 @@ impl Route {
         Route {
             net: IpCidr::new(IpAddress::v6(0, 0, 0, 0, 0, 0, 0, 0), 0), 
             next_hop: IpAddress::v6(0, 0, 0, 0, 0, 0, 0, 0).into(),
-            preferred_until: None,
-            expires_at: None,
+            expires_at: Expiration::Never,
         }
     }
 
@@ -72,8 +66,7 @@ impl Route {
         Route {
             net: IpCidr::new(IpAddress::v4(0, 0, 0, 0), 0),
             next_hop: gateway.into(),
-            preferred_until: None,
-            expires_at: None,
+            expires_at: Expiration::Never,
         }
     }
 
@@ -85,8 +78,7 @@ impl Route {
         Route {
             net: IpCidr::new(IpAddress::v6(0, 0, 0, 0, 0, 0, 0, 0), 0), 
             next_hop: gateway.into(),
-            preferred_until: None,
-            expires_at: None,
+            expires_at: Expiration::Never,
         }
     }
 }
@@ -160,17 +152,18 @@ impl<'a> Routes<'a> {
         // The rules say to find the subnet with longest prefix.
         let mut best_match = None;
         for route in self.storage.iter() {
-            if let Some(expires_at) = route.expires_at {
-                if timestamp > expires_at {
-                    continue;
-                }
+            // Ignored expired routes.
+            if Expiration::When(timestamp) > route.expires_at {
+                continue;
             }
 
+            // Ignored routes with mismatching net.
             if !route.net.contains(addr) {
                 continue;
             }
 
             let best = best_match.get_or_insert(route);
+            // Prefer shortest route.
             if best.net.prefix_len() < route.net.prefix_len() {
                 *best = route;
             }
@@ -215,48 +208,46 @@ mod test {
         let routes_storage = vec![Route::ipv4_invalid(); 3];
         let mut routes = Routes::new(routes_storage);
 
-        assert_eq!(routes.lookup(&ADDR_1A.into(), Instant::from_millis(0)), None);
-        assert_eq!(routes.lookup(&ADDR_1B.into(), Instant::from_millis(0)), None);
-        assert_eq!(routes.lookup(&ADDR_1C.into(), Instant::from_millis(0)), None);
-        assert_eq!(routes.lookup(&ADDR_2A.into(), Instant::from_millis(0)), None);
-        assert_eq!(routes.lookup(&ADDR_2B.into(), Instant::from_millis(0)), None);
+        assert_eq!(routes.lookup(ADDR_1A.into(), Instant::from_millis(0)), None);
+        assert_eq!(routes.lookup(ADDR_1B.into(), Instant::from_millis(0)), None);
+        assert_eq!(routes.lookup(ADDR_1C.into(), Instant::from_millis(0)), None);
+        assert_eq!(routes.lookup(ADDR_2A.into(), Instant::from_millis(0)), None);
+        assert_eq!(routes.lookup(ADDR_2B.into(), Instant::from_millis(0)), None);
 
         let route = Route {
             net: cidr_1().into(),
             next_hop: ADDR_1A.into(),
-            preferred_until: None,
-            expires_at: None,
+            expires_at: Expiration::Never,
         };
 
         routes.add_route(route)
             .expect("Can add single route");
 
-        assert_eq!(routes.lookup(&ADDR_1A.into(), Instant::from_millis(0)), Some(ADDR_1A.into()));
-        assert_eq!(routes.lookup(&ADDR_1B.into(), Instant::from_millis(0)), Some(ADDR_1A.into()));
-        assert_eq!(routes.lookup(&ADDR_1C.into(), Instant::from_millis(0)), Some(ADDR_1A.into()));
-        assert_eq!(routes.lookup(&ADDR_2A.into(), Instant::from_millis(0)), None);
-        assert_eq!(routes.lookup(&ADDR_2B.into(), Instant::from_millis(0)), None);
+        assert_eq!(routes.lookup(ADDR_1A.into(), Instant::from_millis(0)), Some(ADDR_1A.into()));
+        assert_eq!(routes.lookup(ADDR_1B.into(), Instant::from_millis(0)), Some(ADDR_1A.into()));
+        assert_eq!(routes.lookup(ADDR_1C.into(), Instant::from_millis(0)), Some(ADDR_1A.into()));
+        assert_eq!(routes.lookup(ADDR_2A.into(), Instant::from_millis(0)), None);
+        assert_eq!(routes.lookup(ADDR_2B.into(), Instant::from_millis(0)), None);
 
         let route2 = Route {
             net: cidr_2().into(),
             next_hop: ADDR_2A.into(),
-            preferred_until: Some(Instant::from_millis(10)),
-            expires_at: Some(Instant::from_millis(10)),
+            expires_at: Expiration::When(Instant::from_millis(10)),
         };
 
         routes.add_route(route2)
             .expect("Can add second route");
 
-        assert_eq!(routes.lookup(&ADDR_1A.into(), Instant::from_millis(0)), Some(ADDR_1A.into()));
-        assert_eq!(routes.lookup(&ADDR_1B.into(), Instant::from_millis(0)), Some(ADDR_1A.into()));
-        assert_eq!(routes.lookup(&ADDR_1C.into(), Instant::from_millis(0)), Some(ADDR_1A.into()));
-        assert_eq!(routes.lookup(&ADDR_2A.into(), Instant::from_millis(0)), Some(ADDR_2A.into()));
-        assert_eq!(routes.lookup(&ADDR_2B.into(), Instant::from_millis(0)), Some(ADDR_2A.into()));
+        assert_eq!(routes.lookup(ADDR_1A.into(), Instant::from_millis(0)), Some(ADDR_1A.into()));
+        assert_eq!(routes.lookup(ADDR_1B.into(), Instant::from_millis(0)), Some(ADDR_1A.into()));
+        assert_eq!(routes.lookup(ADDR_1C.into(), Instant::from_millis(0)), Some(ADDR_1A.into()));
+        assert_eq!(routes.lookup(ADDR_2A.into(), Instant::from_millis(0)), Some(ADDR_2A.into()));
+        assert_eq!(routes.lookup(ADDR_2B.into(), Instant::from_millis(0)), Some(ADDR_2A.into()));
 
-        assert_eq!(routes.lookup(&ADDR_1A.into(), Instant::from_millis(10)), Some(ADDR_1A.into()));
-        assert_eq!(routes.lookup(&ADDR_1B.into(), Instant::from_millis(10)), Some(ADDR_1A.into()));
-        assert_eq!(routes.lookup(&ADDR_1C.into(), Instant::from_millis(10)), Some(ADDR_1A.into()));
-        assert_eq!(routes.lookup(&ADDR_2A.into(), Instant::from_millis(10)), Some(ADDR_2A.into()));
-        assert_eq!(routes.lookup(&ADDR_2B.into(), Instant::from_millis(10)), Some(ADDR_2A.into()));
+        assert_eq!(routes.lookup(ADDR_1A.into(), Instant::from_millis(10)), Some(ADDR_1A.into()));
+        assert_eq!(routes.lookup(ADDR_1B.into(), Instant::from_millis(10)), Some(ADDR_1A.into()));
+        assert_eq!(routes.lookup(ADDR_1C.into(), Instant::from_millis(10)), Some(ADDR_1A.into()));
+        assert_eq!(routes.lookup(ADDR_2A.into(), Instant::from_millis(10)), Some(ADDR_2A.into()));
+        assert_eq!(routes.lookup(ADDR_2B.into(), Instant::from_millis(10)), Some(ADDR_2A.into()));
     }
 }

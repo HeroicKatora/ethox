@@ -1,13 +1,10 @@
 // Heads up! Before working on this file you should read, at least,
 // the parts of RFC 1122 that discuss ARP.
-use core::cmp;
 use core::ops::Deref;
 
 use crate::managed::Ordered;
-use crate::time::{Duration, Instant};
+use crate::time::{Duration, Expiration, Instant};
 use crate::wire::{EthernetAddress, IpAddress};
-
-use self::Expiration::{When, Never};
 
 /// A cached neighbor.
 ///
@@ -39,13 +36,6 @@ enum Mapping {
 
     /// We don't have a mapping but are looking for one.
     LookingFor,
-}
-
-/// An expiration time, inversion of `Option`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Expiration {
-    When(Instant),
-    Never,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -234,7 +224,7 @@ impl Table {
             .ok()?;
 
         let entry = &self[existing];
-        if When(timestamp) >= entry.expires_at {
+        if Expiration::When(timestamp) >= entry.expires_at {
             return None;
         }
 
@@ -255,52 +245,6 @@ impl Deref for Table {
 
     fn deref(&self) -> &[Neighbor] {
         &self.0
-    }
-}
-
-impl Default for Expiration {
-    fn default() -> Self {
-        Expiration::Never
-    }
-}
-
-impl From<Option<Instant>> for Expiration {
-    fn from(opt: Option<Instant>) -> Self {
-        match opt {
-            Some(instant) => When(instant),
-            None => Never,
-        }
-    }
-}
-
-impl From<Expiration> for Option<Instant> {
-    fn from(opt: Expiration) -> Self {
-        match opt {
-            When(instant) => Some(instant),
-            Never => None,
-        }
-    }
-}
-
-impl cmp::PartialOrd<Self> for Expiration {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        match (*self, *other) {
-            (Never, Never) => Some(cmp::Ordering::Equal),
-            (Never, When(_)) => Some(cmp::Ordering::Greater),
-            (When(_), Never) => Some(cmp::Ordering::Less),
-            (When(ref a), When(ref b)) => a.partial_cmp(b),
-        }
-    }
-}
-
-impl cmp::Ord for Expiration {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        match (*self, *other) {
-            (Never, Never) => cmp::Ordering::Equal,
-            (Never, When(_)) => cmp::Ordering::Greater,
-            (When(_), Never) => cmp::Ordering::Less,
-            (When(ref a), When(ref b)) => a.cmp(b),
-        }
     }
 }
 

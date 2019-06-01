@@ -9,8 +9,7 @@ absolute and relative time.
 [Instant]: struct.Instant.html
 [Duration]: struct.Duration.html
 */
-
-use core::{ops, fmt};
+use core::{cmp, fmt, ops};
 pub use core::time::Duration;
 
 /// A representation of an absolute time value.
@@ -26,6 +25,15 @@ pub use core::time::Duration;
 pub struct Instant {
     pub millis: i64,
 }
+
+/// An expiration time, inversion of `Option`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Expiration {
+    When(Instant),
+    Never,
+}
+
+use Expiration::{When, Never};
 
 impl Instant {
     /// Create a new `Instant` from a number of milliseconds.
@@ -131,6 +139,52 @@ impl ops::Sub<Instant> for Instant {
 
     fn sub(self, rhs: Instant) -> Duration {
         Duration::from_millis((self.millis - rhs.millis).abs() as u64)
+    }
+}
+
+impl Default for Expiration {
+    fn default() -> Self {
+        Expiration::Never
+    }
+}
+
+impl From<Option<Instant>> for Expiration {
+    fn from(opt: Option<Instant>) -> Self {
+        match opt {
+            Some(instant) => When(instant),
+            None => Never,
+        }
+    }
+}
+
+impl From<Expiration> for Option<Instant> {
+    fn from(opt: Expiration) -> Self {
+        match opt {
+            When(instant) => Some(instant),
+            Never => None,
+        }
+    }
+}
+
+impl cmp::PartialOrd<Self> for Expiration {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        match (*self, *other) {
+            (Never, Never) => Some(cmp::Ordering::Equal),
+            (Never, When(_)) => Some(cmp::Ordering::Greater),
+            (When(_), Never) => Some(cmp::Ordering::Less),
+            (When(ref a), When(ref b)) => a.partial_cmp(b),
+        }
+    }
+}
+
+impl cmp::Ord for Expiration {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        match (*self, *other) {
+            (Never, Never) => cmp::Ordering::Equal,
+            (Never, When(_)) => cmp::Ordering::Greater,
+            (When(_), Never) => cmp::Ordering::Less,
+            (When(ref a), When(ref b)) => a.cmp(b),
+        }
     }
 }
 
