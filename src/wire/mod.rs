@@ -55,11 +55,11 @@ let repr = Ipv4Repr {
 };
 let mut buffer = vec![0; repr.buffer_len() + repr.payload_len];
 { // emission
-    let packet = ipv4_frame::new_unchecked_mut(&mut buffer);
+    let packet = ipv4_packet::new_unchecked_mut(&mut buffer);
     repr.emit(packet, Checksum::Manual);
 }
 { // parsing
-    let packet = ipv4_frame::new_checked(&buffer)
+    let packet = ipv4_packet::new_checked(&buffer)
         .expect("truncated packet");
     let parsed = Ipv4Repr::parse(packet, Checksum::Manual)
         .expect("malformed packet");
@@ -171,7 +171,7 @@ pub use self::ip::{
     Cidr as IpCidr};
 
 pub use self::ipv4::{
-    ipv4 as ipv4_frame,
+    ipv4 as ipv4_packet,
     Address as Ipv4Address,
     Packet as Ipv4Packet,
     Repr as Ipv4Repr,

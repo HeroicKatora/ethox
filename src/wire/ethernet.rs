@@ -325,7 +325,7 @@ impl PrettyPrint for ethernet {
             }
             EtherType::Ipv4 => {
                 indent.increase(f)?;
-                super::ipv4_frame::pretty_print(&frame.payload(), f, indent)
+                super::ipv4_packet::pretty_print(&frame.payload(), f, indent)
             }
             EtherType::Ipv6 => {
                 indent.increase(f)?;

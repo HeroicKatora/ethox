@@ -86,6 +86,28 @@ impl<T, P> External<T> where T: Deref<Target=[P]> {
             .saturating_sub(self.sent)
     }
 
+    /// Change the buffer state such that all packets are pending to be received.
+    pub fn receive_all(&mut self) {
+        self.set_one_past_receive(self.buffer.len());
+        self.reset_receive();
+    }
+
+    /// Change the buffer state such that all packets are pending to be sent.
+    pub fn send_all(&mut self) {
+        self.set_one_past_receive(0);
+        self.reset_send();
+    }
+
+    pub fn get(&self, idx: usize) -> Option<&P> {
+        self.buffer.get(idx)
+    }
+
+    pub fn get_mut(&mut self, idx: usize) -> Option<&mut P> 
+        where T: DerefMut,
+    {
+        self.buffer.get_mut(idx)
+    }
+
     /// Update the timestamp on all future received packets.
     pub fn set_current_time(&mut self, instant: Instant) {
         self.info.timestamp = instant;
