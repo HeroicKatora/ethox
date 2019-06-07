@@ -480,7 +480,11 @@ impl Repr {
                     },
                 })
             }
-            _ => Err(Error::Unrecognized)
+
+            // Unknown types are not as specified in the standard and iana registry.
+            (Message::Unknown(_), _) => Err(Error::Unrecognized),
+            // Others are just not supported (yet). // TODO: more reprs.
+            _ => Err(Error::Unsupported),
         }
     }
 
@@ -506,7 +510,7 @@ impl Repr {
         match self {
             &Repr::EchoRequest { ident, seq_no, payload: _ } => {
                 packet.set_msg_type(Message::EchoRequest);
-                packet.set_msg_code(8);
+                packet.set_msg_code(0);
                 packet.set_echo_ident(ident);
                 packet.set_echo_seq_no(seq_no);
             },
@@ -614,34 +618,34 @@ mod test {
 
     #[test]
     fn test_echo_deconstruct() {
-        let packet = Packet::new_unchecked(&ECHO_PACKET_BYTES[..]);
+        let packet = icmpv4::new_unchecked(&ECHO_PACKET_BYTES[..]);
         assert_eq!(packet.msg_type(), Message::EchoRequest);
         assert_eq!(packet.msg_code(), 0);
         assert_eq!(packet.checksum(), 0x8efe);
         assert_eq!(packet.echo_ident(), 0x1234);
         assert_eq!(packet.echo_seq_no(), 0xabcd);
-        assert_eq!(packet.data(), &ECHO_DATA_BYTES[..]);
+        assert_eq!(packet.payload_slice(), &ECHO_DATA_BYTES[..]);
         assert_eq!(packet.verify_checksum(), true);
     }
 
     #[test]
     fn test_echo_construct() {
         let mut bytes = vec![0xa5; 12];
-        let mut packet = Packet::new_unchecked(&mut bytes);
+        let packet = icmpv4::new_unchecked_mut(&mut bytes);
         packet.set_msg_type(Message::EchoRequest);
         packet.set_msg_code(0);
         packet.set_echo_ident(0x1234);
         packet.set_echo_seq_no(0xabcd);
-        packet.data_mut().copy_from_slice(&ECHO_DATA_BYTES[..]);
+        packet.payload_mut_slice().copy_from_slice(&ECHO_DATA_BYTES[..]);
         packet.fill_checksum();
-        assert_eq!(&packet.into_inner()[..], &ECHO_PACKET_BYTES[..]);
+        assert_eq!(packet.as_bytes(), &ECHO_PACKET_BYTES[..]);
     }
 
     fn echo_packet_repr() -> Repr {
         Repr::EchoRequest {
             ident: 0x1234,
             seq_no: 0xabcd,
-            data: &ECHO_DATA_BYTES
+            payload: ECHO_DATA_BYTES.len(),
         }
     }
 
@@ -656,17 +660,19 @@ mod test {
     fn test_echo_emit() {
         let repr = echo_packet_repr();
         let mut bytes = vec![0xa5; repr.buffer_len()];
-        let mut packet = Packet::new_unchecked(&mut bytes);
-        repr.emit(&mut packet, &ChecksumCapabilities::default());
-        assert_eq!(&packet.into_inner()[..], &ECHO_PACKET_BYTES[..]);
+        let mut packet = icmpv4::new_unchecked_mut(&mut bytes);
+        repr.emit(&mut packet, Checksum::Manual);
+        packet.payload_mut_slice().copy_from_slice(&ECHO_DATA_BYTES[..]);
+        packet.fill_checksum();
+        assert_eq!(packet.as_bytes(), &ECHO_PACKET_BYTES[..]);
     }
 
     #[test]
     fn test_check_len() {
-        let bytes = [0x0b, 0x00, 0x00, 0x00,
+        let bytes = [0x08, 0x00, 0x00, 0x00,
                      0x00, 0x00, 0x00, 0x00];
-        assert_eq!(Packet::new_checked(&[]), Err(Error::Truncated));
-        assert_eq!(Packet::new_checked(&bytes[..4]), Err(Error::Truncated));
-        assert!(Packet::new_checked(&bytes[..]).is_ok());
+        assert_eq!(Packet::new_checked(&bytes[..0], Checksum::Ignored), Err(Error::Truncated));
+        assert_eq!(Packet::new_checked(&bytes[..4], Checksum::Ignored), Err(Error::Truncated));
+        Packet::new_checked(&bytes[..], Checksum::Ignored).unwrap();
     }
 }
