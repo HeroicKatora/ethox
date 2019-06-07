@@ -45,6 +45,7 @@
 
 pub mod arp;
 pub mod eth;
+pub mod icmp;
 pub mod ip;
 pub mod udp;
 

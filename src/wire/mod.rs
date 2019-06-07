@@ -114,7 +114,7 @@ mod ipv6option;
 mod ipv6hopbyhop;
 mod ipv6fragment;
 mod ipv6routing;
-// mod icmpv4;
+mod icmpv4;
 // mod icmpv6;
 // mod icmp;
 // #[cfg(feature = "proto-igmp")]
@@ -124,8 +124,8 @@ mod ipv6routing;
 // mod mld;
 mod udp;
 mod tcp;
-#[cfg(feature = "proto-dhcpv4")]
-pub(crate) mod dhcpv4;
+// pub(crate) mod dhcpv4;
+
 #[path = "payload.rs"]
 mod payload_impl;
 
@@ -203,7 +203,6 @@ pub use self::ipv6routing::{
     Header as Ipv6RoutingHeader,
     Repr as Ipv6RoutingRepr};
 
-/*
 pub use self::icmpv4::{
     Message as Icmpv4Message,
     DstUnreachable as Icmpv4DstUnreachable,
@@ -213,6 +212,7 @@ pub use self::icmpv4::{
     Packet as Icmpv4Packet,
     Repr as Icmpv4Repr};
 
+/*
 #[cfg(feature = "proto-igmp")]
 pub use self::igmp::{
     Packet as IgmpPacket,

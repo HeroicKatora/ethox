@@ -1,4 +1,3 @@
-#[cfg(feature = "proto-ipv4")]
 use super::icmpv4;
 #[cfg(feature = "proto-ipv6")]
 use super::icmpv6;
