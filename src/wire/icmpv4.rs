@@ -1,7 +1,7 @@
-use core::{cmp, fmt, ops};
+use core::{fmt, ops};
 use byteorder::{ByteOrder, NetworkEndian};
 
-use super::{Payload, payload};
+use super::Payload;
 use super::{Error, Checksum, Result};
 use super::ip::checksum;
 use super::{Ipv4Packet, Ipv4Repr, ipv4_packet};

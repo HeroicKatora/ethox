@@ -63,9 +63,9 @@ pub trait Info {
     fn capabilities(&self) -> Capabilities;
 }
 
-pub trait Device<'a> {
-    type Handle: Handle + ?Sized + 'a;
-    type Payload: Payload + ?Sized + 'a;
+pub trait Device {
+    type Handle: Handle + ?Sized;
+    type Payload: Payload + ?Sized;
 
     /// A description of the device.
     ///

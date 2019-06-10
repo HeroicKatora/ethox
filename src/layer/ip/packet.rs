@@ -40,7 +40,6 @@ pub(crate) struct Route {
 }
 
 struct EthRoute {
-    next_hop: IpAddress,
     next_mac: EthernetAddress,
     src_addr: IpAddress,
 }
@@ -130,7 +129,6 @@ impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
         let next_mac = self.handle.eth.resolve(next_hop)?;
 
         Ok(EthRoute {
-            next_hop,
             next_mac,
             src_addr,
         })

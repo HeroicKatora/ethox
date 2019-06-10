@@ -86,7 +86,7 @@ impl<'r> Loopback<'r> {
     }
 }
 
-impl<'a> super::Device<'a> for Loopback<'a> {
+impl super::Device for Loopback<'_> {
     type Handle = Handle;
     type Payload = [u8];
 

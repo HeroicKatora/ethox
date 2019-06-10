@@ -186,7 +186,7 @@ impl Drop for TapInterfaceDesc {
     }
 }
 
-impl<'a, C: PayloadMut + 'a> Device<'a> for TapInterface<C> {
+impl<C: PayloadMut> Device for TapInterface<C> {
     type Handle = EnqueueFlag;
     type Payload = Partial<C>;
 

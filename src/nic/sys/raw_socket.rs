@@ -190,7 +190,7 @@ impl Drop for RawSocketDesc {
     }
 }
 
-impl<'a, C: PayloadMut + 'a> Device<'a> for RawSocket<C> {
+impl<C: PayloadMut> Device for RawSocket<C> {
     type Handle = EnqueueFlag;
     type Payload = Partial<C>;
 

@@ -6,3 +6,4 @@
 //! arriving (e.g. dynamic port knocking) but also simplifies implementation by enforcing clear cut
 //! separation of concerns.
 
+mod endpoint;

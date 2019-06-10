@@ -122,10 +122,10 @@ impl<T, P> External<T> where T: Deref<Target=[P]> {
     }
 }
 
-impl<'a, T, P> super::Device<'a> for External<T>
+impl<T, P> super::Device for External<T>
 where
     T: Deref<Target=[P]> + DerefMut,
-    P: Payload + 'a,
+    P: Payload,
 {
     type Handle = Handle;
     type Payload = P;
