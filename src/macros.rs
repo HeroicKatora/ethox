@@ -73,7 +73,7 @@ macro_rules! byte_wrapper {
     }
 }
 
-#[cfg(feature = "log")]
+#[cfg(all(feature = "log", DISABLED))]
 #[macro_use]
 mod log {
     macro_rules! net_log {
@@ -82,7 +82,7 @@ mod log {
     }
 }
 
-#[cfg(not(feature = "log"))]
+#[cfg(not(all(feature = "log", DISABLED)))]
 #[macro_use]
 mod log {
     macro_rules! net_log {

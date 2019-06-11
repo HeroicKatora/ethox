@@ -16,3 +16,7 @@ libc = { version = "0.2", optional = true }
 default = ["std"]
 std = ["libc"]
 log = []
+
+[[example]]
+name = "debug_tap"
+required-features = ["std"]
