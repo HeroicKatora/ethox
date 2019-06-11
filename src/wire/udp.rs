@@ -207,6 +207,13 @@ impl<T: Payload> Packet<T> {
         }
     }
 
+    /// Get an immutable reference to the whole buffer.
+    ///
+    /// Useful if the buffer is some other packet encapsulation.
+    pub fn get_ref(&self) -> &T {
+        &self.buffer
+    }
+
     /// Get the repr of the underlying frame.
     pub fn repr(&self) -> Repr {
         self.repr
@@ -222,6 +229,28 @@ impl<T: Payload> Packet<T> {
         // Keeps header values unchanged.
         udp::new_unchecked_mut(self.buffer.payload_mut())
             .payload_mut_slice()
+    }
+}
+
+impl<T: Payload + PayloadMut> Packet<T> {
+    /// Recalculate the checksum if necessary.
+    ///
+    /// Note that the checksum test can be elided for non-Ipv6 upper layer protocol. This
+    /// provides in opportunity to recalculate it if necessary even though the header structure is
+    /// not otherwise mutably accessible while in `Packet` representation.
+    pub fn fill_checksum(&mut self, checksum: Checksum) {
+        let buffer = udp::new_unchecked_mut(self.buffer.payload_mut());
+        match checksum {
+            // Checksum optional, so we don't fill it.
+            Checksum::Lazy { src_addr: IpAddress::Ipv4(_), dst_addr: IpAddress::Ipv4(_) }
+            | Checksum::Ignored => (),
+
+            // Checksum required here.
+            Checksum::Manual { src_addr, dst_addr }
+            | Checksum::Lazy { src_addr, dst_addr } => {
+                buffer.fill_checksum(src_addr, dst_addr)
+            },
+        }
     }
 }
 
@@ -303,11 +332,26 @@ pub struct Repr {
     pub length: u16,
 }
 
+/// Abstraction for checksum behaviour.
+///
+/// The checksum requires calculating a pseudo header for the upper layer protocol consisting of
+/// src and dst address. The checksum can be elided (`=0`) execept when the upper layer is Ipv6.
 pub enum Checksum {
+    /// Always fill the checksum and check if it exists.
     Manual {
         src_addr: IpAddress,
         dst_addr: IpAddress,
     },
+
+    /// Fill the checksum only if required, otherwise `Manual`.
+    Lazy {
+        src_addr: IpAddress,
+        dst_addr: IpAddress,
+    },
+
+    /// Never inspect the checksum.
+    ///
+    /// This assumes that some layer below has already performed the necessary checks.
     Ignored,
 }
 

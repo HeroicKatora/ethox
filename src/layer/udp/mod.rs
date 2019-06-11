@@ -7,3 +7,11 @@
 //! separation of concerns.
 
 mod endpoint;
+mod packet;
+
+pub use packet::{
+    Handle,
+    Init,
+    Packet,
+    RawPacket,
+};

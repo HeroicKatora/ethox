@@ -624,6 +624,13 @@ impl<T: Payload> Packet<T> {
         })
     }
 
+    /// Get an immutable reference to the whole buffer.
+    ///
+    /// Useful if the buffer is some other packet encapsulation.
+    pub fn get_ref(&self) -> &T {
+        &self.buffer
+    }
+
     /// Get the repr of the packet header.
     pub fn repr(&self) -> Repr {
         self.repr
