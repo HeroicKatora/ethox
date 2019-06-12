@@ -104,11 +104,15 @@ impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
             self.handle.inner,
             self.payload);
 
+        let packet_len = init.payload
+            .checked_add(8)
+            .ok_or(Error::BadSize)?;
+
         let lower_init = ip::Init {
             src_mask: init.src_mask,
             dst_addr: init.dst_addr,
             protocol: IpProtocol::Udp,
-            payload: init.payload + 8,
+            payload: packet_len,
         };
 
         let mut prepared = lower.prepare(lower_init)?;
@@ -129,7 +133,8 @@ impl Init {
         let repr = UdpRepr {
             src_port: self.src_port,
             dst_port: self.dst_port,
-            length: u16::try_from(self.payload)
+            // Can't overflow, already inited ip with that length.
+            length: u16::try_from(self.payload + 8)
                 .map_err(|_| Error::BadSize)?,
         };
 
