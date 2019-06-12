@@ -1,7 +1,7 @@
 use crate::layer::{eth, FnHandler};
 use crate::managed::Slice;
-use crate::wire::{Checksum, EthernetProtocol, Payload, PayloadMut};
-use crate::wire::{IpAddress, IpCidr, Ipv4Cidr, Ipv6Cidr, Ipv4Packet, Ipv6Packet};
+use crate::wire::{EthernetProtocol, Payload, PayloadMut};
+use crate::wire::{IpAddress, IpCidr, Ipv4Cidr, Ipv6Cidr, Ipv4Packet};
 use crate::time::Instant;
 
 use super::{Recv, Send};

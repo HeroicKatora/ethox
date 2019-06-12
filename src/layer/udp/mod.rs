@@ -5,9 +5,18 @@
 //! possible to respond dynamically at any port without settting up logic prior to a packet
 //! arriving (e.g. dynamic port knocking) but also simplifies implementation by enforcing clear cut
 //! separation of concerns.
+use crate::wire::Payload;
 
 mod endpoint;
 mod packet;
+#[cfg(test)]
+mod tests;
+
+pub use endpoint::{
+    Endpoint,
+    Receiver,
+    Sender,
+};
 
 pub use packet::{
     Handle,
@@ -15,3 +24,11 @@ pub use packet::{
     Packet,
     RawPacket,
 };
+
+pub trait Recv<P: Payload> {
+    fn receive(&mut self, frame: Packet<P>);
+}
+
+pub trait Send<P: Payload> {
+    fn send(&mut self, raw: RawPacket<P>);
+}
