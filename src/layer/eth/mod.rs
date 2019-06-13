@@ -15,6 +15,7 @@ pub use endpoint::{
 pub use neighbor::{
     Neighbor,
     Answer as NeighborAnswer,
+    Mapping as NeighborMapping,
     Cache as NeighborCache,
     Table as NeighborTable,
 };

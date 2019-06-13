@@ -87,10 +87,26 @@ impl packet::Endpoint for EthEndpoint<'_, '_> {
     }
 
     fn resolve(&mut self, addr: IpAddress, time: Instant) -> Result<EthernetAddress> {
-        // TODO: should we automatically try to send an ARP request?  And if so, should lookup be
-        // used instead.
-        self.inner.neighbors.lookup_pure(&addr, time)
-            .ok_or(Error::Unreachable)
+        // TODO: should we automatically try to send an ARP request?  And if so, should lookup be used instead?
+        Ok(self.inner.neighbors.lookup_pure(&addr, time).ok_or(Error::Unreachable)?)
+
+        /*
+        if let Mapping::LookingFor = mapping {
+            // TODO: send ARP request?
+        }
+
+        Ok(mapping)
+        */
+    }
+
+    fn update(&mut self, hw_addr: EthernetAddress, prot_addr: IpAddress) -> Result<()> {
+        // TODO: return correct Error here
+
+        if let Some(_) = self.inner.neighbors.lookup_pure(&prot_addr, Instant::from_millis(0)) {
+            return self.inner.neighbors.fill(prot_addr, hw_addr, Some(Instant::from_millis(0))).or(Err(Error::Unreachable))
+        }
+
+        Ok(())
     }
 }
 

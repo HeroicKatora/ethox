@@ -33,10 +33,10 @@ pub struct Sender<'a, 'e, H> {
     handler: H,
 }
 
-struct IpEndpoint<'a, 'e> {
+pub(crate) struct IpEndpoint<'a, 'e> {
     // TODO: could be immutable as well, just disallowing updates. Evaluate whether this is useful
     // or needed somewhere.
-    inner: &'a mut Endpoint<'e>,
+    pub(crate) inner: &'a mut Endpoint<'e>,
 }
 
 impl<'a> Endpoint<'a> {
@@ -74,13 +74,13 @@ impl<'a> Endpoint<'a> {
         self.send(FnHandler(handler))
     }
 
-    fn ip(&mut self) -> IpEndpoint<'_, 'a> {
+    pub(crate) fn ip(&mut self) -> IpEndpoint<'_, 'a> {
         IpEndpoint {
             inner: self,
         }
     }
 
-    fn accepts(&self, dst_addr: IpAddress) -> bool {
+    pub(crate) fn accepts(&self, dst_addr: IpAddress) -> bool {
         self.addr.iter().any(|own_addr| own_addr.accepts(dst_addr))
     }
 
