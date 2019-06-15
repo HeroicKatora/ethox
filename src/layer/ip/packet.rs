@@ -20,9 +20,12 @@ pub struct Handle<'a> {
     endpoint: &'a mut (Endpoint + 'a),
 }
 
+pub type V4Packet<'a, P> = Ipv4Packet<EthernetFrame<&'a mut P>>;
+pub type V6Packet<'a, P> = Ipv6Packet<EthernetFrame<&'a mut P>>;
+
 pub enum IpPacket<'a, P: Payload> {
-    V4(Ipv4Packet<EthernetFrame<&'a mut P>>),
-    V6(Ipv6Packet<EthernetFrame<&'a mut P>>),
+    V4(V4Packet<'a, P>),
+    V6(V6Packet<'a, P>),
 }
 
 /// Initializer for a packet.

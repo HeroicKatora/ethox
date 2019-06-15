@@ -1,7 +1,7 @@
 use core::{fmt, ops};
 use byteorder::{ByteOrder, NetworkEndian};
 
-use super::Payload;
+use super::{Payload, PayloadMut};
 use super::{Error, Checksum, Result};
 use super::ip::checksum;
 use super::{Ipv4Packet, Ipv4Repr, ipv4_packet};
@@ -398,6 +398,20 @@ impl<T: Payload> Packet<T> {
     }
 }
 
+impl<T: PayloadMut> Packet<T> {
+    /// Recalculate the checksum if necessary.
+    ///
+    /// Note that the checksum test can be elided even in a checked parse of the ipv4 frame. This
+    /// provides in opportunity to recalculate it if necessary even though the header structure is
+    /// not otherwise mutably accessible while in `Packet` representation.
+    pub fn fill_checksum(&mut self, checksum: Checksum) {
+        if checksum.manual() {
+            icmpv4::new_unchecked_mut(self.buffer.payload_mut())
+                .fill_checksum()
+        }
+    }
+}
+
 impl<T> Packet<T> {
     /// Return the raw underlying buffer.
     pub fn into_inner(self) -> T {
@@ -436,6 +450,15 @@ pub enum Repr {
 }
 
 impl Repr {
+    /// Get the echo reply request if this is an echo request.
+    pub fn echo_reply(self) -> Option<Repr> {
+        match self {
+            Repr::EchoRequest { ident, seq_no, payload, } =>
+                Some(Repr::EchoReply { ident, seq_no, payload, }),
+            _ => None,
+        }
+    }
+
     /// Parse an Internet Control Message Protocol version 4 packet and return
     /// a high-level representation.
     pub fn parse(packet: &icmpv4, checksum: Checksum)

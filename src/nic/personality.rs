@@ -19,6 +19,7 @@ pub struct Personality {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Capabilities {
     ipv4: Protocol,
+    icmpv4: Protocol,
     udp: Udp,
 }
 
@@ -72,8 +73,13 @@ impl Capabilities {
     pub fn no_support() -> Self {
         Capabilities {
             ipv4: Protocol::no_support(),
+            icmpv4: Protocol::no_support(),
             udp: Udp::no_support(),
         }
+    }
+
+    pub fn icmpv4(&self) -> &Protocol {
+        &self.icmpv4
     }
 
     pub fn ipv4(&self) -> &Protocol {

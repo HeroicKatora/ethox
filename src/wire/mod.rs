@@ -204,6 +204,7 @@ pub use self::ipv6routing::{
     Repr as Ipv6RoutingRepr};
 
 pub use self::icmpv4::{
+    icmpv4 as icmpv4_packet,
     Message as Icmpv4Message,
     DstUnreachable as Icmpv4DstUnreachable,
     Redirect as Icmpv4Redirect,

@@ -23,6 +23,8 @@ pub use packet::{
     IpPacket,
     Packet,
     RawPacket,
+    V4Packet,
+    V6Packet,
 };
 
 pub use route::{
