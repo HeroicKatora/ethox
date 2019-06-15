@@ -80,7 +80,7 @@ impl<'a, P: Payload> Packet<'a, P> {
         let capabilities = self.handle.info().capabilities();
         let checksum = capabilities.icmpv4().tx_checksum();
         self.packet.fill_checksum(checksum);
-        let lower = ip::Packet::new(
+        let lower = ip::OutPacket::new_unchecked(
             self.handle.inner,
             ip::IpPacket::V4(self.packet.into_inner()));
         lower.send()
@@ -106,14 +106,16 @@ impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
 
         let lower_init = init.ip_init()?;
         let prepared = lower.prepare(lower_init)?;
-        let mut packet = match prepared.packet {
+        let ip::InPacket { handle, packet } = prepared.into_incoming();
+
+        let mut packet = match packet {
             ip::IpPacket::V4(packet) => packet,
             ip::IpPacket::V6(_) => unreachable!(),
         };
         let repr = init.initialize(&mut packet)?;
 
         // Reconstruct the handle.
-        let handle = Handle::new(prepared.handle);
+        let handle = Handle::new(handle);
 
         Ok(Packet {
             handle,

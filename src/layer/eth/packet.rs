@@ -1,14 +1,28 @@
 use crate::nic;
 use crate::layer::{Error, Result};
 use crate::time::Instant;
-use crate::wire::{ethernet_frame, EthernetAddress, EthernetFrame, EthernetProtocol, EthernetRepr, IpAddress, Payload, PayloadMut};
+use crate::wire::{Payload, PayloadResult, PayloadMut, Reframe, payload};
+use crate::wire::{EthernetAddress, EthernetFrame, EthernetProtocol, EthernetRepr, IpAddress, ethernet_frame};
 
-pub struct Packet<'a, P: Payload> {
+/// An incoming packet.
+///
+/// The contents were inspected and could be handled up to the eth layer.
+pub struct In<'a, P: Payload> {
     pub handle: Handle<'a>,
     pub frame: EthernetFrame<&'a mut P>,
 }
 
-pub struct RawPacket<'a, P: Payload> {
+/// An outgoing packet as prepared by the ethernet layer.
+///
+/// While the layers below have been initialized, the payload of the packet has not. Fill it by
+/// grabbing the mutable slice for example.
+pub struct Out<'a, P: Payload> {
+    handle: Handle<'a>,
+    frame: EthernetFrame<&'a mut P>,
+}
+
+/// A buffer into which a packet can be placed.
+pub struct Raw<'a, P: Payload> {
     pub handle: Handle<'a>,
     pub payload: &'a mut P,
 }
@@ -42,10 +56,7 @@ impl<'a> Handle<'a> {
         nic_handle: &'a mut nic::Handle,
         endpoint: &'a mut (Endpoint + 'a))
     -> Self {
-        Handle {
-            nic_handle,
-            endpoint,
-        }
+        Handle { nic_handle, endpoint, }
     }
 
     /// Proof to the compiler that we can shorten the lifetime arbitrarily.
@@ -72,55 +83,103 @@ impl<'a> Handle<'a> {
     }
 }
 
-impl<'a, P: Payload> Packet<'a, P> {
+impl<'a, P: Payload> In<'a, P> {
+    /// Reuse the buffer underlying the packet.
+    ///
+    /// Note that the content will be lost entirely when reinitializing the frame.
+    pub fn deinit(self) -> Raw<'a, P>
+        where P: PayloadMut,
+    {
+        Raw::new(self.handle, self.frame.into_inner())
+    }
+
     pub(crate) fn new(
         handle: Handle<'a>,
-        frame: EthernetFrame<&'a mut P>)
-    -> Self {
-        Packet {
-            handle,
-            frame,
-        }
+        frame: EthernetFrame<&'a mut P>) -> Self
+    {
+        In { handle, frame, }
     }
 
     pub fn frame(&mut self) -> &mut EthernetFrame<&'a mut P> {
         &mut self.frame
     }
+}
 
-    pub fn reinit(self) -> RawPacket<'a, P>
-        where P: PayloadMut,
+impl<'a, P: Payload> Out<'a, P> {
+    /// Pretend the packet has been initialized by the ethernet layer.
+    ///
+    /// This is fine to call if a previous call to `into_incoming` was used to destructure the
+    /// initialized packet and its contents have not changed. Some changes are fine as well and
+    /// nothing will cause unsafety but panics or dropped packets are to be expected.
+    pub fn new_unchecked(
+        handle: Handle<'a>,
+        frame: EthernetFrame<&'a mut P>) -> Self
     {
-        RawPacket::new(self.handle, self.frame.into_inner())
+        Out{ handle, frame, }
     }
 
+    /// Unwrap the contained control handle and initialized ethernet frame.
+    pub fn into_incoming(self) -> In<'a, P> {
+        let Out { handle, frame } = self;
+        In { handle, frame }
+    }
+
+    pub fn into_raw(self) -> Raw<'a, P> {
+        let Out { handle, frame } = self;
+        Raw { handle, payload: frame.into_inner() }
+    }
+    
     /// Try to send that packet.
     pub fn send(self) -> Result<()> {
         self.handle.nic_handle.queue()
     }
 }
 
-impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
+impl<'a, P: PayloadMut> Out<'a, P> {
+    pub fn payload_mut_slice(&mut self) -> &mut [u8] {
+        self.frame.payload_mut_slice()
+    }
+}
+
+impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
     pub(crate) fn new(
         handle: Handle<'a>,
-        payload: &'a mut P,
-    ) -> Self {
-        RawPacket {
-            handle,
-            payload,
-        }
+        payload: &'a mut P) -> Self
+    {
+        Raw { handle, payload, }
     }
 
     pub fn src_addr(&mut self) -> EthernetAddress {
         self.handle.endpoint.src_addr()
     }
 
-    pub fn prepare(self, init: Init) -> Result<Packet<'a, P>> {
+    pub fn prepare(self, init: Init) -> Result<Out<'a, P>> {
         let mut payload = self.payload;
         let repr = init.initialize(&mut payload)?;
-        Ok(Packet {
+        Ok(Out {
             handle: self.handle,
             frame: EthernetFrame::new_unchecked(payload, repr),
         })
+    }
+}
+
+impl<P: Payload> Payload for Out<'_, P> {
+    fn payload(&self) -> &payload {
+        self.frame.payload()
+    }
+}
+
+impl<P: PayloadMut> PayloadMut for Out<'_, P> {
+    fn payload_mut(&mut self) -> &mut payload {
+        self.frame.payload_mut()
+    }
+
+    fn resize(&mut self, length: usize) -> PayloadResult<()> {
+        self.frame.resize(length)
+    }
+
+    fn reframe(&mut self, frame: Reframe) -> PayloadResult<()> {
+        self.frame.reframe(frame)
     }
 }
 

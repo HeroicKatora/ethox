@@ -80,7 +80,7 @@ impl<'a, P: Payload> Packet<'a, P> {
         let ip_repr = self.packet.get_ref().repr();
         let checksum = capabilities.udp().tx_checksum(ip_repr);
         self.packet.fill_checksum(checksum);
-        let lower = ip::Packet::new(
+        let lower = ip::OutPacket::new_unchecked(
             self.handle.inner,
             self.packet.into_inner());
         lower.send()
@@ -115,15 +115,16 @@ impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
             payload: packet_len,
         };
 
-        let mut prepared = lower.prepare(lower_init)?;
-        let repr = init.initialize(&mut prepared.packet)?;
+        let prepared = lower.prepare(lower_init)?;
+        let ip::InPacket { handle, mut packet } = prepared.into_incoming();
+        let repr = init.initialize(&mut packet)?;
 
         // Reconstruct the handle.
-        let handle = Handle::new(prepared.handle);
+        let handle = Handle::new(handle);
 
         Ok(Packet {
             handle,
-            packet: UdpPacket::new_unchecked(prepared.packet, repr),
+            packet: UdpPacket::new_unchecked(packet, repr),
         })
     }
 }

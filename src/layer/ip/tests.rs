@@ -19,7 +19,7 @@ static PAYLOAD_BYTES: [u8; 50] =
      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
      0x00, 0xff];
 
-fn simple_send<P: PayloadMut>(frame: ip::RawPacket<P>) {
+fn simple_send<P: PayloadMut>(frame: RawPacket<P>) {
     let init = ip::Init {
         src_mask: Ipv4Cidr::UNSPECIFIED.into(),
         dst_addr: IP_ADDR_DST.into(),
@@ -29,15 +29,13 @@ fn simple_send<P: PayloadMut>(frame: ip::RawPacket<P>) {
     let mut prepared = frame.prepare(init)
         .expect("Found no valid routes");
     prepared
-        .packet
-        .payload_mut()
-        .as_mut_slice()
+        .payload_mut_slice()
         .copy_from_slice(&PAYLOAD_BYTES[..]);
     prepared.send()
         .expect("Could actuall egress packet");
 }
 
-fn simple_recv<P: Payload>(frame: Packet<P>) {
+fn simple_recv<P: Payload>(frame: InPacket<P>) {
     assert_eq!(frame.packet.payload().as_slice(), &PAYLOAD_BYTES[..]);
 }
 

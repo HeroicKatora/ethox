@@ -123,8 +123,7 @@ where
     P: PayloadMut,
     H: Recv<P>,
 {
-    fn receive(&mut self, packet: ip::Packet<P>) {
-        let ip::Packet { handle, packet } = packet;
+    fn receive(&mut self, ip::InPacket { handle, packet }: ip::InPacket<P>) {
         let capabilities = handle.info().capabilities();
 
         let icmp = match packet {

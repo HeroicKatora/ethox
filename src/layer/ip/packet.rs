@@ -5,12 +5,25 @@ use crate::wire::{Checksum, EthernetAddress, EthernetFrame, EthernetProtocol};
 use crate::wire::{Reframe, Payload, PayloadMut, PayloadResult, payload};
 use crate::wire::{IpAddress, IpCidr, IpProtocol, IpRepr, Ipv4Packet, Ipv6Packet};
 
-pub struct Packet<'a, P: Payload> {
+/// An incoming packet.
+///
+/// The contents were inspected and could be handled up to the ip layer.
+pub struct In<'a, P: Payload> {
     pub handle: Handle<'a>,
     pub packet: IpPacket<'a, P>,
 }
 
-pub struct RawPacket<'a, P: Payload> {
+/// An outgoing packet as prepared by the ip layer.
+///
+/// While the layers below have been initialized, the payload of the packet has not. Fill it by
+/// grabbing the mutable slice for example.
+pub struct Out<'a, P: Payload> {
+    handle: Handle<'a>,
+    packet: IpPacket<'a, P>,
+}
+
+/// A buffer into which a packet can be placed.
+pub struct Raw<'a, P: Payload> {
     pub handle: Handle<'a>,
     pub payload: &'a mut P,
 }
@@ -75,29 +88,55 @@ impl<'a> Handle<'a> {
             endpoint: self.endpoint,
         }
     }
+
+    fn route_to(&mut self, dst_addr: IpAddress) -> Result<EthRoute> {
+        let now = self.eth.info().timestamp();
+        let Route { next_hop, src_addr } = self.endpoint
+            .route(dst_addr, now)
+            .ok_or(Error::Unreachable)?;
+        let next_mac = self.eth.resolve(next_hop)?;
+
+        Ok(EthRoute {
+            next_mac,
+            src_addr,
+        })
+    }
 }
 
-impl<'a, P: Payload> Packet<'a, P> {
-    pub(crate) fn new(
+impl<'a, P: Payload> In<'a, P> {
+    /// Deconstruct the packet into the reusable buffer.
+    pub fn deinit(self) -> Raw<'a, P>
+        where P: PayloadMut,
+    {
+        Raw::new(self.handle, self.packet.into_raw())
+    }
+}
+
+impl<'a, P: Payload> Out<'a, P> {
+    /// Pretend the packet has been initialized by the ip layer.
+    ///
+    /// This is fine to call if a previous call to `into_incoming` was used to destructure the
+    /// initialized packet and its contents have not changed. Some changes are fine as well and
+    /// nothing will cause unsafety but panics or dropped packets are to be expected.
+    pub fn new_unchecked(
         handle: Handle<'a>,
-        packet: IpPacket<'a, P>)
-    -> Self {
-        Packet {
-            handle,
-            packet,
-        }
-    }
-
-    pub fn reinit(self) -> RawPacket<'a, P>
-        where P: PayloadMut,
+        packet: IpPacket<'a, P>) -> Self
     {
-        RawPacket::new(self.handle, self.packet.into_raw())
+        Out { handle, packet, }
     }
 
+    /// Unwrap the contained control handle and initialized ethernet frame.
+    pub fn into_incoming(self) -> In<'a, P> {
+        let Out { handle, packet } = self;
+        In { handle, packet }
+    }
+}
+
+impl<'a, P: PayloadMut> Out<'a, P> {
     /// Called last after having initialized the payload.
-    pub fn send(mut self) -> Result<()>
-        where P: PayloadMut,
-    {
+    ///
+    /// This will also take care of filling the checksums as required.
+    pub fn send(mut self) -> Result<()> {
         let capabilities = self.handle.info().capabilities();
         match &mut self.packet {
             IpPacket::V4(ipv4) => {
@@ -106,40 +145,31 @@ impl<'a, P: Payload> Packet<'a, P> {
             },
             _ => (),
         }
-        let lower = eth::Packet::new(
+        let lower = eth::OutPacket::new_unchecked(
             self.handle.eth,
             self.packet.into_inner());
         lower.send()
     }
+
+    pub fn payload_mut_slice(&mut self) -> &mut [u8] {
+        self.packet.payload_mut().as_mut_slice()
+    }
 }
 
-impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
+impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
     pub(crate) fn new(
         handle: Handle<'a>,
         payload: &'a mut P,
     ) -> Self {
-        RawPacket {
+        Raw {
             handle,
             payload,
         }
     }
 
-    fn route_to(&mut self, dst_addr: IpAddress) -> Result<EthRoute> {
-        let now = self.handle.eth.info().timestamp();
-        let Route { next_hop, src_addr } = self.handle.endpoint
-            .route(dst_addr, now)
-            .ok_or(Error::Unreachable)?;
-        let next_mac = self.handle.eth.resolve(next_hop)?;
-
-        Ok(EthRoute {
-            next_mac,
-            src_addr,
-        })
-    }
-
     /// Initialize to a valid ip packet.
-    pub fn prepare(mut self, init: Init) -> Result<Packet<'a, P>> {
-        let route = self.route_to(init.dst_addr)?;
+    pub fn prepare(mut self, init: Init) -> Result<Out<'a, P>> {
+        let route = self.handle.route_to(init.dst_addr)?;
 
         let mut lower = eth::RawPacket::new(
             self.handle.eth,
@@ -157,21 +187,22 @@ impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
             payload: init.payload + 20, // FIXME: hard coded length.
         };
 
-        let mut prepared = lower.prepare(lower_init)?;
-        let repr = init.initialize(route.src_addr, &mut prepared.frame)?;
+        let packet = lower.prepare(lower_init)?;
+        let eth::InPacket { handle, mut frame } = packet.into_incoming();
+        let repr = init.initialize(route.src_addr, &mut frame)?;
 
         // Reconstruct the handle.
-        let handle = Handle::new(prepared.handle, self.handle.endpoint);
+        let handle = Handle::new(handle, self.handle.endpoint);
 
-        Ok(Packet {
+        Ok(Out {
             handle,
-            packet: IpPacket::new_unchecked(prepared.frame, repr),
+            packet: IpPacket::new_unchecked(frame, repr),
         })
     }
 }
 
 impl Init {
-    fn initialize<P: PayloadMut>(&self, src_addr: IpAddress, payload: &mut P) -> Result<IpRepr> {
+    fn initialize(&self, src_addr: IpAddress, payload: &mut impl PayloadMut) -> Result<IpRepr> {
         let repr = IpRepr::Unspecified {
             src_addr,
             dst_addr: self.dst_addr,
@@ -181,8 +212,9 @@ impl Init {
         };
         let repr = repr.lower(&[])
             .ok_or(Error::Illegal)?;
-        // FIXME: recheck the buffer size.
-        repr.emit(payload.payload_mut().as_mut_slice(), Checksum::Manual);
+        // Emit the packet but ignore the checksum for now. it is filled in later when calling
+        // `OutPacket::send`.
+        repr.emit(payload.payload_mut().as_mut_slice(), Checksum::Ignored);
         Ok(repr)
     }
 }
