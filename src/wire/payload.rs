@@ -54,6 +54,7 @@ pub struct Reframe {
 byte_wrapper!(payload);
 
 /// Error variants for resizing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Error {
     BadSize,
 }

@@ -128,6 +128,7 @@ mod tcp;
 
 #[path = "payload.rs"]
 mod payload_impl;
+mod payload_ext;
 
 /// Describes how to handle checksums.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -140,6 +141,7 @@ pub enum Checksum {
 }
 
 pub use self::payload_impl::{Reframe, Payload, PayloadMut, Error as PayloadError, payload};
+pub use self::payload_ext::{ReframePayload, PayloadMutExt};
 
 pub type PayloadResult<T> = core::result::Result<T, PayloadError>;
 
