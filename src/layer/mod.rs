@@ -16,12 +16,13 @@
 //!
 //!   ```text
 //!   Raw --init-->Out
-//!    ^            |
-//!    |            |into_in
-//!    |            |
-//!    \            v
+//!    ^           ^|
+//!    |     reinit||into_in
+//!    |           ||
+//!    \           |v
 //!     \--deinit--In
 //!   ```
+//!
 //! * An endpoint component describing the persistent data of a Host on that layer. A receiver and
 //!   sender can then make use of the layer by borrowing it while supplying the handler for the
 //!   next upper layer.
@@ -37,6 +38,25 @@
 //! ## Sending
 //!
 //! [WIP]
+//!
+//! ## Answering
+//!
+//! Many packets require a specified response from a particular layer. With the performance goal in
+//! mind but under the constraint of memory allocation we may want to utilize the already valid
+//! packet data to construct such an answer in-place of the just received packet. This is important
+//! especially for icmp pings and routing functionality. There are two ways to avoid copying the
+//! data in that case:
+//!
+//! * Allocate an additional packet buffer. The extreme of this option allows arbitrary buffer
+//!   allocation and owning by the user's code which is seldom fit or even possible in resource
+//!   constrained environments. Since buffers then become a contended resource this creates several
+//!   DOS risks as well as buffer bloat.
+//! * Reinitialize the packet header structures in-place while avoiding to write to any of the
+//!   payload. In particular each layer calculates the required new length to which the final layer
+//!   resizes the buffer while ensuring the outer payload is shifted into its new position. Then
+//!   each layer can emit its representation again into the appropriate place. This is what `ethox`
+//!   tries to do and should avoid any shifts if the new headers have the same size as the already
+//!   existing ones.
 //!
 //! ## In-depth packet representation
 //!

@@ -1,7 +1,7 @@
 use crate::nic;
 use crate::layer::{Error, Result};
 use crate::time::Instant;
-use crate::wire::{Payload, PayloadResult, PayloadMut, Reframe, payload};
+use crate::wire::{Payload, PayloadResult, PayloadMut, PayloadMutExt, Reframe, ReframePayload, payload};
 use crate::wire::{EthernetAddress, EthernetFrame, EthernetProtocol, EthernetRepr, IpAddress, ethernet_frame};
 
 /// An incoming packet.
@@ -93,15 +93,49 @@ impl<'a, P: Payload> In<'a, P> {
         Raw::new(self.handle, self.frame.into_inner())
     }
 
-    pub(crate) fn new(
-        handle: Handle<'a>,
-        frame: EthernetFrame<&'a mut P>) -> Self
-    {
-        In { handle, frame, }
-    }
-
     pub fn frame(&mut self) -> &mut EthernetFrame<&'a mut P> {
         &mut self.frame
+    }
+}
+
+impl<'a, P: PayloadMut> In<'a, P> {
+    /// Prepare the incoming packet for retransmission, without altering the payload.
+    ///
+    /// If the length is changed then the longest slice at the end that fits into both
+    /// representations is regarded as the payload of the packet.
+    pub fn reinit(self, init: Init) -> Result<Out<'a, P>> {
+        let In { handle, frame } = self;
+        let new_len = ethernet_frame::buffer_len(init.payload);
+        let new_repr = EthernetRepr {
+            src_addr: init.src_addr,
+            dst_addr: init.dst_addr,
+            ethertype: init.ethertype,
+        };
+        let raw_repr = frame.repr();
+        let raw_packet = frame.into_inner();
+
+        let raw_len = raw_packet.payload().len();
+        let raw_payload = raw_repr.header_len() - raw_len;
+
+        // The payload is the common tail.
+        let payload = init.payload.min(raw_payload);
+        let old_payload = raw_len - payload..raw_len;
+        let new_payload = new_len - payload..new_len;
+
+        raw_packet.reframe_payload(ReframePayload {
+            length: new_len,
+            old_payload,
+            new_payload,
+        })?;
+
+        // Now emit the header again:
+        new_repr.emit(ethernet_frame::new_unchecked_mut(raw_packet.payload_mut()));
+        let frame = EthernetFrame::new_unchecked(raw_packet, new_repr);
+
+        Ok(Out {
+            handle,
+            frame,
+        })
     }
 }
 
