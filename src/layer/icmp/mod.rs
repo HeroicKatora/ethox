@@ -42,12 +42,13 @@ pub use endpoint::{
 pub use packet::{
     Handle,
     Init,
-    Packet,
-    RawPacket,
+    In as InPacket,
+    Out as OutPacket,
+    Raw as RawPacket,
 };
 
 pub trait Recv<P: Payload> {
-    fn receive(&mut self, frame: Packet<P>);
+    fn receive(&mut self, frame: InPacket<P>);
 }
 
 pub trait Send<P: Payload> {

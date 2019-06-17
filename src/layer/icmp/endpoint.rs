@@ -1,7 +1,7 @@
-use crate::layer::{ip, FnHandler};
+use crate::layer::{ip, FnHandler, Result};
 use crate::wire::{Error, Icmpv4Repr, Icmpv4Packet, IpProtocol, PayloadMut};
 
-use super::packet::{Handle, Packet, RawPacket};
+use super::packet::{Handle, In};
 use super::{Recv, Send};
 
 /// The default handler type when none has been configured.
@@ -60,7 +60,7 @@ enum HandlingKind<'a, P: PayloadMut> {
     Internal,
 
     /// Give the packet to upper layer handler if that exists.
-    ToUpperLayer(Packet<'a, P>),
+    ToUpperLayer(In<'a, P>),
 }
 
 impl Endpoint {
@@ -98,22 +98,23 @@ impl Endpoint {
 
 impl EndpointRef<'_> {
     /// Try to answer or otherwise handle the packet without propagating it upwards.
-    fn handle_internally<'a, P: PayloadMut>(&mut self, packet: Packet<'a, P>)
-        -> HandlingKind<'a, P>
+    fn handle_internally<'a, P: PayloadMut>(&mut self, packet: In<'a, P>)
+        -> Result<HandlingKind<'a, P>>
     {
         match packet.packet.repr() {
             Icmpv4Repr::EchoRequest { .. } if self.inner.manual_echo => {
-                HandlingKind::ToUpperLayer(packet)
+                Ok(HandlingKind::ToUpperLayer(packet))
             },
-            Icmpv4Repr::EchoRequest { ident, seq_no, payload } => {
+            Icmpv4Repr::EchoRequest { .. } => {
                 if self.inner.deny_echo {
-                    return HandlingKind::Internal
+                    return Ok(HandlingKind::Internal)
                 }
 
-                unimplemented!("construct and return the echo response");
-                HandlingKind::Internal
+                packet.answer()?;
+
+                Ok(HandlingKind::Internal)
             },
-            _ => HandlingKind::ToUpperLayer(packet),
+            _ => Ok(HandlingKind::ToUpperLayer(packet)),
         }
     }
 }
@@ -143,9 +144,12 @@ where
         };
 
         let handle = Handle::new(handle);
-        let packet = Packet::new(handle, icmp);
+        let packet = In::new(handle, icmp);
 
-        let how_to_handle = self.endpoint.handle_internally(packet);
+        let how_to_handle = match self.endpoint.handle_internally(packet) {
+            Ok(handling) => handling,
+            Err(_) => return,
+        };
 
         match (how_to_handle, self.handler.as_mut()) {
             (HandlingKind::Internal, _) => (),

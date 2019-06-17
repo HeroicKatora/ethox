@@ -4,24 +4,38 @@ use crate::wire::{Payload, PayloadMut};
 use crate::wire::{Checksum, IpAddress, IpCidr, IpProtocol};
 use crate::wire::{Icmpv4Packet, Icmpv4Repr, icmpv4_packet};
 
-pub struct Packet<'a, P: Payload> {
+/// An incoming packet.
+///
+/// The contents were inspected and could be handled up to the icmp layer. The upper layer handler
+/// will only receive packets that could not be handled natively by the network library. Pings can
+/// be answered in-place without involving the upper layer if supported by the nic.
+pub struct In<'a, P: Payload> {
     pub handle: Handle<'a>,
     pub packet: Icmpv4Packet<ip::V4Packet<'a, P>>,
 }
 
-pub struct RawPacket<'a, P: Payload> {
+/// An outgoing packet as prepared by the icmp layer.
+///
+/// Some packets have variable payloads [WIP]. These also contribute to the checksum and are yet to
+/// be initialized.
+pub struct Out<'a, P: Payload> {
+    handle: Handle<'a>,
+    packet: Icmpv4Packet<ip::V4Packet<'a, P>>,
+}
+
+/// A buffer into which a packet can be placed.
+pub struct Raw<'a, P: Payload> {
     pub handle: Handle<'a>,
     pub payload: &'a mut P,
 }
 
 /// A reference to the endpoint of layers below (phy + eth + ip).
 ///
-/// This is not really useful on its own but should instead be used either within a `Packet` or a
-/// `RawPacket`. Some of the methods offered there will access the non-public members of this
-/// struct to fulfill their task.
+/// This is not really useful on its own but should instead be used either within a `In` or a
+/// `Raw`. Some of the methods offered there will access the non-public members of this struct to
+/// fulfill their task.
 pub struct Handle<'a> {
     pub(crate) inner: ip::Handle<'a>,
-    // Nothing more, there is no logic here.
 }
 
 pub enum Init {
@@ -56,23 +70,69 @@ impl<'a> Handle<'a> {
     }
 }
 
-impl<'a, P: Payload> Packet<'a, P> {
+impl<'a, P: Payload> In<'a, P> {
     pub(crate) fn new(
         handle: Handle<'a>,
         packet: Icmpv4Packet<ip::V4Packet<'a, P>>)
     -> Self {
-        Packet {
+        In {
             handle,
             packet,
         }
     }
-
-    pub fn reinit(self) -> RawPacket<'a, P>
+    pub fn deinit(self) -> Raw<'a, P>
         where P: PayloadMut,
     {
-        RawPacket::new(self.handle, self.packet.into_inner().into_inner().into_inner())
+        let payload = self.packet.into_inner().into_inner().into_inner();
+        Raw::new(self.handle, payload)
     }
+}
 
+impl<'a, P: PayloadMut> In<'a, P> {
+    /// Try to answer an icmp ping request in-place.
+    pub fn answer(self) -> Result<Out<'a, P>> {
+        let answer = match self.packet.repr() {
+            Icmpv4Repr::EchoRequest { ident, seq_no, payload } => {
+                Icmpv4Repr::EchoReply { ident, seq_no, payload }
+            },
+            _ => return Err(Error::Illegal),
+        };
+
+        // Try to reverse the ip packet.
+        let ipv4_packet = self.packet.into_inner();
+        let ip_repr = ipv4_packet.repr();
+        let ip_in = ip::InPacket {
+            handle: self.handle.inner,
+            packet: ip::IpPacket::V4(ipv4_packet),
+        };
+
+        let ip_out = ip_in.reinit(ip::Init {
+            // Be sure to send from this exact address.
+            src_mask: IpCidr::new(ip_repr.dst_addr.into(), 32),
+            dst_addr: ip_repr.src_addr.into(),
+            protocol: IpProtocol::Icmp,
+            payload: ip_repr.payload_len,
+        })?;
+
+        // Temporarily take the packet apart for inner repr.
+        let ip::InPacket { handle, mut packet } = ip_out.into_incoming();
+        answer.emit(
+            icmpv4_packet::new_unchecked_mut(packet.payload_mut().as_mut_slice()),
+            Checksum::Manual);
+        let packet = match packet {
+            ip::IpPacket::V4(packet) => packet,
+            ip::IpPacket::V6(_) => unreachable!("No icmpv6 outgoing traffic"),
+        };
+
+        Ok(Out {
+            handle: Handle::new(handle),
+            packet: Icmpv4Packet::new_unchecked(packet, answer),
+        })
+    }
+}
+
+
+impl<'a, P: Payload> Out<'a, P> {
     /// Called last after having initialized the payload.
     pub fn send(mut self) -> Result<()>
         where P: PayloadMut,
@@ -87,19 +147,19 @@ impl<'a, P: Payload> Packet<'a, P> {
     }
 }
 
-impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
+impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
     pub(crate) fn new(
         handle: Handle<'a>,
         payload: &'a mut P,
     ) -> Self {
-        RawPacket {
+        Raw {
             handle,
             payload,
         }
     }
 
     /// Initialize to a valid ip packet.
-    pub fn prepare(self, init: Init) -> Result<Packet<'a, P>> {
+    pub fn prepare(self, init: Init) -> Result<Out<'a, P>> {
         let lower = ip::RawPacket::new(
             self.handle.inner,
             self.payload);
@@ -117,7 +177,7 @@ impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
         // Reconstruct the handle.
         let handle = Handle::new(handle);
 
-        Ok(Packet {
+        Ok(Out {
             handle,
             packet: Icmpv4Packet::new_unchecked(packet, repr),
         })
