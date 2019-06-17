@@ -166,7 +166,7 @@ mod tests {
          0x00, 0xff];
 
     fn simple_send<P: Payload + PayloadMut>(mut frame: packet::Raw<P>) {
-        let src_addr = frame.src_addr();
+        let src_addr = frame.handle.src_addr();
         let init = Init {
             src_addr,
             dst_addr: MAC_ADDR_1,

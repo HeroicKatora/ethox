@@ -71,6 +71,10 @@ impl<'a> Handle<'a> {
         self.nic_handle.info()
     }
 
+    pub fn src_addr(&mut self) -> EthernetAddress {
+        self.endpoint.src_addr()
+    }
+
     /// Try to initialize the destination from an upper layer protocol address.
     ///
     /// Failure to satisfy the request is clearly signalled. Use the result to initialize the
@@ -181,10 +185,6 @@ impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
         payload: &'a mut P) -> Self
     {
         Raw { handle, payload, }
-    }
-
-    pub fn src_addr(&mut self) -> EthernetAddress {
-        self.handle.endpoint.src_addr()
     }
 
     pub fn prepare(self, init: Init) -> Result<Out<'a, P>> {

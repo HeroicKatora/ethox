@@ -55,9 +55,11 @@ pub(crate) struct Route {
     pub src_addr: IpAddress,
 }
 
+#[derive(Clone, Copy)]
 struct EthRoute {
     next_mac: EthernetAddress,
     src_addr: IpAddress,
+    dst_addr: IpAddress,
 }
 
 /// The interface to the endpoint.
@@ -99,7 +101,22 @@ impl<'a> Handle<'a> {
         Ok(EthRoute {
             next_mac,
             src_addr,
+            dst_addr,
         })
+    }
+
+    fn init_eth(&mut self, route: EthRoute, payload: usize) -> Result<eth::Init> {
+        let eth_init = eth::Init {
+            src_addr: self.eth.src_addr(),
+            dst_addr: route.next_mac,
+            ethertype: match route.dst_addr {
+                IpAddress::Ipv4(_) => EthernetProtocol::Ipv4,
+                IpAddress::Ipv6(_) => EthernetProtocol::Ipv6,
+                _ => return Err(Error::Illegal),
+            },
+            payload: payload + 20, // FIXME: hard coded length.
+        };
+        Ok(eth_init)
     }
 }
 
@@ -109,6 +126,33 @@ impl<'a, P: Payload> In<'a, P> {
         where P: PayloadMut,
     {
         Raw::new(self.handle, self.packet.into_raw())
+    }
+}
+
+impl<'a, P: PayloadMut> In<'a, P> {
+    pub fn reinit(mut self, init: Init) -> Result<Out<'a, P>> {
+        let route = self.handle.route_to(init.dst_addr)?;
+        let lower_init = self.handle.init_eth(route, init.payload)?;
+
+        let new_repr = init.ip_repr(route.dst_addr);
+        let raw_repr = self.packet.repr();
+
+        let eth_packet = eth::InPacket {
+            handle: self.handle.eth,
+            frame: self.packet.into_inner(),
+        };
+
+        let packet = eth_packet.reinit(lower_init)?;
+        let eth::InPacket { handle, mut frame } = packet.into_incoming();
+        let repr = init.initialize(route.src_addr, &mut frame)?;
+
+        // Reconstruct the handle.
+        let handle = Handle::new(handle, self.handle.endpoint);
+
+        Ok(Out {
+            handle,
+            packet: IpPacket::new_unchecked(frame, repr),
+        })
     }
 }
 
@@ -170,22 +214,11 @@ impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
     /// Initialize to a valid ip packet.
     pub fn prepare(mut self, init: Init) -> Result<Out<'a, P>> {
         let route = self.handle.route_to(init.dst_addr)?;
+        let lower_init = self.handle.init_eth(route, init.payload)?;
 
-        let mut lower = eth::RawPacket::new(
+        let lower = eth::RawPacket::new(
             self.handle.eth,
             self.payload);
-
-        let src_addr = lower.src_addr();
-        let lower_init = eth::Init {
-            src_addr,
-            dst_addr: route.next_mac,
-            ethertype: match init.dst_addr {
-                IpAddress::Ipv4(_) => EthernetProtocol::Ipv4,
-                IpAddress::Ipv6(_) => EthernetProtocol::Ipv6,
-                _ => return Err(Error::Illegal),
-            },
-            payload: init.payload + 20, // FIXME: hard coded length.
-        };
 
         let packet = lower.prepare(lower_init)?;
         let eth::InPacket { handle, mut frame } = packet.into_incoming();
@@ -203,6 +236,15 @@ impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
 
 impl Init {
     fn initialize(&self, src_addr: IpAddress, payload: &mut impl PayloadMut) -> Result<IpRepr> {
+        let repr = self.ip_repr(src_addr)?;
+        // Emit the packet but ignore the checksum for now. it is filled in later when calling
+        // `OutPacket::send`.
+        repr.emit(payload.payload_mut().as_mut_slice(), Checksum::Ignored);
+        Ok(repr)
+    }
+
+    /// Resolve the ip representation without initializing the packet.
+    fn ip_repr(&self, src_addr: IpAddress) -> Result<IpRepr> {
         let repr = IpRepr::Unspecified {
             src_addr,
             dst_addr: self.dst_addr,
@@ -210,12 +252,7 @@ impl Init {
             protocol: self.protocol,
             payload_len: self.payload,
         };
-        let repr = repr.lower(&[])
-            .ok_or(Error::Illegal)?;
-        // Emit the packet but ignore the checksum for now. it is filled in later when calling
-        // `OutPacket::send`.
-        repr.emit(payload.payload_mut().as_mut_slice(), Checksum::Ignored);
-        Ok(repr)
+        repr.lower(&[]).ok_or(Error::Illegal)
     }
 }
 
