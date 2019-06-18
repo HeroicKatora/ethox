@@ -73,9 +73,8 @@ where
     P: Payload,
     H: Recv<P>,
 {
-    fn receive(&mut self, packet: ip::Packet<P>) {
-        let capabilities = packet.handle.info().capabilities();
-        let ip::Packet { handle, packet } = packet;
+    fn receive(&mut self, ip::InPacket { handle, packet }: ip::InPacket<P>) {
+        let capabilities = handle.info().capabilities();
         let checksum = capabilities.udp().rx_checksum(packet.repr());
 
         let packet = match packet.repr().protocol() {

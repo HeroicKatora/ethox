@@ -1,5 +1,7 @@
 //! Receiving and sending Icmp messages.
 //!
+//! Only supports Icmpv4 for now.
+//!
 //! Tuned to automate most parts of the icmp procedures *internally*. Nevertheless it will has an
 //! optional interface to forward unhandled messages to a custom receiver. This is in accorance
 //! with RFC1812, and extends it to unhandled packets, which states:
@@ -26,5 +28,31 @@
 //!
 //! All other message types can be received in an upper layer or are simply discarded if there is
 //! no upper handler that is ready to inspect packets.
+use crate::wire::Payload;
 
+mod endpoint;
+mod packet;
+#[cfg(test)]
+mod tests;
 
+pub use endpoint::{
+    Endpoint,
+    Receiver,
+    Sender,
+};
+
+pub use packet::{
+    Handle,
+    Init,
+    In as InPacket,
+    Out as OutPacket,
+    Raw as RawPacket,
+};
+
+pub trait Recv<P: Payload> {
+    fn receive(&mut self, frame: InPacket<P>);
+}
+
+pub trait Send<P: Payload> {
+    fn send(&mut self, raw: RawPacket<P>);
+}

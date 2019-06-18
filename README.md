@@ -26,3 +26,9 @@ A significant portion of the original network code comes from `smoltcp`,
 copyright `whitequark@whitequark.org`, and reproduced and modified here under
 the terms allowed by its 0-clause BSD license. It may have changed a lot by the
 time you read this.
+
+## TODO
+
+* Ipv6
+* Icmpv6
+* Tcp

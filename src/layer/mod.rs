@@ -8,17 +8,55 @@
 //! of a user program while processing does not take place, similar to reconfiguration on the OS
 //! level with utilities such as `arp`, `ifconfig`, etc.
 //!
+//! The general structure of each layer is very similar:
+//!
+//! * Three types of packet encapsulation: In, Raw, and Out. The first represents an incoming
+//!   packet with supported features. The second is a packet buffer that can be initialized utilizing
+//!   the network layers below. And the last is an initialized packet that can be sent outwards.
+//!
+//!   ```text
+//!   Raw --init-->Out
+//!    ^           ^|
+//!    |     reinit||into_in
+//!    |           ||
+//!    \           |v
+//!     \--deinit--In
+//!   ```
+//!
+//! * An endpoint component describing the persistent data of a Host on that layer. A receiver and
+//!   sender can then make use of the layer by borrowing it while supplying the handler for the
+//!   next upper layer.
+//!
 //! ## Receiving
 //!
 //! Many layer implementations process packets by routing them to layers conceptually above them.
 //! This functionality is provided via abstract traits accepting the processed packets of that
-//! layer which contain the payload to-be-consumed in the layer above. The encapsulation can be
+//! layer which contain the payload to-be-consumed in the layer above. The encapsulation could be
 //! removed if the upper layer does not require any knowledge of the layer below. However, it must
 //! be preserved when one wants to use the lower layer for device or protocol specific actions.
 //!
 //! ## Sending
 //!
 //! [WIP]
+//!
+//! ## Answering
+//!
+//! Many packets require a specified response from a particular layer. With the performance goal in
+//! mind but under the constraint of memory allocation we may want to utilize the already valid
+//! packet data to construct such an answer in-place of the just received packet. This is important
+//! especially for icmp pings and routing functionality. There are two ways to avoid copying the
+//! data in that case:
+//!
+//! * Allocate an additional packet buffer. The extreme of this option allows arbitrary buffer
+//!   allocation and owning by the user's code which is seldom fit or even possible in resource
+//!   constrained environments. Since buffers then become a contended resource this creates several
+//!   DOS risks as well as buffer bloat.
+//! * Reinitialize the packet header structures in-place while avoiding to write to any of the
+//!   payload. In particular each layer calculates the required new length to which the final layer
+//!   resizes the buffer while ensuring the outer payload is shifted into its new position. Then
+//!   each layer can emit its representation again into the appropriate place. This is what `ethox`
+//!   tries to do and should avoid any shifts if the new headers have the same size as the already
+//!   existing ones.
 //!
 //! ## In-depth packet representation
 //!

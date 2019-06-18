@@ -21,8 +21,11 @@ pub use packet::{
     Handle,
     Init,
     IpPacket,
-    Packet,
-    RawPacket,
+    V4Packet,
+    V6Packet,
+    In as InPacket,
+    Out as OutPacket,
+    Raw as RawPacket,
 };
 
 pub use route::{
@@ -31,7 +34,7 @@ pub use route::{
 };
 
 pub trait Recv<P: Payload> {
-    fn receive(&mut self, frame: Packet<P>);
+    fn receive(&mut self, frame: InPacket<P>);
 }
 
 pub trait Send<P: Payload> {

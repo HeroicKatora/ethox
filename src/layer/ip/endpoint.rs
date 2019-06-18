@@ -5,7 +5,7 @@ use crate::wire::{IpAddress, IpCidr, Ipv4Cidr, Ipv6Cidr, Ipv4Packet};
 use crate::time::Instant;
 
 use super::{Recv, Send};
-use super::packet::{self, IpPacket, Handle, Packet, RawPacket, Route};
+use super::packet::{self, IpPacket, Handle, Route};
 use super::route::Routes;
 
 pub struct Endpoint<'a> {
@@ -136,9 +136,8 @@ where
     P: Payload,
     T: Recv<P>,
 {
-    fn receive(&mut self, packet: eth::Packet<P>) {
-        let capabilities = packet.handle.info().capabilities();
-        let eth::Packet { mut handle, frame } = packet;
+    fn receive(&mut self, eth::InPacket { mut handle, frame }: eth::InPacket<P>) {
+        let capabilities = handle.info().capabilities();
         let packet = match frame.repr().ethertype {
             EthernetProtocol::Ipv4 => {
                 match Ipv4Packet::new_checked(frame, capabilities.ipv4().rx_checksum()) {
@@ -157,7 +156,7 @@ where
         }
 
         let handle = Handle::new(handle.borrow_mut(), &mut self.endpoint);
-        let packet = Packet::new(handle, packet);
+        let packet = packet::In { handle, packet };
         self.handler.receive(packet)
     }
 }
@@ -170,24 +169,24 @@ where
     fn send<'a>(&mut self, packet: eth::RawPacket<'a, P>) {
         let eth::RawPacket { handle: mut eth_handle, payload } = packet;
         let handle = Handle::new(eth_handle.borrow_mut(), &mut self.endpoint);
-        let packet = RawPacket::new(handle, payload);
+        let packet = packet::Raw { handle, payload };
 
         self.handler.send(packet)
     }
 }
 
 impl<P: Payload, F> Recv<P> for FnHandler<F>
-    where F: FnMut(Packet<P>)
+    where F: FnMut(packet::In<P>)
 {
-    fn receive(&mut self, frame: Packet<P>) {
+    fn receive(&mut self, frame: packet::In<P>) {
         self.0(frame)
     }
 }
 
 impl<P: Payload, F> Send<P> for FnHandler<F>
-    where F: FnMut(RawPacket<P>)
+    where F: FnMut(packet::Raw<P>)
 {
-    fn send(&mut self, frame: RawPacket<P>) {
+    fn send(&mut self, frame: packet::Raw<P>) {
         self.0(frame)
     }
 }

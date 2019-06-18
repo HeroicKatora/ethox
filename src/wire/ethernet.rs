@@ -356,7 +356,7 @@ impl Repr {
     }
 
     /// Return the length of a header that will be emitted from this high-level representation.
-    pub fn buffer_len(&self) -> usize {
+    pub fn header_len(&self) -> usize {
         field::PAYLOAD.start
     }
 

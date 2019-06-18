@@ -1,12 +1,12 @@
 use crate::managed::Slice;
 use crate::time::Instant;
+use crate::wire::PayloadMut;
 
 use super::common::{EnqueueFlag, PacketInfo};
 use super::{Capabilities, Info, Personality, Recv, Send, Result};
 
-pub struct Loopback<'r> {
-    buffer: Slice<'r, u8>,
-    mtu: usize,
+pub struct Loopback<'r, C> {
+    buffer: Slice<'r, C>,
     next_recv: usize,
     sent: usize,
     info: PacketInfo,
@@ -18,20 +18,14 @@ struct AckRecv<'a>(&'a mut usize, usize, &'a mut usize);
 
 struct AckSend<'a>(&'a mut usize);
 
-impl<'r> Loopback<'r> {
+impl<'r, C: PayloadMut> Loopback<'r, C> {
     /// Create a loopback device with mtu.
     ///
     /// It will divide the packet buffer into chunks of the provided mtu and keep track of free and
     /// used buffers
-    pub fn new<P>(
-        packet_buffer: P,
-        mtu: usize,
-    ) -> Self
-        where P: Into<Slice<'r, u8>>,
-    {
+    pub fn new(buffer: Slice<'r, C>) -> Self {
         Loopback {
-            buffer: packet_buffer.into(),
-            mtu,
+            buffer,
             next_recv: 0,
             sent: 0,
             info: PacketInfo {
@@ -46,49 +40,51 @@ impl<'r> Loopback<'r> {
         self.info.timestamp = instant;
     }
 
-    fn next_recv(&mut self) -> Option<(AckRecv, &mut [u8])> {
+    fn next_recv(&mut self) -> Option<(AckRecv, &mut C)> {
         if self.sent == 0 {
             return None
         }
 
         let next = self.wrap_buffer(self.next_recv, 1);
-        let buffer = self.buffer_at(self.next_recv);
-        let buffer = &mut self.buffer[buffer];
+        let buffer = &mut self.buffer[self.next_recv];
         let ack = AckRecv(&mut self.next_recv, next, &mut self.sent);
         Some((ack, buffer))
     }
 
-    fn next_send(&mut self) -> Option<(AckSend, &mut [u8])> {
+    fn next_send(&mut self) -> Option<(AckSend, &mut C)> {
         if self.sent == self.buffer_count() {
             return None
         }
 
         let send = self.wrap_buffer(self.next_recv, self.sent);
-        let buffer = self.buffer_at(send);
-        let buffer = &mut self.buffer[buffer];
+        let buffer = &mut self.buffer[send];
         let ack = AckSend(&mut self.sent);
         Some((ack, buffer))
     }
 
     fn buffer_count(&self) -> usize {
-        self.buffer.len() / self.mtu
-    }
-
-    fn buffer_at(&mut self, idx: usize) -> core::ops::Range<usize> {
-        let mtu = self.mtu;
-        let base = mtu*idx;
-        base..base+mtu
+        self.buffer.len()
     }
 
     fn wrap_buffer(&self, base: usize, add: usize) -> usize {
         // FIXME: this can overflow if we are not careful.
         (base + add) % self.buffer_count()
     }
+
+    fn swap_buffers(&mut self, a: usize, b: usize) {
+        if a == b {
+            return;
+        }
+
+        let (a, b) = (a.min(b), a.max(b));
+        let (head, tail) = self.buffer.split_at_mut(b);
+        core::mem::swap(&mut head[a], &mut tail[0]);
+    }
 }
 
-impl super::Device for Loopback<'_> {
+impl<'a, C: PayloadMut> super::Device for Loopback<'a, C> {
     type Handle = Handle;
-    type Payload = [u8];
+    type Payload = C;
 
     fn personality(&self) -> Personality {
         Personality::baseline()
@@ -133,12 +129,24 @@ impl super::Device for Loopback<'_> {
                 Some(packet) => packet,
             };
 
-            let mut flag = Handle(EnqueueFlag::not_possible(info));
+            let mut flag = Handle(EnqueueFlag::set_true(info));
             receptor.receive(super::Packet {
                 handle: &mut flag,
                 payload: packet,
             });
             ack.ack();
+
+            if flag.0.was_sent() {
+                // We always have some free slot now.
+                let (ack, _) = self.next_send().unwrap();
+                ack.ack();
+
+                let minus_one = self.buffer_count() - 1;
+                let recv_buffer = self.wrap_buffer(self.next_recv, minus_one);
+                let send_buffer = self.wrap_buffer(recv_buffer, self.sent);
+
+                self.swap_buffers(recv_buffer, send_buffer);
+            }
 
             count += 1;
         }
@@ -178,7 +186,7 @@ mod tests {
     #[test]
     fn simple_loopback() {
         let buffer = vec![0; 1204];
-        let mut loopback = Loopback::new(buffer, 256);
+        let mut loopback = Loopback::<Vec<u8>>::new(vec![buffer].into());
         let length_io = crate::nic::tests::LengthIo;
         assert_eq!(loopback.tx(1, length_io), Ok(1));
         assert_eq!(loopback.rx(1, length_io), Ok(1));

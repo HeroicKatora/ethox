@@ -22,12 +22,13 @@ pub use neighbor::{
 pub use packet::{
     Handle,
     Init,
-    Packet,
-    RawPacket,
+    In as InPacket,
+    Out as OutPacket,
+    Raw as RawPacket,
 };
 
 pub trait Recv<P: Payload> {
-    fn receive(&mut self, frame: Packet<P>);
+    fn receive(&mut self, frame: InPacket<P>);
 }
 
 pub trait Send<P: Payload> {
@@ -37,7 +38,7 @@ pub trait Send<P: Payload> {
 /// Available only on `std` because it prints to standard out.
 #[cfg(feature = "std")]
 impl<P: Payload> Recv<P> for Formatter<ethernet_frame> {
-    fn receive(&mut self, frame: Packet<P>) {
+    fn receive(&mut self, frame: InPacket<P>) {
         let printer = PrettyPrinter::<ethernet_frame>::print(&frame.frame);
         eprintln!("{}", printer);
     }

@@ -4,7 +4,7 @@ use crate::wire::{EthernetAddress, EthernetFrame, IpAddress,  Payload, PayloadMu
 use crate::nic;
 
 use super::{Recv, Send};
-use super::packet::{self, Handle, Packet, RawPacket};
+use super::packet::{self, Handle};
 use super::neighbor::{Cache};
 
 pub struct Endpoint<'a> {
@@ -112,7 +112,7 @@ where
         }
 
         let handle = Handle::new(packet.handle, &mut self.endpoint);
-        let packet = Packet::new(handle, frame);
+        let packet = packet::In { handle, frame };
         self.handler.receive(packet)
     }
 }
@@ -123,26 +123,25 @@ where
     P: Payload + PayloadMut,
     T: Send<P>,
 {
-    fn send(&mut self, packet: nic::Packet<H, P>) {
-        let handle = Handle::new(packet.handle, &mut self.endpoint);
-        let packet = RawPacket::new(handle, packet.payload);
-
+    fn send(&mut self, nic::Packet { handle, payload }: nic::Packet<H, P>) {
+        let handle = Handle::new(handle, &mut self.endpoint);
+        let packet = packet::Raw { handle, payload };
         self.handler.send(packet)
     }
 }
 
 impl<P: Payload, F> Recv<P> for FnHandler<F>
-    where F: FnMut(Packet<P>)
+    where F: FnMut(packet::In<P>)
 {
-    fn receive(&mut self, frame: Packet<P>) {
+    fn receive(&mut self, frame: packet::In<P>) {
         self.0(frame)
     }
 }
 
 impl<P: Payload, F> Send<P> for FnHandler<F>
-    where F: FnMut(RawPacket<P>)
+    where F: FnMut(packet::Raw<P>)
 {
-    fn send(&mut self, frame: RawPacket<P>) {
+    fn send(&mut self, frame: packet::Raw<P>) {
         self.0(frame)
     }
 }
@@ -166,8 +165,8 @@ mod tests {
          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
          0x00, 0xff];
 
-    fn simple_send<P: Payload + PayloadMut>(mut frame: RawPacket<P>) {
-        let src_addr = frame.src_addr();
+    fn simple_send<P: Payload + PayloadMut>(mut frame: packet::Raw<P>) {
+        let src_addr = frame.handle.src_addr();
         let init = Init {
             src_addr,
             dst_addr: MAC_ADDR_1,
@@ -177,7 +176,6 @@ mod tests {
         let mut prepared = frame.prepare(init)
             .expect("Preparing frame mustn't fail in controlled environment");
         prepared
-            .frame()
             .payload_mut_slice()
             .copy_from_slice(&PAYLOAD_BYTES[..]);
         prepared
@@ -185,7 +183,7 @@ mod tests {
             .expect("Sending is possible");
     }
 
-    fn simple_recv<P: Payload>(mut frame: Packet<P>) {
+    fn simple_recv<P: Payload>(mut frame: packet::In<P>) {
         assert_eq!(frame.frame().payload().as_slice(), &PAYLOAD_BYTES[..]);
     }
 
