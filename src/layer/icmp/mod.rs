@@ -32,6 +32,8 @@ use crate::wire::Payload;
 
 mod endpoint;
 mod packet;
+#[cfg(test)]
+mod tests;
 
 pub use endpoint::{
     Endpoint,

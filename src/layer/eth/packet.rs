@@ -117,25 +117,25 @@ impl<'a, P: PayloadMut> In<'a, P> {
             ethertype: init.ethertype,
         };
         let raw_repr = frame.repr();
-        let raw_packet = frame.into_inner();
+        let raw_buffer = frame.into_inner();
 
-        let raw_len = raw_packet.payload().len();
-        let raw_payload = raw_repr.header_len() - raw_len;
+        let raw_len = raw_buffer.payload().len();
+        let raw_payload = raw_len - raw_repr.header_len();
 
         // The payload is the common tail.
         let payload = init.payload.min(raw_payload);
         let old_payload = raw_len - payload..raw_len;
         let new_payload = new_len - payload..new_len;
 
-        raw_packet.reframe_payload(ReframePayload {
+        raw_buffer.reframe_payload(ReframePayload {
             length: new_len,
             old_payload,
             new_payload,
         })?;
 
         // Now emit the header again:
-        new_repr.emit(ethernet_frame::new_unchecked_mut(raw_packet.payload_mut()));
-        let frame = EthernetFrame::new_unchecked(raw_packet, new_repr);
+        new_repr.emit(ethernet_frame::new_unchecked_mut(raw_buffer.payload_mut()));
+        let frame = EthernetFrame::new_unchecked(raw_buffer, new_repr);
 
         Ok(Out {
             handle,
