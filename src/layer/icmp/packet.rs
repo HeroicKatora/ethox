@@ -18,6 +18,7 @@ pub struct In<'a, P: Payload> {
 ///
 /// Some packets have variable payloads [WIP]. These also contribute to the checksum and are yet to
 /// be initialized.
+#[must_use = "You need to call `send` explicitely on an OutPacket, otherwise no packet is sent."]
 pub struct Out<'a, P: Payload> {
     handle: Handle<'a>,
     packet: Icmpv4Packet<ip::V4Packet<'a, P>>,

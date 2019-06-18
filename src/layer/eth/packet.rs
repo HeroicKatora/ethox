@@ -16,6 +16,7 @@ pub struct In<'a, P: Payload> {
 ///
 /// While the layers below have been initialized, the payload of the packet has not. Fill it by
 /// grabbing the mutable slice for example.
+#[must_use = "You need to call `send` explicitely on an OutPacket, otherwise no packet is sent."]
 pub struct Out<'a, P: Payload> {
     handle: Handle<'a>,
     frame: EthernetFrame<&'a mut P>,

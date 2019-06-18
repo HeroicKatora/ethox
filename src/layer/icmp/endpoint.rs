@@ -110,7 +110,9 @@ impl EndpointRef<'_> {
                     return Ok(HandlingKind::Internal)
                 }
 
-                packet.answer()?;
+                packet
+                    .answer()?
+                    .send()?;
 
                 Ok(HandlingKind::Internal)
             },

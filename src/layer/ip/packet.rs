@@ -17,6 +17,7 @@ pub struct In<'a, P: Payload> {
 ///
 /// While the layers below have been initialized, the payload of the packet has not. Fill it by
 /// grabbing the mutable slice for example.
+#[must_use = "You need to call `send` explicitely on an OutPacket, otherwise no packet is sent."]
 pub struct Out<'a, P: Payload> {
     handle: Handle<'a>,
     packet: IpPacket<'a, P>,
@@ -133,9 +134,6 @@ impl<'a, P: PayloadMut> In<'a, P> {
     pub fn reinit(mut self, init: Init) -> Result<Out<'a, P>> {
         let route = self.handle.route_to(init.dst_addr)?;
         let lower_init = self.handle.init_eth(route, init.payload)?;
-
-        let new_repr = init.ip_repr(route.dst_addr);
-        let raw_repr = self.packet.repr();
 
         let eth_packet = eth::InPacket {
             handle: self.handle.eth,
