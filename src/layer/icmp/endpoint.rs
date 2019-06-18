@@ -1,7 +1,7 @@
 use crate::layer::{ip, FnHandler, Result};
-use crate::wire::{Error, Icmpv4Repr, Icmpv4Packet, IpProtocol, PayloadMut};
+use crate::wire::{Error, Icmpv4Repr, Icmpv4Packet, IpProtocol, Payload, PayloadMut};
 
-use super::packet::{Handle, In};
+use super::packet::{Handle, In, Raw};
 use super::{Recv, Send};
 
 /// The default handler type when none has been configured.
@@ -160,5 +160,41 @@ where
             },
             _ => (),
         }
+    }
+}
+
+impl<P, T> ip::Send<P> for Sender<'_, T>
+where
+    P: PayloadMut,
+    T: Send<P>,
+{
+    fn send(&mut self, packet: ip::RawPacket<P>) {
+        let ip::RawPacket { handle: mut eth_handle, payload } = packet;
+        let handle = Handle::new(eth_handle.borrow_mut());
+        let packet = Raw { handle, payload };
+
+        self.handler.send(packet)
+    }
+}
+
+impl<P: PayloadMut> Recv<P> for NoHandler {
+    fn receive(&mut self, _: In<P>) {
+        match self._private { }
+    }
+}
+
+impl<P: Payload, F> Recv<P> for FnHandler<F>
+    where F: FnMut(In<P>)
+{
+    fn receive(&mut self, frame: In<P>) {
+        self.0(frame)
+    }
+}
+
+impl<P: Payload, F> Send<P> for FnHandler<F>
+    where F: FnMut(Raw<P>)
+{
+    fn send(&mut self, frame: Raw<P>) {
+        self.0(frame)
     }
 }

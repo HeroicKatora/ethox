@@ -399,6 +399,11 @@ impl<T: Payload> Packet<T> {
 }
 
 impl<T: PayloadMut> Packet<T> {
+    pub fn payload_mut_slice(&mut self) -> &mut [u8] {
+        icmpv4::new_unchecked_mut(self.buffer.payload_mut())
+            .payload_mut_slice()
+    }
+
     /// Recalculate the checksum if necessary.
     ///
     /// Note that the checksum test can be elided even in a checked parse of the ipv4 frame. This

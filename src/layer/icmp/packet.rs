@@ -148,6 +148,12 @@ impl<'a, P: Payload> Out<'a, P> {
     }
 }
 
+impl<'a, P: PayloadMut> Out<'a, P> {
+    pub fn payload_mut_slice(&mut self) -> &mut [u8] {
+        self.packet.payload_mut_slice()
+    }
+}
+
 impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
     pub(crate) fn new(
         handle: Handle<'a>,
