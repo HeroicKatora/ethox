@@ -224,11 +224,15 @@ impl<C: PayloadMut> Device for TapInterface<C> {
             Received::NoData => return Ok(0),
         }
 
-        let mut handle = EnqueueFlag::not_possible(Self::current_info());
+        let mut handle = EnqueueFlag::set_true(Self::current_info());
         receptor.receive(Packet {
             handle: &mut handle,
             payload: &mut self.buffer,
         });
+
+        if handle.was_sent() {
+            self.send()?;
+        }
 
         Ok(1)
     }
