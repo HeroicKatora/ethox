@@ -1,9 +1,7 @@
-#![deny(missing_docs)]
-
-use core::fmt;
+use core::{fmt, ops};
 use byteorder::{ByteOrder, NetworkEndian};
 
-use super::{Error, Result};
+use super::{Error, Result, Payload, PayloadMut};
 use super::ip::pretty_print_ip_payload;
 pub use super::IpProtocol as Protocol;
 
@@ -327,9 +325,12 @@ impl fmt::Display for Cidr {
 
 /// A read/write wrapper around an Internet Protocol version 6 packet buffer.
 #[derive(Debug, PartialEq, Clone)]
-pub struct Packet<T: AsRef<[u8]>> {
-    buffer: T
+pub struct Packet<T: Payload> {
+    buffer: T,
+    repr: Repr,
 }
+
+byte_wrapper!(ipv6);
 
 // Ranges and constants describing the IPv6 header
 //
@@ -376,11 +377,17 @@ mod field {
     pub const DST_ADDR:    Field = 24..40;
 }
 
-impl<T: AsRef<[u8]>> Packet<T> {
+impl ipv6 {
     /// Create a raw octet buffer with an IPv6 packet structure.
     #[inline]
-    pub fn new_unchecked(buffer: T) -> Packet<T> {
-        Packet { buffer }
+    pub fn new_unchecked(buffer: &[u8]) -> &Self {
+        Self::__from_macro_new_unchecked(buffer)
+    }
+
+    /// Create a raw octet buffer with an IPv6 packet structure.
+    #[inline]
+    pub fn new_unchecked_mut(buffer: &mut [u8]) -> &mut Self {
+        Self::__from_macro_new_unchecked_mut(buffer)
     }
 
     /// Shorthand for a combination of [new_unchecked] and [check_len].
@@ -388,10 +395,18 @@ impl<T: AsRef<[u8]>> Packet<T> {
     /// [new_unchecked]: #method.new_unchecked
     /// [check_len]: #method.check_len
     #[inline]
-    pub fn new_checked(buffer: T) -> Result<Packet<T>> {
+    pub fn new_checked(buffer: &[u8]) -> Result<&Self> {
         let packet = Self::new_unchecked(buffer);
         packet.check_len()?;
         Ok(packet)
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
+        &mut self.0
     }
 
     /// Ensure that no accessor method will panic if called.
@@ -402,18 +417,12 @@ impl<T: AsRef<[u8]>> Packet<T> {
     /// [set_payload_len]: #method.set_payload_len
     #[inline]
     pub fn check_len(&self) -> Result<()> {
-        let len = self.buffer.as_ref().len();
+        let len = self.0.len();
         if len < field::DST_ADDR.end || len < self.total_len() {
             Err(Error::Truncated)
         } else {
             Ok(())
         }
-    }
-
-    /// Consume the packet, returning the underlying buffer.
-    #[inline]
-    pub fn into_inner(self) -> T {
-        self.buffer
     }
 
     /// Return the header length.
@@ -427,29 +436,25 @@ impl<T: AsRef<[u8]>> Packet<T> {
     /// Return the version field.
     #[inline]
     pub fn version(&self) -> u8 {
-        let data = self.buffer.as_ref();
-        data[field::VER_TC_FLOW.start] >> 4
+        self.0[field::VER_TC_FLOW.start] >> 4
     }
 
     /// Return the traffic class.
     #[inline]
     pub fn traffic_class(&self) -> u8 {
-        let data = self.buffer.as_ref();
-        ((NetworkEndian::read_u16(&data[0..2]) & 0x0ff0) >> 4) as u8
+        ((NetworkEndian::read_u16(&self.0[0..2]) & 0x0ff0) >> 4) as u8
     }
 
     /// Return the flow label field.
     #[inline]
     pub fn flow_label(&self) -> u32 {
-        let data = self.buffer.as_ref();
-        NetworkEndian::read_u24(&data[1..4]) & 0x000fffff
+        NetworkEndian::read_u24(&self.0[1..4]) & 0x000fffff
     }
 
     /// Return the payload length field.
     #[inline]
     pub fn payload_len(&self) -> u16 {
-        let data = self.buffer.as_ref();
-        NetworkEndian::read_u16(&data[field::LENGTH])
+        NetworkEndian::read_u16(&self.0[field::LENGTH])
     }
 
     /// Return the payload length added to the known header length.
@@ -461,56 +466,39 @@ impl<T: AsRef<[u8]>> Packet<T> {
     /// Return the next header field.
     #[inline]
     pub fn next_header(&self) -> Protocol {
-        let data = self.buffer.as_ref();
-        Protocol::from(data[field::NXT_HDR])
+        Protocol::from(self.0[field::NXT_HDR])
     }
 
     /// Return the hop limit field.
     #[inline]
     pub fn hop_limit(&self) -> u8 {
-        let data = self.buffer.as_ref();
-        data[field::HOP_LIMIT]
+        self.0[field::HOP_LIMIT]
     }
 
     /// Return the source address field.
     #[inline]
     pub fn src_addr(&self) -> Address {
-        let data = self.buffer.as_ref();
-        Address::from_bytes(&data[field::SRC_ADDR])
+        Address::from_bytes(&self.0[field::SRC_ADDR])
     }
 
     /// Return the destination address field.
     #[inline]
     pub fn dst_addr(&self) -> Address {
-        let data = self.buffer.as_ref();
-        Address::from_bytes(&data[field::DST_ADDR])
+        Address::from_bytes(&self.0[field::DST_ADDR])
     }
-}
 
-impl<'a, T: AsRef<[u8]> + ?Sized> Packet<&'a T> {
-    /// Return a pointer to the payload.
-    #[inline]
-    pub fn payload(&self) -> &'a [u8] {
-        let data = self.buffer.as_ref();
-        let range = self.header_len()..self.total_len();
-        &data[range]
-    }
-}
-
-impl<T: AsRef<[u8]> + AsMut<[u8]>> Packet<T> {
     /// Set the version field.
     #[inline]
     pub fn set_version(&mut self, value: u8) {
-        let data = self.buffer.as_mut();
         // Make sure to retain the lower order bits which contain
         // the higher order bits of the traffic class
-        data[0] = (data[0] & 0x0f) | ((value & 0x0f) << 4);
+        self.0[0] = (self.0[0] & 0x0f) | ((value & 0x0f) << 4);
     }
 
     /// Set the traffic class field.
     #[inline]
     pub fn set_traffic_class(&mut self, value: u8) {
-        let data = self.buffer.as_mut();
+        let data = &mut self.0;
         // Put the higher order 4-bits of value in the lower order
         // 4-bits of the first byte
         data[0] = (data[0] & 0xf0) | ((value & 0xf0) >> 4);
@@ -522,57 +510,76 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> Packet<T> {
     /// Set the flow label field.
     #[inline]
     pub fn set_flow_label(&mut self, value: u32) {
-        let data = self.buffer.as_mut();
         // Retain the lower order 4-bits of the traffic class
-        let raw = (((data[1] & 0xf0) as u32) << 16) | (value & 0x0fffff);
-        NetworkEndian::write_u24(&mut data[1..4], raw);
+        let raw = (((self.0[1] & 0xf0) as u32) << 16) | (value & 0x0fffff);
+        NetworkEndian::write_u24(&mut self.0[1..4], raw);
     }
 
     /// Set the payload length field.
     #[inline]
     pub fn set_payload_len(&mut self, value: u16) {
-        let data = self.buffer.as_mut();
-        NetworkEndian::write_u16(&mut data[field::LENGTH], value);
+        NetworkEndian::write_u16(&mut self.0[field::LENGTH], value);
     }
 
     /// Set the next header field.
     #[inline]
     pub fn set_next_header(&mut self, value: Protocol) {
-        let data = self.buffer.as_mut();
-        data[field::NXT_HDR] = value.into();
+        self.0[field::NXT_HDR] = value.into();
     }
 
     /// Set the hop limit field.
     #[inline]
     pub fn set_hop_limit(&mut self, value: u8) {
-        let data = self.buffer.as_mut();
-        data[field::HOP_LIMIT] = value;
+        self.0[field::HOP_LIMIT] = value;
     }
 
     /// Set the source address field.
     #[inline]
     pub fn set_src_addr(&mut self, value: Address) {
-        let data = self.buffer.as_mut();
-        data[field::SRC_ADDR].copy_from_slice(value.as_bytes());
+        self.0[field::SRC_ADDR].copy_from_slice(value.as_bytes());
     }
 
     /// Set the destination address field.
     #[inline]
     pub fn set_dst_addr(&mut self, value: Address) {
-        let data = self.buffer.as_mut();
-        data[field::DST_ADDR].copy_from_slice(value.as_bytes());
+        self.0[field::DST_ADDR].copy_from_slice(value.as_bytes());
+    }
+
+    /// Return a pointer to the payload.
+    #[inline]
+    pub fn payload_slice(&self) -> &[u8] {
+        let range = self.header_len()..self.total_len();
+        &self.0[range]
     }
 
     /// Return a mutable pointer to the payload.
     #[inline]
-    pub fn payload_mut(&mut self) -> &mut [u8] {
+    pub fn payload_mut_slice(&mut self) -> &mut [u8] {
         let range = self.header_len()..self.total_len();
-        let data = self.buffer.as_mut();
-        &mut data[range]
+        &mut self.0[range]
     }
 }
 
-impl<'a, T: AsRef<[u8]> + ?Sized> fmt::Display for Packet<&'a T> {
+impl<T: Payload> Packet<T> {
+    /// Consume the packet, returning the underlying buffer.
+    #[inline]
+    pub fn into_inner(self) -> T {
+        self.buffer
+    }
+}
+
+impl<T: PayloadMut> Packet<T> {
+}
+
+impl<T: Payload> ops::Deref for Packet<T> {
+    type Target = ipv6;
+
+    fn deref(&self) -> &ipv6 {
+        ipv6::new_unchecked(self.buffer.payload())
+    }
+}
+
+impl<T: Payload> fmt::Display for Packet<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match Repr::parse(self) {
             Ok(repr) => write!(f, "{}", repr),
@@ -584,9 +591,9 @@ impl<'a, T: AsRef<[u8]> + ?Sized> fmt::Display for Packet<&'a T> {
     }
 }
 
-impl<T: AsRef<[u8]>> AsRef<[u8]> for Packet<T> {
+impl<T: Payload> AsRef<[u8]> for Packet<T> {
     fn as_ref(&self) -> &[u8] {
-        self.buffer.as_ref()
+        self.buffer.payload().into()
     }
 }
 
@@ -607,7 +614,7 @@ pub struct Repr {
 
 impl Repr {
     /// Parse an Internet Protocol version 6 packet and return a high-level representation.
-    pub fn parse<T: AsRef<[u8]> + ?Sized>(packet: &Packet<&T>) -> Result<Repr> {
+    pub fn parse(packet: &ipv6) -> Result<Repr> {
         // Ensure basic accessors will work
         packet.check_len()?;
         if packet.version() != 6 { return Err(Error::Malformed); }
@@ -627,7 +634,7 @@ impl Repr {
     }
 
     /// Emit a high-level representation into an Internet Protocol version 6 packet.
-    pub fn emit<T: AsRef<[u8]> + AsMut<[u8]>>(&self, packet: &mut Packet<T>) {
+    pub fn emit(&self, packet: &mut ipv6) {
         // Make no assumptions about the original state of the packet buffer.
         // Make sure to set every byte.
         packet.set_version(6);
@@ -652,30 +659,30 @@ use super::pretty_print::{PrettyPrint, PrettyIndent};
 
 // TODO: This is very similar to the implementation for IPv4. Make
 // a way to have less copy and pasted code here.
-impl<T: AsRef<[u8]>> PrettyPrint for Packet<T> {
+impl PrettyPrint for ipv6 {
     fn pretty_print(buffer: &[u8], f: &mut fmt::Formatter,
                     indent: &mut PrettyIndent) -> fmt::Result {
-        let (ip_repr, payload) = match Packet::new_checked(buffer) {
+        // Verify the packet structure.
+        let packet = match ipv6::new_checked(buffer) {
             Err(err) => return write!(f, "{}({})", indent, err),
-            Ok(ip_packet) => {
-                match Repr::parse(&ip_packet) {
-                    Err(_) => return Ok(()),
-                    Ok(ip_repr) => {
-                        write!(f, "{}{}", indent, ip_repr)?;
-                        (ip_repr, ip_packet.payload())
-                    }
-                }
-            }
+            Ok(frame) => frame,
         };
 
-        pretty_print_ip_payload(f, indent, ip_repr, payload)
+        // Verify the packet content
+        let repr = match Repr::parse(packet) {
+            Err(err) => return write!(f, "{}({})", indent, err),
+            Ok(ip_repr) => ip_repr,
+        };
+
+        write!(f, "{}{}", indent, repr)?;
+        pretty_print_ip_payload(f, indent, repr, packet.payload_slice())
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::{Address, Error, Cidr};
-    use super::{Packet, Protocol, Repr};
+    use super::{ipv6, Protocol, Repr};
 
     use crate::wire::pretty_print::{PrettyPrinter};
     use crate::wire::ipv4::Address as Ipv4Address;
@@ -926,7 +933,7 @@ mod test {
 
     #[test]
     fn test_packet_deconstruction() {
-        let packet = Packet::new_unchecked(&REPR_PACKET_BYTES[..]);
+        let packet = ipv6::new_unchecked(&REPR_PACKET_BYTES[..]);
         assert_eq!(packet.check_len(), Ok(()));
         assert_eq!(packet.version(), 6);
         assert_eq!(packet.traffic_class(), 0);
@@ -940,13 +947,13 @@ mod test {
                                                0x00, 0x00, 0x00, 0x00,
                                                0x00, 0x00, 0x00, 0x01]));
         assert_eq!(packet.dst_addr(), Address::LINK_LOCAL_ALL_NODES);
-        assert_eq!(packet.payload(), &REPR_PAYLOAD_BYTES[..]);
+        assert_eq!(packet.payload_slice(), &REPR_PAYLOAD_BYTES[..]);
     }
 
     #[test]
     fn test_packet_construction() {
         let mut bytes = [0xff; 52];
-        let mut packet = Packet::new_unchecked(&mut bytes[..]);
+        let packet = ipv6::new_unchecked_mut(&mut bytes[..]);
         // Version, Traffic Class, and Flow Label are not
         // byte aligned. make sure the setters and getters
         // do not interfere with each other.
@@ -963,7 +970,7 @@ mod test {
         packet.set_hop_limit(0xfe);
         packet.set_src_addr(Address::LINK_LOCAL_ALL_ROUTERS);
         packet.set_dst_addr(Address::LINK_LOCAL_ALL_NODES);
-        packet.payload_mut().copy_from_slice(&REPR_PAYLOAD_BYTES[..]);
+        packet.payload_mut_slice().copy_from_slice(&REPR_PAYLOAD_BYTES[..]);
         let mut expected_bytes = [
             0x69, 0x95, 0x43, 0x21, 0x00, 0x0c, 0x11, 0xfe,
             0xff, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -976,7 +983,7 @@ mod test {
         let start = expected_bytes.len() - REPR_PAYLOAD_BYTES.len();
         expected_bytes[start..].copy_from_slice(&REPR_PAYLOAD_BYTES[..]);
         assert_eq!(packet.check_len(), Ok(()));
-        assert_eq!(&packet.into_inner()[..], &expected_bytes[..]);
+        assert_eq!(packet.as_bytes(), &expected_bytes[..]);
     }
 
     #[test]
@@ -985,9 +992,9 @@ mod test {
         bytes.extend(&REPR_PACKET_BYTES[..]);
         bytes.push(0);
 
-        assert_eq!(Packet::new_unchecked(&bytes).payload().len(),
+        assert_eq!(ipv6::new_unchecked(&bytes).payload_slice().len(),
                    REPR_PAYLOAD_BYTES.len());
-        assert_eq!(Packet::new_unchecked(&mut bytes).payload_mut().len(),
+        assert_eq!(ipv6::new_unchecked_mut(&mut bytes).payload_mut_slice().len(),
                    REPR_PAYLOAD_BYTES.len());
     }
 
@@ -995,62 +1002,62 @@ mod test {
     fn test_total_len_overflow() {
         let mut bytes = vec![];
         bytes.extend(&REPR_PACKET_BYTES[..]);
-        Packet::new_unchecked(&mut bytes).set_payload_len(0x80);
+        ipv6::new_unchecked_mut(&mut bytes).set_payload_len(0x80);
 
-        assert_eq!(Packet::new_checked(&bytes).unwrap_err(),
+        assert_eq!(ipv6::new_checked(&bytes).unwrap_err(),
                    Error::Truncated);
     }
 
     #[test]
     fn test_repr_parse_valid() {
-        let packet = Packet::new_unchecked(&REPR_PACKET_BYTES[..]);
-        let repr = Repr::parse(&packet).unwrap();
+        let packet = ipv6::new_unchecked(&REPR_PACKET_BYTES[..]);
+        let repr = Repr::parse(packet).unwrap();
         assert_eq!(repr, packet_repr());
     }
 
     #[test]
     fn test_repr_parse_bad_version() {
         let mut bytes = vec![0; 40];
-        let mut packet = Packet::new_unchecked(&mut bytes[..]);
+        let packet = ipv6::new_unchecked_mut(&mut bytes[..]);
         packet.set_version(4);
         packet.set_payload_len(0);
-        let packet = Packet::new_unchecked(&*packet.into_inner());
-        assert_eq!(Repr::parse(&packet), Err(Error::Malformed));
+        let packet = ipv6::new_unchecked(packet.as_bytes());
+        assert_eq!(Repr::parse(packet), Err(Error::Malformed));
     }
 
     #[test]
     fn test_repr_parse_smaller_than_header() {
         let mut bytes = vec![0; 40];
-        let mut packet = Packet::new_unchecked(&mut bytes[..]);
+        let packet = ipv6::new_unchecked_mut(&mut bytes[..]);
         packet.set_version(6);
         packet.set_payload_len(39);
-        let packet = Packet::new_unchecked(&*packet.into_inner());
-        assert_eq!(Repr::parse(&packet), Err(Error::Truncated));
+        let packet = ipv6::new_unchecked(packet.as_bytes());
+        assert_eq!(Repr::parse(packet), Err(Error::Truncated));
     }
 
     #[test]
     fn test_repr_parse_smaller_than_payload() {
         let mut bytes = vec![0; 40];
-        let mut packet = Packet::new_unchecked(&mut bytes[..]);
+        let packet = ipv6::new_unchecked_mut(&mut bytes[..]);
         packet.set_version(6);
         packet.set_payload_len(1);
-        let packet = Packet::new_unchecked(&*packet.into_inner());
-        assert_eq!(Repr::parse(&packet), Err(Error::Truncated));
+        let packet = ipv6::new_unchecked(packet.as_bytes());
+        assert_eq!(Repr::parse(packet), Err(Error::Truncated));
     }
 
     #[test]
     fn test_basic_repr_emit() {
         let repr = packet_repr();
         let mut bytes = vec![0xff; repr.buffer_len() + REPR_PAYLOAD_BYTES.len()];
-        let mut packet = Packet::new_unchecked(&mut bytes);
-        repr.emit(&mut packet);
-        packet.payload_mut().copy_from_slice(&REPR_PAYLOAD_BYTES);
-        assert_eq!(&packet.into_inner()[..], &REPR_PACKET_BYTES[..]);
+        let packet = ipv6::new_unchecked_mut(&mut bytes);
+        repr.emit(packet);
+        packet.payload_mut_slice().copy_from_slice(&REPR_PAYLOAD_BYTES);
+        assert_eq!(packet.as_bytes(), &REPR_PACKET_BYTES[..]);
     }
 
     #[test]
     fn test_pretty_print() {
-        assert_eq!(format!("{}", PrettyPrinter::<Packet<&'static [u8]>>::new("\n", &&REPR_PACKET_BYTES[..])),
+        assert_eq!(format!("{}", PrettyPrinter::<ipv6>::new("\n", &&REPR_PACKET_BYTES[..])),
                    "\nIPv6 src=fe80::1 dst=ff02::1 nxt_hdr=UDP hop_limit=64\n \\ UDP src=1 dst=2 len=4");
     }
 }

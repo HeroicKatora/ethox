@@ -181,6 +181,7 @@ pub use self::ipv4::{
     MIN_MTU as IPV4_MIN_MTU};
 
 pub use self::ipv6::{
+    ipv6 as ipv6_packet,
     Address as Ipv6Address,
     Packet as Ipv6Packet,
     Repr as Ipv6Repr,

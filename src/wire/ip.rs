@@ -3,7 +3,7 @@ use core::convert::From;
 
 use crate::wire::{Error, Checksum, Result};
 use super::{Ipv4Address, Ipv4Repr, Ipv4Cidr, ipv4_packet};
-use super::{Ipv6Address, Ipv6Cidr, Ipv6Packet, Ipv6Repr};
+use super::{Ipv6Address, Ipv6Cidr, Ipv6Packet, Ipv6Repr, ipv6_packet};
 
 /// Internet protocol version.
 #[derive(Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
@@ -693,7 +693,7 @@ impl Repr {
                 repr.emit(ipv4_packet::new_unchecked_mut(buffer.as_mut()), checksum)
             },
             Repr::Ipv6(repr) => {
-                repr.emit(&mut Ipv6Packet::new_unchecked(buffer))
+                repr.emit(ipv6_packet::new_unchecked_mut(buffer.as_mut()))
             },
             Repr::__Nonexhaustive => unreachable!()
         }
