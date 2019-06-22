@@ -17,6 +17,9 @@ default = ["std"]
 std = ["libc"]
 log = []
 
+[profile.release]
+lto = true
+
 [[example]]
 name = "debug_tap"
 required-features = ["std"]
