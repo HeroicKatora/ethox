@@ -1,19 +1,19 @@
 //! Debugs all packets coming in on a tap.
-use std::{env, process};
+use structopt::StructOpt;
 
 use ethox::managed::{List, Slice};
 use ethox::nic::{Device, TapInterface};
 use ethox::layer::{eth, ip, icmp};
-use ethox::wire::{Ipv4Cidr, EthernetAddress, pretty_print::Formatter};
+use ethox::wire::{Ipv4Cidr, EthernetAddress};
 
 fn main() {
-    let name = env::args().nth(1)
-        .unwrap_or_else(usage_and_exit);
-    
-    let host: Ipv4Cidr = unimplemented!();
-    let hostmac: EthernetAddress = unimplemented!();
-    let gateway: Ipv4Cidr = unimplemented!();
-    let gatemac: EthernetAddress = unimplemented!();
+    let Config {
+        name,
+        host,
+        hostmac,
+        gateway,
+        gatemac,
+    } = Config::from_args();
 
     let mut eth = [eth::Neighbor::default(); 1];
     let mut eth = eth::Endpoint::new(hostmac, {
@@ -32,7 +32,7 @@ fn main() {
         .expect("Couldn't initialize interface");
     loop {
         // Receive the next packet.
-        let result = interface.rx(1, Formatter::default());
+        let result = interface.rx(1, eth.recv(ip.recv(icmp.answer())));
 
         result.unwrap_or_else(|err| {
             panic!("Error during receive {:?} {:?}", err, interface.last_err());
@@ -40,7 +40,11 @@ fn main() {
     }
 }
 
-fn usage_and_exit<T>() -> T {
-    eprintln!("Usage: debug_tap <ifname>");
-    process::exit(1);
+#[derive(StructOpt)]
+struct Config {
+    name: String,
+    host: Ipv4Cidr,
+    hostmac: EthernetAddress,
+    gateway: Ipv4Cidr,
+    gatemac: EthernetAddress,
 }
