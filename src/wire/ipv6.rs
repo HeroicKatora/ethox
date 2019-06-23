@@ -1,7 +1,7 @@
 use core::{fmt, ops};
 use byteorder::{ByteOrder, NetworkEndian};
 
-use super::{Error, Result, Payload, PayloadMut};
+use super::{Error, Result, Payload, PayloadError, PayloadMut, Reframe, payload};
 use super::ip::pretty_print_ip_payload;
 pub use super::IpProtocol as Protocol;
 
@@ -617,6 +617,46 @@ impl ipv6 {
 }
 
 impl<T: Payload> Packet<T> {
+    /// Shorthand for a combination of [new_unchecked] and [check_len].
+    ///
+    /// [new_unchecked]: #method.new_unchecked
+    /// [check_len]: #method.check_len
+    pub fn new_checked(buffer: T) -> Result<Packet<T>> {
+        let repr = {
+            let packet = ipv6::new_checked(buffer.payload())?;
+            Repr::parse(packet)?
+        };
+        Ok(Packet {
+            buffer,
+            repr,
+        })
+    }
+
+    /// Get an immutable reference to the whole buffer.
+    ///
+    /// Useful if the buffer is some other packet encapsulation.
+    pub fn get_ref(&self) -> &T {
+        &self.buffer
+    }
+
+    /// Get the repr of the packet header.
+    pub fn repr(&self) -> Repr {
+        self.repr
+    }
+
+    /// Create a new packet without checking the representation.
+    ///
+    /// Misuse may lead to panics from out-of-bounds access or other subtle inconsistencies. Since
+    /// the representation might not represent the actual content in the payload, this also might
+    /// mean that seemingly inconsistent values are returned. The usage is still memory safe
+    /// though.
+    pub fn new_unchecked(buffer: T, repr: Repr) -> Self {
+        Packet {
+            buffer,
+            repr,
+        }
+    }
+
     /// Consume the packet, returning the underlying buffer.
     #[inline]
     pub fn into_inner(self) -> T {
@@ -634,6 +674,34 @@ impl<T: Payload> ops::Deref for Packet<T> {
         ipv6::new_unchecked(self.buffer.payload())
     }
 }
+
+impl<T: Payload> Payload for Packet<T> {
+    fn payload(&self) -> &payload {
+        self.payload_slice().into()
+    }
+}
+
+impl<T: PayloadMut> PayloadMut for Packet<T> {
+    fn payload_mut(&mut self) -> &mut payload {
+        ipv6::new_unchecked_mut(self.buffer.payload_mut())
+            .payload_mut_slice()
+            .into()
+    }
+
+    fn resize(&mut self, length: usize) -> core::result::Result<(), PayloadError> {
+        let hdr_len = self.header_len();
+        self.buffer.resize(length + hdr_len)
+    }
+
+    fn reframe(&mut self, mut reframe: Reframe)
+        -> core::result::Result<(), PayloadError>
+    {
+        let hdr_len = self.header_len();
+        reframe.within_header(hdr_len);
+        self.buffer.reframe(reframe)
+    }
+}
+
 
 impl<T: Payload> fmt::Display for Packet<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

@@ -1,7 +1,7 @@
 use crate::layer::{eth, FnHandler};
 use crate::managed::Slice;
 use crate::wire::{EthernetProtocol, Payload, PayloadMut};
-use crate::wire::{IpAddress, IpCidr, Ipv4Packet};
+use crate::wire::{IpAddress, IpCidr, Ipv4Packet, Ipv6Packet};
 use crate::time::Instant;
 
 use super::{Recv, Send};
@@ -148,9 +148,12 @@ where
                     Err(_) => return,
                 }
             },
-            /*EthernetProtocol::Ipv6 => {
-                let packet = Ipv6Packet::new_checked(packet, Checksum::Manual);
-            },*/
+            EthernetProtocol::Ipv6 => {
+                match Ipv6Packet::new_checked(frame) {
+                    Ok(packet) => IpPacket::V6(packet),
+                    Err(_) => return,
+                }
+            },
             _ => return,
         };
 

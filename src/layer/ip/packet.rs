@@ -255,20 +255,27 @@ impl Init {
 }
 
 impl<'a, P: Payload> IpPacket<'a, P> {
+    /// Assemble an ip packet with already computed representation.
+    ///
+    /// #Panics
+    /// This function panics if the representation is not specifically Ipv4 or Ipv6.
     pub fn new_unchecked(inner: EthernetFrame<&'a mut P>, repr: IpRepr) -> Self {
         match repr {
             IpRepr::Ipv4(repr) => IpPacket::V4(Ipv4Packet::new_unchecked(inner, repr)),
-            _ => unimplemented!(),
+            IpRepr::Ipv6(repr) => IpPacket::V6(Ipv6Packet::new_unchecked(inner, repr)),
+            _ => panic!("Unchecked must be from specific ip representation"),
         }
     }
 
+    /// Retrieve the representation of the packet.
     pub fn repr(&self) -> IpRepr {
         match self {
             IpPacket::V4(packet) => packet.repr().into(),
-            IpPacket::V6(_packet) => unimplemented!("Need to rework ipv6 repr first"),
+            IpPacket::V6(packet) => packet.repr().into(),
         }
     }
 
+    /// Turn the packet into its ethernet layer respresentation.
     pub fn into_inner(self) -> EthernetFrame<&'a mut P> {
         match self {
             IpPacket::V4(packet) => packet.into_inner(),
@@ -276,6 +283,9 @@ impl<'a, P: Payload> IpPacket<'a, P> {
         }
     }
 
+    /// Retrieve the payload of the packet.
+    ///
+    /// This is a utility wrapper around unwrapping the inner ethernet frame.
     pub fn into_raw(self) -> &'a mut P {
         self.into_inner().into_inner()
     }
@@ -285,7 +295,7 @@ impl<'a, P: Payload> Payload for IpPacket<'a, P> {
     fn payload(&self) -> &payload {
         match self {
             IpPacket::V4(packet) => packet.payload(),
-            IpPacket::V6(_packet) => unimplemented!("TODO"),
+            IpPacket::V6(packet) => packet.payload(),
         }
     }
 } 
@@ -294,21 +304,21 @@ impl<'a, P: PayloadMut> PayloadMut for IpPacket<'a, P> {
     fn payload_mut(&mut self) -> &mut payload {
         match self {
             IpPacket::V4(packet) => packet.payload_mut(),
-            IpPacket::V6(_packet) => unimplemented!("TODO"),
+            IpPacket::V6(packet) => packet.payload_mut(),
         }
     }
 
     fn resize(&mut self, length: usize) -> PayloadResult<()> {
         match self {
             IpPacket::V4(packet) => packet.resize(length),
-            IpPacket::V6(_packet) => unimplemented!("TODO"),
+            IpPacket::V6(packet) => packet.resize(length),
         }
     }
 
     fn reframe(&mut self, frame: Reframe) -> PayloadResult<()> {
         match self {
             IpPacket::V4(packet) => packet.reframe(frame),
-            IpPacket::V6(_packet) => unimplemented!("TODO"),
+            IpPacket::V6(packet) => packet.reframe(frame),
         }
     }
 } 
