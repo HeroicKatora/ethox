@@ -1,7 +1,7 @@
 use crate::layer::{eth, FnHandler};
 use crate::managed::Slice;
 use crate::wire::{EthernetProtocol, Payload, PayloadMut};
-use crate::wire::{IpAddress, IpCidr, Ipv4Cidr, Ipv6Cidr, Ipv4Packet};
+use crate::wire::{IpAddress, IpCidr, Ipv4Packet};
 use crate::time::Instant;
 
 use super::{Recv, Send};
@@ -40,11 +40,20 @@ struct IpEndpoint<'a, 'e> {
 }
 
 impl<'a> Endpoint<'a> {
-    pub fn new<A, C>(addr: A, routes: C) -> Self 
+    /// Construct a new endpoint handling messages to the specified addresses.
+    ///
+    /// # Panics
+    /// This method will panic if one of the addresses assigned to the interface is not a unicast
+    /// address.
+    pub fn new<A, C>(addr: A, routes: C) -> Self
         where A: Into<Slice<'a, IpCidr>>, C: Into<Routes<'a>>,
     {
+        let addresses = addr.into();
+        for addr in addresses.iter() {
+            assert!(addr.address().is_unicast());
+        }
         Endpoint {
-            addr: addr.into(),
+            addr: addresses,
             routes: routes.into(),
         }
     }
@@ -92,15 +101,9 @@ impl<'a> Endpoint<'a> {
     }
 
     fn find_local_route(&self, dst_addr: IpAddress, _: Instant) -> Option<Route> {
-        let dst_cidr = match dst_addr {
-            IpAddress::Ipv4(addr) => Ipv4Cidr::new(addr, 32).into(),
-            IpAddress::Ipv6(addr) => Ipv6Cidr::new(addr, 128).into(),
-            addr => panic!("Invalid address to find route to: {}", addr),
-        };
-
         let matching_src = self.addr
             .iter()
-            .filter(|addr| addr.contains_subnet(dst_cidr))
+            .filter(|addr| addr.subnet().contains(dst_addr))
             .nth(0)?;
 
         Some(Route {
@@ -115,7 +118,7 @@ impl<'a> Endpoint<'a> {
         // Which source to use?
         let src_addr = self.addr
             .iter()
-            .filter(|addr| addr.contains(dst_addr))
+            .filter(|addr| addr.subnet().contains(next_hop))
             .nth(0)?;
 
         Some(Route {

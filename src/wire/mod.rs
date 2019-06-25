@@ -170,7 +170,8 @@ pub use self::ip::{
     Address as IpAddress,
     Endpoint as IpEndpoint,
     Repr as IpRepr,
-    Cidr as IpCidr};
+    Cidr as IpCidr,
+    Subnet as IpSubnet};
 
 pub use self::ipv4::{
     ipv4 as ipv4_packet,
@@ -178,6 +179,7 @@ pub use self::ipv4::{
     Packet as Ipv4Packet,
     Repr as Ipv4Repr,
     Cidr as Ipv4Cidr,
+    Subnet as Ipv4Subnet,
     MIN_MTU as IPV4_MIN_MTU};
 
 pub use self::ipv6::{
@@ -186,6 +188,7 @@ pub use self::ipv6::{
     Packet as Ipv6Packet,
     Repr as Ipv6Repr,
     Cidr as Ipv6Cidr,
+    Subnet as Ipv6Subnet,
     MIN_MTU as IPV6_MIN_MTU};
 
 pub use self::ipv6option::{

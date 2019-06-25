@@ -3,7 +3,7 @@
 use crate::layer::{Error, Result};
 use crate::managed::{List, Slice};
 use crate::time::{Expiration, Instant};
-use crate::wire::{IpCidr, IpAddress};
+use crate::wire::{IpAddress, IpCidr, IpSubnet};
 use crate::wire::Ipv4Address;
 use crate::wire::Ipv6Address;
 
@@ -15,7 +15,7 @@ pub struct Route {
     /// Better only set actual networks here. Although host identifiers (where not all bits outside
     /// the subnet mask are zero) and broadcast (where these bits are all ones) are accepted, they
     /// may lead to unexpected routing decisions.
-    pub net: IpCidr,
+    pub net: IpSubnet,
 
     /// Next hop for this network.
     pub next_hop: IpAddress,
@@ -31,7 +31,7 @@ impl Route {
     /// the more specific placeholders `ipv4_invalid` and `ipv6_invalid` are less precise.
     pub fn unspecified() -> Self {
         Route {
-            net: IpCidr::new(IpAddress::v4(0, 0, 0, 0), 0),
+            net: IpCidr::new(IpAddress::v4(0, 0, 0, 0), 0).subnet(),
             next_hop: IpAddress::Unspecified,
             expires_at: Expiration::Never,
         }
@@ -43,7 +43,7 @@ impl Route {
     /// `0.0.0.0/8` are only valid as source addresses.
     pub fn ipv4_invalid() -> Self {
         Route {
-            net: IpCidr::new(IpAddress::v4(0, 0, 0, 0), 0),
+            net: IpCidr::new(IpAddress::v4(0, 0, 0, 0), 0).subnet(),
             next_hop: IpAddress::v4(0, 0, 0, 0).into(),
             expires_at: Expiration::Never,
         }
@@ -52,7 +52,7 @@ impl Route {
     /// A route `::/0` to the reserved, 'unspecified' `::/128` address.
     pub fn ipv6_invalid() -> Self {
         Route {
-            net: IpCidr::new(IpAddress::v6(0, 0, 0, 0, 0, 0, 0, 0), 0), 
+            net: IpCidr::new(IpAddress::v6(0, 0, 0, 0, 0, 0, 0, 0), 0).subnet(),
             next_hop: IpAddress::v6(0, 0, 0, 0, 0, 0, 0, 0).into(),
             expires_at: Expiration::Never,
         }
@@ -64,7 +64,7 @@ impl Route {
     /// example.
     pub fn new_ipv4_gateway(gateway: Ipv4Address) -> Route {
         Route {
-            net: IpCidr::new(IpAddress::v4(0, 0, 0, 0), 0),
+            net: IpCidr::new(IpAddress::v4(0, 0, 0, 0), 0).subnet(),
             next_hop: gateway.into(),
             expires_at: Expiration::Never,
         }
@@ -76,7 +76,7 @@ impl Route {
     /// example.
     pub fn new_ipv6_gateway(gateway: Ipv6Address) -> Route {
         Route {
-            net: IpCidr::new(IpAddress::v6(0, 0, 0, 0, 0, 0, 0, 0), 0), 
+            net: IpCidr::new(IpAddress::v6(0, 0, 0, 0, 0, 0, 0, 0), 0).subnet(),
             next_hop: gateway.into(),
             expires_at: Expiration::Never,
         }
@@ -215,7 +215,7 @@ mod test {
         assert_eq!(routes.lookup(ADDR_2B.into(), Instant::from_millis(0)), None);
 
         let route = Route {
-            net: cidr_1().into(),
+            net: cidr_1().subnet().into(),
             next_hop: ADDR_1A.into(),
             expires_at: Expiration::Never,
         };
@@ -230,7 +230,7 @@ mod test {
         assert_eq!(routes.lookup(ADDR_2B.into(), Instant::from_millis(0)), None);
 
         let route2 = Route {
-            net: cidr_2().into(),
+            net: cidr_2().subnet().into(),
             next_hop: ADDR_2A.into(),
             expires_at: Expiration::When(Instant::from_millis(10)),
         };
