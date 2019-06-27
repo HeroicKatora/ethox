@@ -25,18 +25,17 @@
 //! 4. You no longer require root. Start the ping_tap example.
 //! 
 //!   > $ cargo run --example ping_tap -- tap0 10.0.0.1/24 ab:ff:ff:ff:ff:ff 10.0.0.2/24 <host_mac>
-//! 5. Ping the interface from the host
+//! 5. Ping the interface from the host (show unanswered packets). You could also try flood pings
+//!    for fun (`-f`).
 //! 
-//!   > $ ping -I tap0 10.0.0.1
+//!   > $ ping -OI tap0 10.0.0.1
+use std::io::{stdout, Write};
 use structopt::StructOpt;
 
 use ethox::managed::{List, Slice};
 use ethox::nic::{Device, TapInterface};
 use ethox::layer::{eth, ip, icmp};
 use ethox::wire::{Ipv4Cidr, EthernetAddress};
-
-// Only used as `arp` layer replacement.
-use ethox::wire::{Ipv4Address, EthernetProtocol, PayloadMut};
 
 fn main() {
     let Config {
@@ -63,17 +62,19 @@ fn main() {
     let mut interface = TapInterface::new(&name, vec![0; 1 << 14])
         .expect("Couldn't initialize interface");
 
-    // While arp is not done, send one gratuitous announcement.
-    // https://tools.ietf.org/html/rfc5944#section-4.6
-    interface.tx(1, eth.send(ArpAnnouncement {
-        addr: host.address(),
-    })).expect("Arp announcement failed");
+    let out = stdout();
+    let mut out = out.lock();
 
-    eprintln!("Announced ourselves");
+    out.write_all(b"Started icmpv4 endpoint\n").unwrap();
 
     loop {
         // Receive the next packet.
         let result = interface.rx(1, eth.recv(ip.recv(icmp.answer())));
+
+        if let Ok(1) = result {
+            out.write_all(b".").unwrap();
+            out.flush().unwrap();
+        }
 
         result.unwrap_or_else(|err| {
             panic!("Error during receive {:?} {:?}", err, interface.last_err());
@@ -88,38 +89,4 @@ struct Config {
     hostmac: EthernetAddress,
     gateway: Ipv4Cidr,
     gatemac: EthernetAddress,
-}
-
-struct ArpAnnouncement {
-    addr: Ipv4Address,
-}
-
-impl<P: PayloadMut> eth::Send<P> for ArpAnnouncement {
-    fn send(&mut self, mut raw: eth::RawPacket<P>) {
-        let src_addr = raw.handle.src_addr();
-        let mut prepared = raw.prepare(eth::Init {
-            src_addr,
-            dst_addr: EthernetAddress::BROADCAST,
-            ethertype: EthernetProtocol::Arp,
-            payload: 28,
-        }).unwrap();
-
-        {
-            // Send an arp request where sender = target
-            let slice = prepared
-                .payload_mut_slice();
-            slice[0..2].copy_from_slice(&[0, 1]); // HTYPE
-            slice[2..4].copy_from_slice(&[0x80, 0]); // PTYPE
-            slice[4..6].copy_from_slice(&[6, 4]); // H and P address length
-            slice[6..8].copy_from_slice(&[0, 1]); // Operation
-            slice[ 8..14].copy_from_slice(src_addr.as_bytes()); // H addr sender
-            slice[18..24].copy_from_slice(&[0; 6]); // H addr target
-            slice[14..18].copy_from_slice(self.addr.as_bytes()); // P addr sender
-            slice[24..28].copy_from_slice(self.addr.as_bytes()); // P addr target
-        }
-
-        prepared
-            .send()
-            .unwrap();
-    }
 }
