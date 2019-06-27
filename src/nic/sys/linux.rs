@@ -52,13 +52,9 @@ impl TunSetIf for ifreq {
             kind,
         };
 
-        dbg!((fd, &request));
-
         let res = unsafe {
             libc::ioctl(fd, Self::TUNSETIFF, &mut request as *mut _)
         };
-
-        dbg!(res);
 
         test_result(IoctlResult(res))?;
 

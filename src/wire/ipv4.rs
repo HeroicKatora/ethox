@@ -1,4 +1,6 @@
 use core::{fmt, ops};
+#[cfg(feature = "std")]
+use core::str::FromStr;
 use byteorder::{ByteOrder, NetworkEndian};
 
 use super::{Reframe, Payload, PayloadError, PayloadMut, payload};
@@ -293,9 +295,61 @@ impl Cidr {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParseCidrError {
+    kind: ParseCidrErrorKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ParseCidrErrorKind {
+    NoSubnet,
+    AddrParseError,
+    InvalidPrefix,
+}
+
 impl fmt::Display for Cidr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}/{}", self.address, self.prefix_len)
+    }
+}
+
+impl fmt::Display for ParseCidrError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(match self.kind {
+            ParseCidrErrorKind::NoSubnet => "missing subnet prefix separator",
+            ParseCidrErrorKind::AddrParseError => "invalid address",
+            ParseCidrErrorKind::InvalidPrefix => "invalid cidr prefix",
+        })
+    }
+}
+
+#[cfg(feature = "std")]
+impl FromStr for Cidr {
+    type Err = ParseCidrError;
+
+    fn from_str(src :&str) -> core::result::Result<Self, ParseCidrError> {
+        let subnet = src.find('/')
+            .ok_or(ParseCidrError {
+                kind: ParseCidrErrorKind::NoSubnet,
+            })?;
+        let address: std::net::Ipv4Addr = src[..subnet]
+            .parse()
+            .map_err(|_| ParseCidrError {
+                kind: ParseCidrErrorKind::AddrParseError,
+            })?;
+        let prefix_len = src[subnet+1..]
+            .parse()
+            .map_err(|_| ParseCidrError {
+                kind: ParseCidrErrorKind::InvalidPrefix,
+            })
+            .and_then(|prefix| if prefix <= 32 {
+                Ok(prefix)
+            } else {
+                Err(ParseCidrError {
+                    kind: ParseCidrErrorKind::InvalidPrefix,
+                })
+            })?;
+        Ok(Cidr { address: address.into(), prefix_len })
     }
 }
 

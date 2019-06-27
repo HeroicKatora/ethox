@@ -1,5 +1,4 @@
-use core::ops;
-use core::fmt;
+use core::{fmt, str::FromStr, ops};
 use byteorder::{ByteOrder, NetworkEndian};
 
 use crate::wire::{Error, Reframe, Result, Payload, PayloadError, PayloadMut, payload};
@@ -71,11 +70,59 @@ impl Address {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParseAddressError {
+    kind: ParseAddressErrorKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ParseAddressErrorKind {
+    ComponentError,
+    SeparatorError,
+}
+
 impl fmt::Display for Address {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let bytes = self.0;
         write!(f, "{:02x}-{:02x}-{:02x}-{:02x}-{:02x}-{:02x}",
                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5])
+    }
+}
+
+impl fmt::Display for ParseAddressError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(match self.kind {
+            ParseAddressErrorKind::ComponentError => "invalid ethernet component",
+            ParseAddressErrorKind::SeparatorError => "unexpected number of ethernet address components (should be 6)",
+        })
+    }
+}
+
+impl FromStr for Address {
+    type Err = ParseAddressError;
+
+    fn from_str(src: &str) -> core::result::Result<Self, ParseAddressError> {
+        let mut parsed = [0; 6];
+        let mut components = src.split(':');
+        for c in parsed.iter_mut() {
+            let part = components
+                .next()
+                .ok_or(ParseAddressError {
+                    kind: ParseAddressErrorKind::SeparatorError,
+                })?;
+            *c = u8::from_str_radix(part, 16)
+                .map_err(|_| ParseAddressError {
+                    kind: ParseAddressErrorKind::ComponentError,
+                })?;
+        }
+
+        if let Some(_) = components.next() {
+            Err(ParseAddressError {
+                kind: ParseAddressErrorKind::SeparatorError,
+            })
+        } else {
+            Ok(Address(parsed))
+        }
     }
 }
 
