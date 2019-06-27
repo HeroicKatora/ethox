@@ -26,3 +26,7 @@ structopt = { version = "0.2", default-features = false }
 [[example]]
 name = "debug_tap"
 required-features = ["std"]
+
+[[example]]
+name = "ping_tap"
+required-features = ["std"]
