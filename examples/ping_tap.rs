@@ -1,4 +1,33 @@
-//! Debugs all packets coming in on a tap.
+//! Provides answers to pings on a tap interface.
+//!
+//! # Usage
+//!
+//! The example will try to open a tap as a network device and then answer all incoming icmpv4
+//! pings to its hostaddress. For this purpose it is also configured with one static device that is
+//! assumed to provide a gateway if you want to ping it from an address outside its assigned CIDR
+//! block. [WIP] It does not yet perform arp in either direction so that you will need to configure
+//! both an arp entry in the host system and it can only answer via the configured gateway.
+//!
+//! The following steps are necessary to set the example up (likey requires root or sudo):
+//!
+//! 1. Setup the tap interface, named `tap0` here:
+//!
+//!   > $ ip tuntap add mode tap name tap0
+//! 2. Assign an address on the host system
+//!
+//!   > $ ip addr add 10.0.0.2/24 dev tap0
+//! 3. Bring up the interface on the host
+//!
+//!   > $ ip link set up dev tap0
+//! 4. Chose ip and mac for the example and add them to arp
+//!
+//!   > $ arp -si tap0 10.0.0.1 ab:ff:ff:ff:ff:ff
+//! 4. You no longer require root. Start the ping_tap example.
+//! 
+//!   > $ cargo run --example ping_tap -- tap0 10.0.0.1/24 ab:ff:ff:ff:ff:ff 10.0.0.2/24 <host_mac>
+//! 5. Ping the interface from the host
+//! 
+//!   > $ ping -I tap0 10.0.0.1
 use structopt::StructOpt;
 
 use ethox::managed::{List, Slice};
