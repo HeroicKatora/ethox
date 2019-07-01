@@ -147,6 +147,11 @@ pub type PayloadResult<T> = core::result::Result<T, PayloadError>;
 
 pub use self::pretty_print::PrettyPrinter;
 
+// FIXME: All of these re-exports are pointless. A better way would be to put into each module the
+// non-prefixed names that are supposed to be public. Then one can access `wire::tcp::Packet` and
+// `wire::ethernet::Protocol` for example, or `use wire::tcp` instead of listing all single items.
+// The current way is againt the Rust philosophy and against usability.
+
 pub use self::ethernet::{
     ethernet as ethernet_frame,
     EtherType as EthernetProtocol,
@@ -261,6 +266,7 @@ pub use self::udp::{
     Repr as UdpRepr};
 
 pub use self::tcp::{
+    Checksum as TcpChecksum,
     SeqNumber as TcpSeqNumber,
     Packet as TcpPacket,
     TcpOption,
