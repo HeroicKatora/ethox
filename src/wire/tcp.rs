@@ -155,6 +155,11 @@ impl<T: Payload> Packet<T> {
         self.buffer
     }
 
+    /// Retrieve the packet representation.
+    pub fn repr(&self) -> Repr {
+        self.repr
+    }
+
     /// Return the source port field.
     #[inline]
     pub fn src_port(&self) -> u16 {
@@ -181,6 +186,12 @@ impl<T: Payload> Packet<T> {
     pub fn ack_number(&self) -> SeqNumber {
         let data = self.buffer.payload().as_bytes();
         SeqNumber(NetworkEndian::read_i32(&data[field::ACK_NUM]))
+    }
+
+    /// Read all flags at once.
+    pub fn flags(&self) -> Flags {
+        let data = self.buffer.payload().as_bytes();
+        Flags(NetworkEndian::read_u16(&data[field::FLAGS]))
     }
 
     /// Return the FIN flag.
@@ -405,6 +416,13 @@ impl<T: PayloadMut> Packet<T> {
         let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
         let raw = raw & !0x0fff;
         NetworkEndian::write_u16(&mut data[field::FLAGS], raw)
+    }
+
+    /// Set a combination of flags.
+    #[inline]
+    pub fn set_flags(&mut self, Flags(flags): Flags) {
+        let data = self.buffer.payload_mut().as_bytes_mut();
+        NetworkEndian::write_u16(&mut data[field::FLAGS], flags)
     }
 
     /// Set the FIN flag.
@@ -718,7 +736,9 @@ pub enum Control {
     Psh,
     Syn,
     Fin,
-    Rst
+    Rst,
+    // Unhandled control options.
+    Other(u16),
 }
 
 impl Control {
@@ -726,6 +746,11 @@ impl Control {
     pub fn len(self) -> usize {
         match self {
             Control::Syn | Control::Fin  => 1,
+            Control::Other(flags)
+                if flags & field::FLG_SYN != 0
+                    || flags & field::FLG_FIN != 0
+                    => 1,
+            Control::Other(_) => 0,
             _ => 0
         }
     }
@@ -734,6 +759,7 @@ impl Control {
     pub fn quash_psh(self) -> Control {
         match self {
             Control::Psh => Control::None,
+            Control::Other(flags) => Control::Other(flags & !field::FLG_PSH),
             _ => self
         }
     }
@@ -813,7 +839,7 @@ impl Repr {
                 (true,  false, false, _)     => Control::Syn,
                 (false, true,  false, _)     => Control::Fin,
                 (false, false, true , _)     => Control::Rst,
-                _ => return Err(Error::Malformed)
+                _ => Control::Other(packet.flags().0),
             };
         let ack_number =
             match packet.ack() {
@@ -929,7 +955,8 @@ impl Repr {
             Control::Psh  => packet.set_psh(true),
             Control::Syn  => packet.set_syn(true),
             Control::Fin  => packet.set_fin(true),
-            Control::Rst  => packet.set_rst(true)
+            Control::Rst  => packet.set_rst(true),
+            Control::Other(flags) => packet.set_flags(Flags(flags)),
         }
         packet.set_ack(self.ack_number.is_some());
         {
@@ -962,7 +989,7 @@ impl Repr {
     pub fn is_empty(&self) -> bool {
         match self.control {
             _ if self.payload_len != 0 => false,
-            Control::Syn  | Control::Fin | Control::Rst => false,
+            Control::Syn  | Control::Fin | Control::Rst | Control::Other(_) => false,
             Control::None | Control::Psh => true
         }
     }
@@ -1028,6 +1055,7 @@ impl fmt::Display for Repr {
             Control::Fin => write!(f, " fin")?,
             Control::Rst => write!(f, " rst")?,
             Control::Psh => write!(f, " psh")?,
+            Control::Other(flags) => write!(f, " {:x}", flags)?,
             Control::None => ()
         }
         write!(f, " seq={}", self.seq_number)?;
@@ -1080,7 +1108,7 @@ mod test {
 
     #[test]
     fn test_deconstruct() {
-        let packet = Packet::new_unchecked(&PACKET_BYTES[..]);
+        let packet = Packet::new_checked(&PACKET_BYTES[..], Checksum::Ignored).unwrap();
         assert_eq!(packet.src_port(), 48896);
         assert_eq!(packet.dst_port(), 80);
         assert_eq!(packet.seq_number(), SeqNumber(0x01234567));
@@ -1096,14 +1124,16 @@ mod test {
         assert_eq!(packet.urgent_at(), 0x0201);
         assert_eq!(packet.checksum(), 0x01b6);
         assert_eq!(packet.options(), &OPTION_BYTES[..]);
-        assert_eq!(packet.payload(), &PAYLOAD_BYTES[..]);
-        assert_eq!(packet.verify_checksum(&SRC_ADDR.into(), &DST_ADDR.into()), true);
+        assert_eq!(packet.payload_slice(), &PAYLOAD_BYTES[..]);
+        assert_eq!(packet.verify_checksum(SRC_ADDR.into(), DST_ADDR.into()), true);
     }
 
     #[test]
     fn test_construct() {
         let mut bytes = vec![0xa5; PACKET_BYTES.len()];
-        let mut packet = Packet::new_unchecked(&mut bytes);
+        // FIXME: Crafts the packet with a fake repr before overwriting everything. This doesn't
+        // change the results but we shouldn't need to do this.
+        let mut packet = Packet::new_unchecked(&mut bytes, packet_repr());
         packet.set_src_port(48896);
         packet.set_dst_port(80);
         packet.set_seq_number(SeqNumber(0x01234567));
@@ -1120,21 +1150,21 @@ mod test {
         packet.set_urgent_at(0x0201);
         packet.set_checksum(0xEEEE);
         packet.options_mut().copy_from_slice(&OPTION_BYTES[..]);
-        packet.payload_mut().copy_from_slice(&PAYLOAD_BYTES[..]);
-        packet.fill_checksum(&SRC_ADDR.into(), &DST_ADDR.into());
+        packet.payload_mut_slice().copy_from_slice(&PAYLOAD_BYTES[..]);
+        packet.fill_checksum(SRC_ADDR.into(), DST_ADDR.into());
         assert_eq!(&packet.into_inner()[..], &PACKET_BYTES[..]);
     }
 
     #[test]
     fn test_truncated() {
-        let packet = Packet::new_unchecked(&PACKET_BYTES[..23]);
-        assert_eq!(packet.check_len(), Err(Error::Truncated));
+        let packet = Packet::new_checked(&PACKET_BYTES[..23], Checksum::Ignored);
+        assert_eq!(packet, Err(Error::Truncated));
     }
 
     #[test]
     fn test_impossible_len() {
         let mut bytes = vec![0; 20];
-        let mut packet = Packet::new_unchecked(&mut bytes);
+        let mut packet = Packet::new_unchecked(&mut bytes, packet_repr());
         packet.set_header_len(10);
         assert_eq!(packet.check_len(), Err(Error::Malformed));
     }
@@ -1147,7 +1177,7 @@ mod test {
          0x7a, 0x8d, 0x00, 0x00,
          0xaa, 0x00, 0x00, 0xff];
 
-    fn packet_repr() -> Repr<'static> {
+    fn packet_repr() -> Repr {
         Repr {
             src_port:     48896,
             dst_port:     80,
@@ -1159,23 +1189,28 @@ mod test {
             max_seg_size: None,
             sack_permitted: false,
             sack_ranges:  [None, None, None],
-            payload:      &PAYLOAD_BYTES
+            payload_len:  PAYLOAD_BYTES.len() as _,
         }
     }
 
     #[test]
     fn test_parse() {
-        let packet = Packet::new_unchecked(&SYN_PACKET_BYTES[..]);
-        let repr = Repr::parse(&packet, &SRC_ADDR.into(), &DST_ADDR.into(), Checksum::Manual).unwrap();
-        assert_eq!(repr, packet_repr());
+        let packet = Packet::new_checked(
+            &SYN_PACKET_BYTES[..],
+            Checksum::Manual { src_addr: SRC_ADDR.into(), dst_addr: DST_ADDR.into(), })
+        .unwrap();
+        assert_eq!(packet.repr(), packet_repr());
+        assert_eq!(packet.payload_slice(), &PAYLOAD_BYTES[..]);
     }
 
     #[test]
     fn test_emit() {
         let repr = packet_repr();
         let mut bytes = vec![0xa5; repr.buffer_len()];
-        let mut packet = Packet::new_unchecked(&mut bytes);
-        repr.emit(&mut packet, &SRC_ADDR.into(), &DST_ADDR.into(), Checksum::Manual);
+        repr.emit(Packet::new_unchecked(&mut bytes, repr));
+        let mut packet = Packet::new_unchecked(&mut bytes, repr);
+        packet.payload_mut_slice().copy_from_slice(&PAYLOAD_BYTES);
+        packet.fill_checksum(SRC_ADDR.into(), DST_ADDR.into());
         assert_eq!(&packet.into_inner()[..], &SYN_PACKET_BYTES[..]);
     }
 
