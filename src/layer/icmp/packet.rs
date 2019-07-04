@@ -41,7 +41,7 @@ pub struct Handle<'a> {
 
 pub enum Init {
     EchoRequest {
-        src_mask: IpCidr,
+        source: ip::Source,
         dst_addr: IpAddress,
         ident: u16,
         seq_no: u16,
@@ -109,7 +109,7 @@ impl<'a, P: PayloadMut> In<'a, P> {
 
         let ip_out = ip_in.reinit(ip::Init {
             // Be sure to send from this exact address.
-            src_mask: IpCidr::new(ip_repr.dst_addr.into(), 32),
+            source: IpAddress::from(ip_repr.dst_addr).into(),
             dst_addr: ip_repr.src_addr.into(),
             protocol: IpProtocol::Icmp,
             payload: ip_repr.payload_len,
@@ -213,12 +213,12 @@ impl Init {
 
     fn ip_init(&self) -> Result<ip::Init> {
         Ok(match *self {
-            Init::EchoRequest { src_mask, payload, dst_addr, .. } => {
+            Init::EchoRequest { source, payload, dst_addr, .. } => {
                 let len = payload
                     .checked_add(8)
                     .ok_or(Error::BadSize)?;
                 ip::Init {
-                    src_mask,
+                    source,
                     dst_addr,
                     protocol: IpProtocol::Icmp,
                     payload: len,

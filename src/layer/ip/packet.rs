@@ -3,7 +3,7 @@ use crate::nic::Info;
 use crate::time::Instant;
 use crate::wire::{Checksum, EthernetAddress, EthernetFrame, EthernetProtocol};
 use crate::wire::{Reframe, Payload, PayloadMut, PayloadResult, payload};
-use crate::wire::{IpAddress, IpCidr, IpProtocol, IpRepr, Ipv4Packet, Ipv6Packet};
+use crate::wire::{IpAddress, IpSubnet, IpProtocol, IpRepr, Ipv4Packet, Ipv6Packet};
 
 /// An incoming packet.
 ///
@@ -44,10 +44,25 @@ pub enum IpPacket<'a, P: Payload> {
 
 /// Initializer for a packet.
 pub struct Init {
-    pub src_mask: IpCidr,
+    pub source: Source,
     pub dst_addr: IpAddress,
     pub protocol: IpProtocol,
     pub payload: usize,
+}
+
+/// A source selector specification.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Source {
+    /// The source address must match a subnet.
+    Mask {
+        subnet: IpSubnet,
+    },
+
+    /// Some preselected address should be used.
+    ///
+    /// Required for established connections that are identified by an address tuple, such as in
+    /// the case of TCP and UDP.
+    Exact(IpAddress),
 }
 
 /// Source and destination chosen for a particular routing.
@@ -322,3 +337,15 @@ impl<'a, P: PayloadMut> PayloadMut for IpPacket<'a, P> {
         }
     }
 } 
+
+impl From<IpAddress> for Source {
+    fn from(address: IpAddress) -> Self {
+        Source::Exact(address)
+    }
+}
+
+impl From<IpSubnet> for Source {
+    fn from(subnet: IpSubnet) -> Self {
+        Source::Mask { subnet, }
+    }
+}
