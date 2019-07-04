@@ -99,7 +99,7 @@ impl Address {
     /// be! This can create confusion when the IPv4 broadcast address `255.255.255.255` is mapped
     /// or when the scope of an otherwise node-local address such as `127.0.0.1` is involuntarily
     /// expanded.
-    pub fn from_mapped_ipv4(addr: Ipv4Address) -> Address {
+    pub const fn from_mapped_ipv4(addr: Ipv4Address) -> Address {
         let Ipv4Address([a, b, c, d]) = addr;
         Address([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, a, b, c, d])
     }
@@ -108,7 +108,7 @@ impl Address {
     ///
     /// The address is only valid for link-local scope. See [`from_advertised_id`] for potentially
     /// globally unique unicast addresses from router advertisements.
-    pub fn from_link_local_id(id: InterfaceId) -> Address {
+    pub const fn from_link_local_id(id: InterfaceId) -> Address {
         let InterfaceId([a, b, c, d, e, f, g, h]) = id;
         Address([0xfe, 0x80, 0, 0, 0, 0, 0, 0, a, b, c, d, e, f, g, h])
     }
@@ -247,7 +247,7 @@ impl InterfaceId {
     ///
     /// This method should only be used when the address is formed from a vendor/hardware provided
     /// address whose guarantee of global uniqueness was specified at the time of its assignment.
-    pub fn from_vendor_ether(addr: EthernetAddress) -> Self {
+    pub const fn from_vendor_ether(addr: EthernetAddress) -> Self {
         let EthernetAddress([a, b, c, d, e, f]) = addr;
         InterfaceId([a ^ 0x2, b, c, 0xff, 0xfe, d, e, f])
     }
@@ -256,7 +256,7 @@ impl InterfaceId {
     ///
     /// This method should only be used when the address was generated in such a way that its
     /// global uniqueness can not be guaranteed. This is the case when it was generated randomly.
-    pub fn from_generated_ether(addr: EthernetAddress) -> Self {
+    pub const fn from_generated_ether(addr: EthernetAddress) -> Self {
         let EthernetAddress([a, b, c, d, e, f]) = addr;
         Self::from_generated_bytes([a, b, c, 0xff, 0xfe, d, e, f])
     }
@@ -265,7 +265,7 @@ impl InterfaceId {
     ///
     /// This method should only be used when the address was generated in such a way that its
     /// global uniqueness can not be guaranteed. This is the case when it was generated randomly.
-    pub fn from_generated_bytes(mut bytes: [u8; 8]) -> Self {
+    pub const fn from_generated_bytes(mut bytes: [u8; 8]) -> Self {
         bytes[0] &= !0x2;
         InterfaceId(bytes)
     }
