@@ -1,7 +1,7 @@
 use crate::managed::Slice;
 use crate::nic::{external::External, Device};
 use crate::layer::{eth, ip, udp};
-use crate::wire::{EthernetAddress, Ipv4Address, IpCidr, Ipv4Cidr, Payload, PayloadMut};
+use crate::wire::{EthernetAddress, Ipv4Address, IpCidr, IpSubnet, Ipv4Subnet, Payload, PayloadMut};
 use crate::wire::{ethernet_frame, ipv4_packet};
 
 const MAC_ADDR_SRC: EthernetAddress = EthernetAddress([0, 1, 2, 3, 4, 5]);
@@ -20,7 +20,7 @@ static PAYLOAD_BYTES: [u8; 50] =
 
 fn simple_send<P: PayloadMut>(frame: udp::RawPacket<P>) {
     let init = udp::Init {
-        src_mask: Ipv4Cidr::UNSPECIFIED.into(),
+        source: IpSubnet::from(Ipv4Subnet::ANY).into(),
         src_port: 80,
         dst_addr: IP_ADDR_DST.into(),
         dst_port: 80,

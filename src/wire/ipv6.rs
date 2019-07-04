@@ -397,6 +397,9 @@ impl Cidr {
 }
 
 impl Subnet {
+    /// The subnet that contains all addresses.
+    pub const ANY: Self = Subnet { address: Address::UNSPECIFIED, prefix: 0 };
+
     /// Get the subnet block of a CIDR address.
     pub fn from_cidr(cidr: Cidr) -> Self {
         let address = cidr.address().mask(cidr.prefix_len());
@@ -983,7 +986,7 @@ mod test {
     #[test]
     fn test_is_ipv4_mapped() {
         assert_eq!(false, Address::UNSPECIFIED.is_ipv4_mapped());
-        assert_eq!(true, Address::from(Ipv4Address::new(192, 168, 1, 1)).is_ipv4_mapped());
+        assert_eq!(true, Address::from_mapped_ipv4(Ipv4Address::new(192, 168, 1, 1)).is_ipv4_mapped());
     }
 
     #[test]
@@ -991,15 +994,15 @@ mod test {
         assert_eq!(None, Address::UNSPECIFIED.as_ipv4());
 
         let ipv4 = Ipv4Address::new(192, 168, 1, 1);
-        assert_eq!(Some(ipv4), Address::from(ipv4).as_ipv4());
+        assert_eq!(Some(ipv4), Address::from_mapped_ipv4(ipv4).as_ipv4());
     }
 
     #[test]
     fn test_from_ipv4_address() {
         assert_eq!(Address([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 192, 168, 1, 1]),
-            Address::from(Ipv4Address::new(192, 168, 1, 1)));
+            Address::from_mapped_ipv4(Ipv4Address::new(192, 168, 1, 1)));
         assert_eq!(Address([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 222, 1, 41, 90]),
-            Address::from(Ipv4Address::new(222, 1, 41, 90)));
+            Address::from_mapped_ipv4(Ipv4Address::new(222, 1, 41, 90)));
     }
 
     #[test]

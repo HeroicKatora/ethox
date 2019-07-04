@@ -339,6 +339,9 @@ impl Cidr {
 }
 
 impl Subnet {
+    /// The subnet that contains all addresses.
+    pub const ANY: Self = Subnet { address: Address::UNSPECIFIED, prefix: 0 };
+
     /// Get the subnet block of a CIDR address.
     pub fn from_cidr(cidr: Cidr) -> Self {
         let address = cidr.address().mask(cidr.prefix_len());

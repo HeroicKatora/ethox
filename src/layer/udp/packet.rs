@@ -3,7 +3,7 @@ use core::convert::TryFrom;
 use crate::nic::Info;
 use crate::layer::{Error, Result, ip};
 use crate::wire::{Payload, PayloadMut};
-use crate::wire::{IpAddress, IpCidr, IpProtocol, UdpChecksum, UdpPacket, UdpRepr, udp_packet};
+use crate::wire::{IpAddress, IpProtocol, UdpChecksum, UdpPacket, UdpRepr, udp_packet};
 
 pub struct Packet<'a, P: Payload> {
     pub handle: Handle<'a>,

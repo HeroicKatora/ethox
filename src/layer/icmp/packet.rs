@@ -1,7 +1,7 @@
 use crate::nic::Info;
 use crate::layer::{Error, Result, ip};
 use crate::wire::{Payload, PayloadMut};
-use crate::wire::{Checksum, IpAddress, IpCidr, IpProtocol};
+use crate::wire::{Checksum, IpAddress, IpProtocol};
 use crate::wire::{Icmpv4Packet, Icmpv4Repr, icmpv4_packet};
 
 /// An incoming packet.
