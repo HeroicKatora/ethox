@@ -73,9 +73,9 @@ pub(crate) struct Route {
 
 #[derive(Clone, Copy)]
 struct EthRoute {
-    next_mac: EthernetAddress,
+    src_mac: EthernetAddress,
     src_addr: IpAddress,
-    dst_addr: IpAddress,
+    next_mac: EthernetAddress,
 }
 
 /// The interface to the endpoint.
@@ -112,27 +112,14 @@ impl<'a> Handle<'a> {
         let Route { next_hop, src_addr } = self.endpoint
             .route(dst_addr, now)
             .ok_or(Error::Unreachable)?;
+        let src_mac = self.eth.src_addr();
         let next_mac = self.eth.resolve(next_hop)?;
 
         Ok(EthRoute {
-            next_mac,
+            src_mac,
             src_addr,
-            dst_addr,
+            next_mac,
         })
-    }
-
-    fn init_eth(&mut self, route: EthRoute, payload: usize) -> Result<eth::Init> {
-        let eth_init = eth::Init {
-            src_addr: self.eth.src_addr(),
-            dst_addr: route.next_mac,
-            ethertype: match route.dst_addr {
-                IpAddress::Ipv4(_) => EthernetProtocol::Ipv4,
-                IpAddress::Ipv6(_) => EthernetProtocol::Ipv6,
-                _ => return Err(Error::Illegal),
-            },
-            payload: payload + 20, // FIXME: hard coded length.
-        };
-        Ok(eth_init)
     }
 }
 
@@ -148,7 +135,7 @@ impl<'a, P: Payload> In<'a, P> {
 impl<'a, P: PayloadMut> In<'a, P> {
     pub fn reinit(mut self, init: Init) -> Result<Out<'a, P>> {
         let route = self.handle.route_to(init.dst_addr)?;
-        let lower_init = self.handle.init_eth(route, init.payload)?;
+        let lower_init = init.init_eth(route, init.payload)?;
 
         let eth_packet = eth::InPacket {
             handle: self.handle.eth,
@@ -227,7 +214,7 @@ impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
     /// Initialize to a valid ip packet.
     pub fn prepare(mut self, init: Init) -> Result<Out<'a, P>> {
         let route = self.handle.route_to(init.dst_addr)?;
-        let lower_init = self.handle.init_eth(route, init.payload)?;
+        let lower_init = init.init_eth(route, init.payload)?;
 
         let lower = eth::RawPacket::new(
             self.handle.eth,
@@ -266,6 +253,32 @@ impl Init {
             payload_len: self.payload,
         };
         repr.lower(&[]).ok_or(Error::Illegal)
+    }
+
+    fn init_eth(&self, route: EthRoute, payload: usize) -> Result<eth::Init> {
+        enum Protocol { Ipv4, Ipv6 }
+
+        let protocol = match self.dst_addr {
+            IpAddress::Ipv4(_) => Protocol::Ipv4,
+            IpAddress::Ipv6(_) => Protocol::Ipv6,
+            _ => return Err(Error::Illegal),
+        };
+
+        let eth_init = eth::Init {
+            src_addr: route.src_mac,
+            dst_addr: route.next_mac,
+            ethertype: match protocol {
+                Protocol::Ipv4 => EthernetProtocol::Ipv4,
+                Protocol::Ipv6 => EthernetProtocol::Ipv6,
+            },
+            // TODO: use the methods provided from `wire::*Repr`.
+            payload: match protocol {
+                Protocol::Ipv4 => payload + 20,
+                // TODO: non-hardcode for extension headers.
+                Protocol::Ipv6 => payload + 40,
+            },
+        };
+        Ok(eth_init)
     }
 }
 
