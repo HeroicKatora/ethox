@@ -9,9 +9,15 @@
 //! Selective ACKs: https://tools.ietf.org/html/rfc2018
 //! RST handling specifically: https://www.snellman.net/blog/archive/2016-02-01-tcp-rst/
 //!     OS comparison in particular
-use crate::managed::Slice;
+use crate::managed::{Slice, Ordered};
 use crate::time::{Duration, Instant};
-use crate::wire::{TcpRepr, TcpSeqNumber};
+use crate::wire::{IpAddress, TcpRepr, TcpSeqNumber};
+
+/// Handles TCP connection states.
+pub struct Endpoint<'a> {
+    states: Ordered<'a, Slot>,
+    slot_seq: SlotSeq,
+}
 
 /// The state of a connection.
 ///
@@ -193,6 +199,14 @@ struct NewReno {
     recover: TcpSeqNumber,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct Connection4Tuple {
+    src: IpAddress,
+    dst: IpAddress,
+    src_port: u16,
+    dst_port: u16,
+}
+
 /// A connection slot.
 ///
 /// Can be used to open or accept a new connection. Usage of this acts similar to a slotmap where a
@@ -200,21 +214,22 @@ struct NewReno {
 /// introducing lifetime-tracked references and dependencies.
 pub struct Slot {
     connection: Connection,
-    sequence: u32,
+    addresses: Connection4Tuple,
+    sequence: SlotSeq,
 }
 
 /// The index of a connection.
 ///
 /// Useful for storing in other structs to reference the connection at another point in time. Note
 /// that the index will be invalidated when the connection itself is closed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ConnectionIndex {
     idx: usize,
-    sequence: u32,
+    sequence: SlotSeq,
 }
 
-pub struct Endpoint<'a> {
-    states: Slice<'a, Slot>,
-}
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct SlotSeq(i64);
 
 /// Output signals of the model.
 ///
@@ -225,10 +240,41 @@ struct Signals {
     delete: bool,
 }
 
+impl Endpoint<'_> {
+    pub fn inspect(&mut self, index: ConnectionIndex)
+        -> Option<&mut Slot>
+    {
+        let raw = self.states.get(index.idx)
+            .filter(|slot| slot.sequence == index.sequence)?;
+
+        unimplemented!()
+    }
+
+    /// Opens a new port for listening.
+    fn listen(&mut self, ip: IpAddress, port: u32)
+        -> Option<ConnectionIndex>
+    {
+        unimplemented!()
+    }
+
+    /// Actively try to connect to a remote TCP.
+    fn open(&mut self, tuple: Connection4Tuple)
+        -> Option<ConnectionIndex>
+    {
+        unimplemented!()
+    }
+}
+
 impl Connection {
     pub fn arrives(&mut self, segment: TcpRepr) -> Signals {
         let mut signals = Signals::default();
 
         signals
+    }
+}
+
+impl Default for State {
+    fn default() -> Self {
+        State::Closed
     }
 }
