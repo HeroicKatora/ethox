@@ -8,11 +8,6 @@
 //! for received data. In effect, not all `In` packets can be turned into a `Raw` packet so send
 //! arbitrary data such as opening a new connection.
 //!
-//! As a guide to the statemachine, based on 
-//! > EFSM/SDL modeling of the original TCP standard (RFC793) and the Congestion Control Mechanism
-//! of TCP Reno, Raid Y. Zaghal and Javed I. Khan,
-//! > possibly available here: http://medianet.kent.edu/techreports/TR2005-07-22-tcp-EFSM.pdf
-//!
 //! Note that they make a number of simplifying assumptions which we must refute:
 //! * '2-The TCP endpoint has unlimited buffer space'
 //! 
@@ -43,7 +38,45 @@
 //! TODO
 //!
 //! ## Accepting connections
-//! 
+//!
 //! Accepting a connection is not unlike creating one but occurs as a reaction to an incoming
 //! packet instead of proactively. This motivates deferring that decision to the user, instead of
 //! remaining a question of policy within the tcp layer.
+//!
+//! ## Deviations
+//!
+//! As a guide to the statemachine I had originally planned to use a paper proposing a formally
+//! specified model but it is completely and utterly broken.
+//!
+//! > EFSM/SDL modeling of the original TCP standard (RFC793) and the Congestion Control Mechanism
+//! of TCP Reno, Raid Y. Zaghal and Javed I. Khan,
+//! > possibly available here: http://medianet.kent.edu/techreports/TR2005-07-22-tcp-EFSM.pdf
+//!
+//! Here is a list of deviations from the standard that were not noted in its introduction.  The
+//! document did not ever reset `dACK`, the duplicate ack counter. We reset it whenever an ACK is
+//! not a duplicate ack. Kind of obvious.
+//!
+//! The congestion control is (TBD). Currently likely NewReno but Westwood+ might be an option
+//! since the target environment is high-throughput networks (currently). If your environment is
+//! different, please provide a pull request containing an implementation.
+//!
+//! An incoming packet in Closed state is simply dropped if it had RST set.  Packets with RST
+//! should *never* be answered with a packet with RST but the only specified answers would set that
+//! flag. In fact, RFC793 is clear about this [in section Reset
+//! Generation](https://tools.ietf.org/html/rfc793#page-36):
+//!
+//! > 1.  If the connection does not exist (CLOSED) then a reset is sent in response to any
+//! incoming segment except another reset.
+//!
+//! A listening socket is designed to accept all connection request. That is not necessarily true
+//! and we want to be indistinguishable from a closed socket else.
+//!
+//! SYN packet may contain data. 
+//!
+
+mod endpoint;
+
+pub use endpoint::{
+    Slot,
+    ConnectionIndex,
+    Endpoint};
