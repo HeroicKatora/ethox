@@ -141,10 +141,12 @@ mod log {
     }
 }
 
+#[macro_export]
 macro_rules! net_trace {
     ($($arg:expr),*) => (net_log!(trace, $($arg),*));
 }
 
+#[macro_export]
 macro_rules! net_debug {
     ($($arg:expr),*) => (net_log!(debug, $($arg),*));
 }
