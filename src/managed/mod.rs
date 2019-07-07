@@ -1,6 +1,7 @@
 mod ordered;
 mod partial;
 mod phantom_vec;
+mod phantom_btree;
 mod slice;
 
 pub use self::slice::Slice;
@@ -13,3 +14,8 @@ pub type List<'a, T> = Partial<Slice<'a, T>>;
     not(feature = "std"),
     not(test)))]
 pub(crate) use self::phantom_vec::Vec;
+
+#[cfg(all(
+    not(feature = "std"),
+    not(test)))]
+pub(crate) use self::phantom_btree::BTreeMap;

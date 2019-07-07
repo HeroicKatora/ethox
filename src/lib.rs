@@ -19,3 +19,12 @@ pub(crate) use self::managed::Vec;
     feature = "std",
     test))]
 pub(crate) use std::vec::Vec;
+
+#[cfg(all(
+    not(feature = "std"),
+    not(test)))]
+pub(crate) use self::managed::BTreeMap;
+#[cfg(any(
+    feature = "std",
+    test))]
+pub(crate) use std::collections::BTreeMap;
