@@ -318,7 +318,7 @@ impl Cidr {
             (Cidr::Ipv4(ref cidr), Address::Ipv4(addr)) =>
                 cidr.accepts(addr),
             (Cidr::Ipv6(ref cidr), Address::Ipv6(addr)) =>
-                unimplemented!("TODO"),
+                cidr.accepts(addr),
             (Cidr::Ipv4(_), Address::Ipv6(_)) | (Cidr::Ipv6(_), Address::Ipv4(_)) =>
                 false,
             (_, Address::Unspecified) =>

@@ -24,6 +24,19 @@ pub struct Address(pub [u8; 16]);
 #[derive(Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Default)]
 pub struct InterfaceId(pub [u8; 8]);
 
+enum_with_unknown! {
+    /// IPv6 multicast scope.
+    pub enum Scope(u8) {
+        InterfaceLocal = 1,
+        LinkLocal = 2,
+        AdminLocal = 4,
+        SiteLocal = 5,
+        OrganizationLocal = 8,
+        Global = 0xE,
+        ReservedToGlobal = 0xF,
+    }
+}
+
 impl Address {
     /// The [unspecified address].
     ///
@@ -111,6 +124,20 @@ impl Address {
     pub const fn from_link_local_id(id: InterfaceId) -> Address {
         let InterfaceId([a, b, c, d, e, f, g, h]) = id;
         Address([0xfe, 0x80, 0, 0, 0, 0, 0, 0, a, b, c, d, e, f, g, h])
+    }
+
+    /// Return the reserved multicast address for a given scope.
+    ///
+    /// These addresses must never be assigned to a group or interface.
+    // FIXME: const as soon as `match` is const (required for `into`)
+    pub fn reserved_multicast(scope: Scope) -> Self {
+        Address([0xff, scope.into(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    }
+
+    /// Return the multicast address for a given scope identifying all nodes.
+    // FIXME: const as soon as `match` is const (required for `into`)
+    pub fn all_nodes_multicast(scope: Scope) -> Self {
+        Address([0xff, scope.into(), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])
     }
 
     /// Create an address by merging the routing prefix, subnet and interface id.
@@ -219,12 +246,25 @@ impl Address {
     /// # Panics
     /// This function panics if the given address is not
     /// unicast.
-    pub fn solicited_node(&self) -> Address {
+    pub fn solicited_node_multicast(&self) -> Address {
         assert!(self.is_unicast());
         let mut bytes = [0xff, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
                      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
         bytes[14..].copy_from_slice(&self.0[14..]);
         Address(bytes)
+    }
+
+    /// Determine if traffic to the dst address should be accepted.
+    ///
+    /// Provided that some node has been assigned the IPv6 address given by self, check all
+    /// required addresses to which we must react to determine if the packet should be considered
+    /// as destined to the local host.
+    pub fn accepts(self, addr: Address) -> bool {
+        self == addr
+            || Address::all_nodes_multicast(Scope::InterfaceLocal) == addr
+            || Address::all_nodes_multicast(Scope::LinkLocal) == addr
+            || Address::all_nodes_multicast(Scope::Global) == addr
+            || (self.is_unicast() && self.solicited_node_multicast() == addr)
     }
 }
 
@@ -394,6 +434,15 @@ impl Cidr {
     pub fn contains_subnet(&self, subnet: Cidr) -> bool {
         self.subnet().contains_subnet(subnet.subnet())
     }
+
+    /// Whether to accept a packet directed at some address.
+    /// 
+    /// See section 2.8 of [RFC4291].
+    ///
+    /// [4291]: https://tools.ietf.org/html/rfc4291#section-2.8
+    pub fn accepts(&self, address: Address) -> bool {
+        self.address.accepts(address)
+    }
 }
 
 impl Subnet {
@@ -418,6 +467,16 @@ impl Subnet {
     /// Return the prefix length of this IPv4 CIDR block.
     pub fn prefix_len(&self) -> u8 {
         self.prefix
+    }
+
+    /// Get the router anycast address of this subnet block.
+    ///
+    /// This can only return a valid anycast address if the subnet is one of the valid unicast
+    /// blocks as anycast and unicast share the same addressing subspace.
+    pub fn router_anycast(self) -> Option<Address> {
+        // Already has all lower bits zeroed as required.
+        Some(self.address)
+            .filter(Address::is_unicast)
     }
 
     /// Query whether a host is contained in the block describe by `self`.
