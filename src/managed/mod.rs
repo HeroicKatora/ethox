@@ -1,3 +1,4 @@
+mod hashmap;
 mod ordered;
 mod partial;
 mod phantom_vec;
