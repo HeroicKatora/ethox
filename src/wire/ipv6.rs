@@ -512,7 +512,10 @@ pub struct Packet<T: Payload> {
     repr: Repr,
 }
 
-byte_wrapper!(ipv6);
+byte_wrapper! {
+    #[derive(Debug, PartialEq, Eq)]
+    pub struct ipv6([u8]);
+}
 
 // Ranges and constants describing the IPv6 header
 //

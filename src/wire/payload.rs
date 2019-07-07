@@ -46,12 +46,15 @@ pub struct Reframe {
     pub range: ops::Range<usize>,
 }
 
-/// A dynamically sized type representing a packet payload.
-///
-/// This type is seemingly just a `[u8]`. It is a newtype wrapper so that this crate can freely
-/// implement traits for it but also restrict the standard trait implementations to not be
-/// available.
-byte_wrapper!(payload);
+byte_wrapper! {
+    /// A dynamically sized type representing a packet payload.
+    ///
+    /// This type is seemingly just a `[u8]`. It is a newtype wrapper so that this crate can freely
+    /// implement traits for it but also restrict the standard trait implementations to not be
+    /// available.
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+    pub struct payload([u8]);
+}
 
 /// Error variants for resizing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

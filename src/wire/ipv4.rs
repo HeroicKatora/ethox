@@ -446,8 +446,11 @@ pub struct Packet<T: Payload> {
     repr: Repr,
 }
 
-/// A byte sequence representing an IPv4 packet.
-byte_wrapper!(ipv4);
+byte_wrapper! {
+    /// A byte sequence representing an IPv4 packet.
+    #[derive(Debug, PartialEq, Eq)]
+    pub struct ipv4([u8]);
+}
 
 mod field {
     use crate::wire::field::Field;

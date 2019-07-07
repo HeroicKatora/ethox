@@ -178,7 +178,10 @@ pub struct Packet<T> {
     repr: Repr,
 }
 
-byte_wrapper!(icmpv4);
+byte_wrapper! {
+    #[derive(Debug, PartialEq, Eq)]
+    pub struct icmpv4([u8]);
+}
 
 mod field {
     use crate::wire::field::Field;
