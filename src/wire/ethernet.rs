@@ -133,8 +133,11 @@ pub struct Frame<T: Payload> {
     repr: Repr,
 }
 
-/// A byte sequence representing an Ethernet II frame.
-byte_wrapper!(ethernet);
+byte_wrapper! {
+    /// A byte sequence representing an Ethernet II frame.
+    #[derive(Debug, PartialEq, Eq)]
+    pub struct ethernet([u8]);
+}
 
 mod field {
     use crate::wire::field::*;

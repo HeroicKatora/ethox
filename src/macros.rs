@@ -52,19 +52,70 @@ macro_rules! enum_with_unknown {
     }
 }
 
+/// Declare a dynamically sized byte wrapper.
+///
+/// Use this to create byte slices with inner invariants. This macro performs two basic actions:
+/// * Define a type with the indicated structure, documentation, attributes. The type can not have
+///   any generic arguments and can only wrap a simple byte slice.
+/// * Define two new private methods for conversion from a byte slice:
+///   - `fn __from_macro_new_unchecked(&[u8]) -> &Self`
+///   - `fn __from_macro_new_unchecked_mut(&mut [u8]) -> &mut Self`
+///
+/// ## Usage
+///
+/// You can currently only use a tuple type with a single member, a `[u8]`.
+///
+/// ```
+/// # use ethox::byte_wrapper;
+/// byte_wrapper! {
+///     /// A udp packet.
+///     pub struct udp([u8]);
+/// }
+///
+/// impl udp {
+///     pub fn from_slice(slice: &[u8]) -> &Self {
+///         Self::__from_macro_new_unchecked(slice)
+///     }
+/// }
+///
+/// let data = [0x20, 0x00, 0x00, 0x20, 0x00, 0x00, 0x08, 0x00];
+/// let _= udp::from_slice(&data);
+/// ```
+#[macro_export]
 macro_rules! byte_wrapper {
-    ($name:ident) => {
+    (
+        pub struct $name:ident([u8])$(;)*
+    ) => {
+        byte_wrapper! {
+            @pub struct $name([u8])
+        }
+    };
+    (
+        $( #[$attr:meta] )*
+        pub struct $name:ident([u8])$(;)*
+    ) => {
+        byte_wrapper! {
+            @$( #[$attr] )*
+            pub struct $name([u8])
+        }
+    };
+    (
+        @$( #[$attr:meta] )*
+        pub struct $name:ident([u8])
+    ) => {
         #[allow(non_camel_case_types)]
         #[repr(transparent)]
-        #[derive(Debug, PartialEq, Eq, PartialOrd)]
+        $( #[$attr] )*
         pub struct $name([u8]);
 
         impl $name {
+            #[allow(dead_code)]
             fn __from_macro_new_unchecked(data: &[u8]) -> &Self {
                 // SAFETY: this is safe due to repr(transparent)
                 unsafe { &*(data as *const _ as *const Self) }
             }
 
+            #[allow(dead_code)]
             fn __from_macro_new_unchecked_mut(data: &mut [u8]) -> &mut Self {
                 // SAFETY: this is safe due to repr(transparent)
                 unsafe { &mut *(data as *mut _ as *mut Self) }
@@ -90,10 +141,12 @@ mod log {
     }
 }
 
+#[macro_export]
 macro_rules! net_trace {
     ($($arg:expr),*) => (net_log!(trace, $($arg),*));
 }
 
+#[macro_export]
 macro_rules! net_debug {
     ($($arg:expr),*) => (net_log!(debug, $($arg),*));
 }

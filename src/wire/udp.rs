@@ -12,7 +12,10 @@ pub struct Packet<T> {
     repr: Repr,
 }
 
-byte_wrapper!(udp);
+byte_wrapper! {
+    #[derive(Debug, PartialEq, Eq)]
+    pub struct udp([u8]);
+}
 
 mod field {
     #![allow(non_snake_case)]
