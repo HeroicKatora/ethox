@@ -50,7 +50,7 @@ fn answer_ping() {
 fn queue_ping(nic: &mut Loopback<Vec<u8>>) {
     fn prepare_ping<P: PayloadMut>(packet: icmp::RawPacket<P>) {
         let init = icmp::Init::EchoRequest {
-            src_mask: IpCidr::new(IP_ADDR_OTHER.into(), 32),
+            source: ip::Source::Exact(IP_ADDR_OTHER.into()),
             dst_addr: IP_ADDR_HOST.into(),
             ident: 0,
             seq_no: 0,

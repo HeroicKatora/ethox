@@ -3,7 +3,7 @@ use core::convert::TryFrom;
 use crate::nic::Info;
 use crate::layer::{Error, Result, ip};
 use crate::wire::{Payload, PayloadMut};
-use crate::wire::{IpAddress, IpCidr, IpProtocol, UdpChecksum, UdpPacket, UdpRepr, udp_packet};
+use crate::wire::{IpAddress, IpProtocol, UdpChecksum, UdpPacket, UdpRepr, udp_packet};
 
 pub struct Packet<'a, P: Payload> {
     pub handle: Handle<'a>,
@@ -26,7 +26,7 @@ pub struct Handle<'a> {
 }
 
 pub struct Init {
-    pub src_mask: IpCidr,
+    pub source: ip::Source,
     pub src_port: u16,
     pub dst_addr: IpAddress,
     pub dst_port: u16,
@@ -109,7 +109,7 @@ impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
             .ok_or(Error::BadSize)?;
 
         let lower_init = ip::Init {
-            src_mask: init.src_mask,
+            source: init.source,
             dst_addr: init.dst_addr,
             protocol: IpProtocol::Udp,
             payload: packet_len,

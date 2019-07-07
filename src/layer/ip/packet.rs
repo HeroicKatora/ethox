@@ -3,7 +3,7 @@ use crate::nic::Info;
 use crate::time::Instant;
 use crate::wire::{Checksum, EthernetAddress, EthernetFrame, EthernetProtocol};
 use crate::wire::{Reframe, Payload, PayloadMut, PayloadResult, payload};
-use crate::wire::{IpAddress, IpCidr, IpProtocol, IpRepr, Ipv4Packet, Ipv6Packet};
+use crate::wire::{IpAddress, IpSubnet, IpProtocol, IpRepr, Ipv4Packet, Ipv6Packet};
 
 /// An incoming packet.
 ///
@@ -44,10 +44,25 @@ pub enum IpPacket<'a, P: Payload> {
 
 /// Initializer for a packet.
 pub struct Init {
-    pub src_mask: IpCidr,
+    pub source: Source,
     pub dst_addr: IpAddress,
     pub protocol: IpProtocol,
     pub payload: usize,
+}
+
+/// A source selector specification.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Source {
+    /// The source address must match a subnet.
+    Mask {
+        subnet: IpSubnet,
+    },
+
+    /// Some preselected address should be used.
+    ///
+    /// Required for established connections that are identified by an address tuple, such as in
+    /// the case of TCP and UDP.
+    Exact(IpAddress),
 }
 
 /// Source and destination chosen for a particular routing.
@@ -58,9 +73,9 @@ pub(crate) struct Route {
 
 #[derive(Clone, Copy)]
 struct EthRoute {
-    next_mac: EthernetAddress,
+    src_mac: EthernetAddress,
     src_addr: IpAddress,
-    dst_addr: IpAddress,
+    next_mac: EthernetAddress,
 }
 
 /// The interface to the endpoint.
@@ -97,27 +112,14 @@ impl<'a> Handle<'a> {
         let Route { next_hop, src_addr } = self.endpoint
             .route(dst_addr, now)
             .ok_or(Error::Unreachable)?;
+        let src_mac = self.eth.src_addr();
         let next_mac = self.eth.resolve(next_hop)?;
 
         Ok(EthRoute {
-            next_mac,
+            src_mac,
             src_addr,
-            dst_addr,
+            next_mac,
         })
-    }
-
-    fn init_eth(&mut self, route: EthRoute, payload: usize) -> Result<eth::Init> {
-        let eth_init = eth::Init {
-            src_addr: self.eth.src_addr(),
-            dst_addr: route.next_mac,
-            ethertype: match route.dst_addr {
-                IpAddress::Ipv4(_) => EthernetProtocol::Ipv4,
-                IpAddress::Ipv6(_) => EthernetProtocol::Ipv6,
-                _ => return Err(Error::Illegal),
-            },
-            payload: payload + 20, // FIXME: hard coded length.
-        };
-        Ok(eth_init)
     }
 }
 
@@ -133,7 +135,7 @@ impl<'a, P: Payload> In<'a, P> {
 impl<'a, P: PayloadMut> In<'a, P> {
     pub fn reinit(mut self, init: Init) -> Result<Out<'a, P>> {
         let route = self.handle.route_to(init.dst_addr)?;
-        let lower_init = self.handle.init_eth(route, init.payload)?;
+        let lower_init = init.init_eth(route, init.payload)?;
 
         let eth_packet = eth::InPacket {
             handle: self.handle.eth,
@@ -212,7 +214,7 @@ impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
     /// Initialize to a valid ip packet.
     pub fn prepare(mut self, init: Init) -> Result<Out<'a, P>> {
         let route = self.handle.route_to(init.dst_addr)?;
-        let lower_init = self.handle.init_eth(route, init.payload)?;
+        let lower_init = init.init_eth(route, init.payload)?;
 
         let lower = eth::RawPacket::new(
             self.handle.eth,
@@ -252,23 +254,56 @@ impl Init {
         };
         repr.lower(&[]).ok_or(Error::Illegal)
     }
+
+    fn init_eth(&self, route: EthRoute, payload: usize) -> Result<eth::Init> {
+        enum Protocol { Ipv4, Ipv6 }
+
+        let protocol = match self.dst_addr {
+            IpAddress::Ipv4(_) => Protocol::Ipv4,
+            IpAddress::Ipv6(_) => Protocol::Ipv6,
+            _ => return Err(Error::Illegal),
+        };
+
+        let eth_init = eth::Init {
+            src_addr: route.src_mac,
+            dst_addr: route.next_mac,
+            ethertype: match protocol {
+                Protocol::Ipv4 => EthernetProtocol::Ipv4,
+                Protocol::Ipv6 => EthernetProtocol::Ipv6,
+            },
+            // TODO: use the methods provided from `wire::*Repr`.
+            payload: match protocol {
+                Protocol::Ipv4 => payload + 20,
+                // TODO: non-hardcode for extension headers.
+                Protocol::Ipv6 => payload + 40,
+            },
+        };
+        Ok(eth_init)
+    }
 }
 
 impl<'a, P: Payload> IpPacket<'a, P> {
+    /// Assemble an ip packet with already computed representation.
+    ///
+    /// #Panics
+    /// This function panics if the representation is not specifically Ipv4 or Ipv6.
     pub fn new_unchecked(inner: EthernetFrame<&'a mut P>, repr: IpRepr) -> Self {
         match repr {
             IpRepr::Ipv4(repr) => IpPacket::V4(Ipv4Packet::new_unchecked(inner, repr)),
-            _ => unimplemented!(),
+            IpRepr::Ipv6(repr) => IpPacket::V6(Ipv6Packet::new_unchecked(inner, repr)),
+            _ => panic!("Unchecked must be from specific ip representation"),
         }
     }
 
+    /// Retrieve the representation of the packet.
     pub fn repr(&self) -> IpRepr {
         match self {
             IpPacket::V4(packet) => packet.repr().into(),
-            IpPacket::V6(_packet) => unimplemented!("Need to rework ipv6 repr first"),
+            IpPacket::V6(packet) => packet.repr().into(),
         }
     }
 
+    /// Turn the packet into its ethernet layer respresentation.
     pub fn into_inner(self) -> EthernetFrame<&'a mut P> {
         match self {
             IpPacket::V4(packet) => packet.into_inner(),
@@ -276,6 +311,9 @@ impl<'a, P: Payload> IpPacket<'a, P> {
         }
     }
 
+    /// Retrieve the payload of the packet.
+    ///
+    /// This is a utility wrapper around unwrapping the inner ethernet frame.
     pub fn into_raw(self) -> &'a mut P {
         self.into_inner().into_inner()
     }
@@ -285,7 +323,7 @@ impl<'a, P: Payload> Payload for IpPacket<'a, P> {
     fn payload(&self) -> &payload {
         match self {
             IpPacket::V4(packet) => packet.payload(),
-            IpPacket::V6(_packet) => unimplemented!("TODO"),
+            IpPacket::V6(packet) => packet.payload(),
         }
     }
 } 
@@ -294,21 +332,33 @@ impl<'a, P: PayloadMut> PayloadMut for IpPacket<'a, P> {
     fn payload_mut(&mut self) -> &mut payload {
         match self {
             IpPacket::V4(packet) => packet.payload_mut(),
-            IpPacket::V6(_packet) => unimplemented!("TODO"),
+            IpPacket::V6(packet) => packet.payload_mut(),
         }
     }
 
     fn resize(&mut self, length: usize) -> PayloadResult<()> {
         match self {
             IpPacket::V4(packet) => packet.resize(length),
-            IpPacket::V6(_packet) => unimplemented!("TODO"),
+            IpPacket::V6(packet) => packet.resize(length),
         }
     }
 
     fn reframe(&mut self, frame: Reframe) -> PayloadResult<()> {
         match self {
             IpPacket::V4(packet) => packet.reframe(frame),
-            IpPacket::V6(_packet) => unimplemented!("TODO"),
+            IpPacket::V6(packet) => packet.reframe(frame),
         }
     }
 } 
+
+impl From<IpAddress> for Source {
+    fn from(address: IpAddress) -> Self {
+        Source::Exact(address)
+    }
+}
+
+impl From<IpSubnet> for Source {
+    fn from(subnet: IpSubnet) -> Self {
+        Source::Mask { subnet, }
+    }
+}

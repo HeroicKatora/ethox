@@ -26,6 +26,7 @@ pub use packet::{
     In as InPacket,
     Out as OutPacket,
     Raw as RawPacket,
+    Source,
 };
 
 pub use route::{

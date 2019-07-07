@@ -102,6 +102,29 @@ impl Address {
     pub fn is_loopback(&self) -> bool {
         self.0[0] == 127
     }
+
+    /// Mask the address to some prefix length.
+    ///
+    /// Preserves only address bits that are relevant for the prefix length. This can be used to
+    /// isolate the bits of the cidr subnet that the address belongs to.
+    ///
+    /// ```rust
+    /// # use ethox::wire::Ipv4Address as Address;
+    /// let base = Address([192, 168, 178, 32]);
+    /// let masked = base.mask(24);
+    /// assert!(masked == Address([192, 168, 178, 0]));
+    /// ```
+    ///
+    /// # Panics
+    /// This function panics if `prefix` is greater than 32.
+    pub fn mask(&self, prefix: u8) -> Address {
+        assert!(prefix <= 32);
+        let masked_off = (!0u32)
+            .checked_shr(prefix.into())
+            .unwrap_or(0);
+        let as_int = self.to_network_integer() & !masked_off;
+        Address::from_network_integer(as_int)
+    }
 }
 
 #[cfg(feature = "std")]
@@ -125,8 +148,7 @@ impl fmt::Display for Address {
     }
 }
 
-/// A specification of an IPv4 CIDR block, containing an address and a variable-length
-/// subnet masking prefix length.
+/// An IPv4 CIDR host: an address and a variable-length subnet masking prefix length.
 ///
 /// Relevant RFCs:
 /// * [RFC 1519: Classless Inter-Domain Routing (CIDR)][RFC1519]
@@ -138,6 +160,18 @@ impl fmt::Display for Address {
 pub struct Cidr {
     address:    Address,
     prefix_len: u8,
+}
+
+/// An IPv4 CIDR block.
+///
+/// Relevant RFCs:
+/// * [RFC 1519: Classless Inter-Domain Routing (CIDR)][RFC1519]
+///
+/// [RFC1519]: https://tools.ietf.org/html/rfc1519
+#[derive(Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Default)]
+pub struct Subnet {
+    address: Address,
+    prefix: u8,
 }
 
 impl Cidr {
@@ -182,12 +216,7 @@ impl Cidr {
 
     /// Return the network mask of this IPv4 CIDR.
     pub fn netmask(&self) -> Address {
-        if self.prefix_len == 0 {
-            return Address([0, 0, 0, 0]);
-        }
-
-        let number = 0xffffffffu32 << (32 - self.prefix_len);
-        Address::from_network_integer(number)
+        Address::from_network_integer(!0).mask(self.prefix_len)
     }
 
     /// Determines if the subnet contains a reserved network and broadcast address.
@@ -213,7 +242,7 @@ impl Cidr {
         })
     }
 
-    /// Return the network block of this IPv4 CIDR.
+    /// Return the network address of this IPv4 CIDR.
     pub fn network(&self) -> Option<Cidr> {
         if !self.has_network_and_broadcast() {
             return None;
@@ -228,6 +257,15 @@ impl Cidr {
         })
     }
 
+    /// The subnet containing this address.
+    ///
+    /// Not to be confused with the `network` address, a reserved CIDR address identifying the
+    /// whole subnet. This distinction is slightly more important for IPv6 where no such address
+    /// exists.
+    pub fn subnet(self) -> Subnet {
+        Subnet::from_cidr(self)
+    }
+
     /// Find out if the Cidr address identifies the host.
     ///
     /// If the prefix of the `Cidr` is 31 or 32 simply does a full match of the address. Otherwise,
@@ -236,8 +274,9 @@ impl Cidr {
     /// * A host address of all ones for any address other than the all zeroes address.
     /// * Any other host address matches its host address exactly.
     ///
-    /// To query if an address is contained in the subnet identified by this Cidr, use `network`.
-    pub fn contains(&self, address: Address) -> bool {
+    /// To query if an address is contained in the subnet identified by this Cidr, use `subnet`.
+    #[deprecated = "Imprecise"]
+    pub fn matches(&self, address: Address) -> bool {
         if !self.has_network_and_broadcast() {
             return self.address == address
         }
@@ -285,13 +324,60 @@ impl Cidr {
     /// both address blocks. It completely ignores the host identifiers. Consequently this will
     /// also successfully work for blocks that do not have an address identifying the network
     /// itself, that is for prefix lengths 31 and 32.
-    pub fn contains_subnet(&self, subnet: &Cidr) -> bool {
+    ///
+    /// This is used for finding out whether a given address is network or link-local or needs to
+    /// be routed.
+    #[deprecated = "Use `subnet` on both arguments instead."]
+    pub fn contains_subnet(&self, subnet: Cidr) -> bool {
         self.prefix_len <= subnet.prefix_len && {
             let netmask = self.netmask().to_network_integer();
             let netaddr = self.address.to_network_integer();
             let othaddr = subnet.address.to_network_integer();
             netaddr & netmask == othaddr & netmask
         }
+    }
+}
+
+impl Subnet {
+    /// The subnet that contains all addresses.
+    pub const ANY: Self = Subnet { address: Address::UNSPECIFIED, prefix: 0 };
+
+    /// Get the subnet block of a CIDR address.
+    pub fn from_cidr(cidr: Cidr) -> Self {
+        let address = cidr.address().mask(cidr.prefix_len());
+
+        Subnet {
+            address,
+            prefix: cidr.prefix_len(),
+        }
+    }
+
+    /// Return the network mask of this IPv4 CIDR block.
+    pub fn netmask(&self) -> Address {
+        Address::from_network_integer(!0).mask(self.prefix)
+    }
+
+    /// Return the prefix length of this IPv4 CIDR block.
+    pub fn prefix_len(&self) -> u8 {
+        self.prefix
+    }
+
+    /// Query whether a host is contained in the block describe by `self`.
+    ///
+    /// It completely ignores the host identifiers. Consequently this will also successfully work
+    /// for blocks that do not have an address identifying the network itself, that is for prefix
+    /// lengths 31 and 32.
+    ///
+    /// This can be used for finding out whether a given address is network or link-local or needs
+    /// to be routed.
+    pub fn contains(&self, address: Address) -> bool {
+        // Own address is already masked.
+        self.address == address.mask(self.prefix)
+    }
+
+    /// Check if the other network is a subnet.
+    pub fn contains_subnet(&self, other: Subnet) -> bool {
+        self.prefix <= other.prefix && self.contains(other.address)
     }
 }
 
@@ -1103,22 +1189,22 @@ mod test {
             ([192, 168,   0, 255], 32),
         ];
 
-        for addr in inside_subnet.iter().map(|a| Address::from_bytes(a)) {
-            assert!(cidr.network().unwrap().contains(addr));
+        for addr in inside_subnet.iter().cloned().map(Address) {
+            assert!(cidr.subnet().contains(addr));
         }
 
-        for addr in outside_subnet.iter().map(|a| Address::from_bytes(a)) {
-            assert!(!cidr.contains(addr));
+        for addr in outside_subnet.iter().cloned().map(Address) {
+            assert!(!cidr.subnet().contains(addr));
         }
 
         for subnet in subnets.iter().map(
-            |&(a, p)| Cidr::new(Address::new(a[0], a[1], a[2], a[3]), p)) {
-            assert!(cidr.contains_subnet(&subnet));
+            |&(a, p)| Cidr::new(Address(a), p).subnet()) {
+            assert!(cidr.subnet().contains_subnet(subnet));
         }
 
         for subnet in not_subnets.iter().map(
-            |&(a, p)| Cidr::new(Address::new(a[0], a[1], a[2], a[3]), p)) {
-            assert!(!cidr.contains_subnet(&subnet));
+            |&(a, p)| Cidr::new(Address(a), p).subnet()) {
+            assert!(!cidr.subnet().contains_subnet(subnet));
         }
     }
 
