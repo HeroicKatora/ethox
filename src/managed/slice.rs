@@ -1,6 +1,8 @@
 use core::ops;
 use core::slice;
 
+use crate::alloc;
+
 /// A list of mutable objects.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Slice<'a, T: 'a> {

@@ -11,12 +11,13 @@ pub mod storage;
 pub mod time;
 pub mod wire;
 
+/// The `alloc` crate, or a replacement without feature `"std"`.
 #[cfg(any(
     feature = "std",
     test))]
-extern crate alloc;
+pub extern crate alloc;
 
 #[cfg(all(
     not(feature = "std"),
     not(test)))]
-pub(crate) use self::managed::alloc;
+pub use self::managed::alloc;

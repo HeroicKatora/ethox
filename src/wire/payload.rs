@@ -254,7 +254,7 @@ impl PayloadMut for Slice<'_, u8> {
 }
 
 mod std_impls {
-    use alloc::vec::Vec;
+    use crate::alloc::vec::Vec;
     use super::{Error, Reframe, Payload, PayloadMut, payload};
 
     impl Payload for Vec<u8> {

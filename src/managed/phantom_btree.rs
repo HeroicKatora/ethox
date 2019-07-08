@@ -19,7 +19,7 @@ use core::ptr::NonNull;
 /// ## Usage
 ///
 /// ```
-/// use crate::BTreeMap;
+/// use ethox::alloc::collections::btree_map::BTreeMap;
 ///
 /// /// A pure consumer of `BTreeMap`.
 /// ///
