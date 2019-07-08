@@ -78,5 +78,5 @@ mod endpoint;
 
 pub use endpoint::{
     Slot,
-    ConnectionIndex,
+    SlotKey,
     Endpoint};

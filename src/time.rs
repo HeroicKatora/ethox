@@ -21,7 +21,7 @@ pub use core::time::Duration;
 /// * A value of `0` is inherently arbitrary.
 /// * A value less than `0` indicates a time before the starting
 ///   point.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Instant {
     pub millis: i64,
 }

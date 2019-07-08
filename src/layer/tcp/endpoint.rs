@@ -9,20 +9,21 @@
 //! Selective ACKs: https://tools.ietf.org/html/rfc2018
 //! RST handling specifically: https://www.snellman.net/blog/archive/2016-02-01-tcp-rst/
 //!     OS comparison in particular
-use crate::managed::{Slice, Ordered};
+use crate::managed::{Map, SlotMap, slotmap::Key};
 use crate::time::{Duration, Instant};
 use crate::wire::{IpAddress, TcpRepr, TcpSeqNumber};
 
 /// Handles TCP connection states.
 pub struct Endpoint<'a> {
-    states: Ordered<'a, Slot>,
-    slot_seq: SlotSeq,
+    ports: Map<'a, FourTuple, Key>,
+    states: SlotMap<'a, Slot>,
 }
 
 /// The state of a connection.
 ///
 /// Includes current state machine state, the configuratin state that is required to stay constant
 /// during a connection, and the in- and out-buffers.
+#[derive(Clone, Copy, Debug, Hash)]
 struct Connection {
     /// The current state of the state machine.
     current: State,
@@ -90,6 +91,7 @@ struct Connection {
     recv: Receive,
 }
 
+#[derive(Clone, Copy, Debug, Hash)]
 struct Send {
     /// The next not yet acknowledged sequence number.
     ///
@@ -115,6 +117,7 @@ struct Send {
     initial_seq: TcpSeqNumber,
 }
 
+#[derive(Clone, Copy, Debug, Hash)]
 struct Receive {
     /// The next expected sequence number.
     ///
@@ -144,6 +147,7 @@ struct Receive {
 }
 
 /// State enum of the statemachine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum State {
     /// Marker state fo an unintended/uninitialized connection state.
     Closed,
@@ -183,6 +187,7 @@ enum State {
 }
 
 /// Models TCP NewReno flow control and congestion avoidance.
+#[derive(Clone, Copy, Debug, Hash)]
 struct NewReno {
     /// Decider between slow-start and congestion.
     ///
@@ -199,8 +204,8 @@ struct NewReno {
     recover: TcpSeqNumber,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct Connection4Tuple {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct FourTuple {
     src: IpAddress,
     dst: IpAddress,
     src_port: u16,
@@ -212,10 +217,9 @@ struct Connection4Tuple {
 /// Can be used to open or accept a new connection. Usage of this acts similar to a slotmap where a
 /// dedicated `SlotIndex` allows referring to a connection outside of its lifetime without
 /// introducing lifetime-tracked references and dependencies.
+#[derive(Clone, Copy, Debug, Hash)]
 pub struct Slot {
     connection: Connection,
-    addresses: Connection4Tuple,
-    sequence: SlotSeq,
 }
 
 /// The index of a connection.
@@ -223,13 +227,9 @@ pub struct Slot {
 /// Useful for storing in other structs to reference the connection at another point in time. Note
 /// that the index will be invalidated when the connection itself is closed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ConnectionIndex {
-    idx: usize,
-    sequence: SlotSeq,
+pub struct SlotKey {
+    key: Key,
 }
-
-#[derive(Clone, Copy, Default, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct SlotSeq(i64);
 
 /// Output signals of the model.
 ///
@@ -241,25 +241,28 @@ struct Signals {
 }
 
 impl Endpoint<'_> {
-    pub fn inspect(&mut self, index: ConnectionIndex)
+    pub fn get_mut(&mut self, index: SlotKey)
         -> Option<&mut Slot>
     {
-        let raw = self.states.get(index.idx)
-            .filter(|slot| slot.sequence == index.sequence)?;
+        self.states.get_mut(index.key)
+    }
 
-        unimplemented!()
+    pub fn get(&self, index: SlotKey)
+        -> Option<&Slot>
+    {
+        self.states.get(index.key)
     }
 
     /// Opens a new port for listening.
     fn listen(&mut self, ip: IpAddress, port: u32)
-        -> Option<ConnectionIndex>
+        -> Option<SlotKey>
     {
         unimplemented!()
     }
 
     /// Actively try to connect to a remote TCP.
-    fn open(&mut self, tuple: Connection4Tuple)
-        -> Option<ConnectionIndex>
+    fn open(&mut self, tuple: FourTuple)
+        -> Option<SlotKey>
     {
         unimplemented!()
     }
