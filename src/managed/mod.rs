@@ -15,9 +15,19 @@ pub type List<'a, T> = Partial<Slice<'a, T>>;
 #[cfg(all(
     not(feature = "std"),
     not(test)))]
-pub(crate) use self::phantom_vec::Vec;
+pub(crate) mod alloc {
+    pub use managed::phantom_vec::Vec;
 
-#[cfg(all(
-    not(feature = "std"),
-    not(test)))]
-pub(crate) use self::phantom_btree::BTreeMap;
+    pub(crate) mod collections {
+        pub use managed::phantom_btree::BTreeMap;
+
+        pub(crate) mod btree_map {
+            pub use managed::phantom_btree::*;
+        }
+    }
+}
+
+#[cfg(any(
+    feature = "std",
+    test))]
+pub(crate) use ::alloc;

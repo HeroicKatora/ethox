@@ -1,10 +1,15 @@
-use super::Ordered;
+use super::List;
+use alloc::collections::btree_map;
 
 /// A map on owned or non-owned data.
 ///
 ///
 pub enum Map<'a, K: Ord, V> {
-    Pairs(Ordered<'a, (K, V)>),
+    /// The primitive option for a map, a list of pairs.
+    ///
+    /// Only use this for very small maps where it should be expected that simple traversal is
+    /// faster or about as fast as binary search (e.g. `len=4`).
+    Pairs(List<'a, (K, V)>),
 
     /// An owned btree map.
     ///
@@ -13,6 +18,6 @@ pub enum Map<'a, K: Ord, V> {
     /// this enum but by its user this is no problem. Quite the opposite, it allows structs which
     /// contain a `Map` and thus must match on its (public) variants to be written without
     /// `#[cfg(..)]` tricks to toggle match arms.
-    Btree(crate::BTreeMap<K, V>),
+    Btree(btree_map::BTreeMap<K, V>),
 }
 

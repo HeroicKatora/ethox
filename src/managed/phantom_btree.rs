@@ -78,8 +78,26 @@ impl<K: Ord, V> BTreeMap<K, V> {
     {
         match self.data { }
     }
+
+    pub fn entry(&mut self, key: K) -> Entry<K, V> {
+        match self.data { }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum Void { }
 
+pub enum Entry<'a, K, V> {
+    Vacant(VacantEntry<'a, K, V>),
+    Occupied(OccupiedEntry<'a, K, V>),
+}
+
+pub struct VacantEntry<'a, K, V> {
+    phantom: PhantomData<&'a (K, V)>,
+    void: Void,
+}
+
+pub struct OccupiedEntry<'a, K, V> {
+    phantom: PhantomData<&'a (K, V)>,
+    void: Void,
+}
