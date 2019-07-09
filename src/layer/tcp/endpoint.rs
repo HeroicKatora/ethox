@@ -206,16 +206,16 @@ struct NewReno {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct FourTuple {
-    src: IpAddress,
-    dst: IpAddress,
-    src_port: u16,
-    dst_port: u16,
+    local: IpAddress,
+    remote: IpAddress,
+    local_port: u16,
+    remote_port: u16,
 }
 
 /// A connection slot.
 ///
 /// Can be used to open or accept a new connection. Usage of this acts similar to a slotmap where a
-/// dedicated `SlotIndex` allows referring to a connection outside of its lifetime without
+/// dedicated `SlotKey` allows referring to a connection outside of its lifetime without
 /// introducing lifetime-tracked references and dependencies.
 #[derive(Clone, Copy, Debug, Hash)]
 pub struct Slot {
@@ -254,16 +254,83 @@ impl Endpoint<'_> {
     }
 
     /// Opens a new port for listening.
-    fn listen(&mut self, ip: IpAddress, port: u32)
+    fn listen(&mut self, ip: IpAddress, port: u16)
         -> Option<SlotKey>
     {
-        unimplemented!()
+        let key = FourTuple {
+            local: ip,
+            local_port: port,
+            // Filled by the remote connection attempt.
+            remote: IpAddress::Unspecified,
+            remote_port: 0,
+        };
+
+        let (slot, state) = self.create_state(key)?;
+        state.connection.current = State::Listen;
+        Some(slot)
     }
 
     /// Actively try to connect to a remote TCP.
     fn open(&mut self, tuple: FourTuple)
         -> Option<SlotKey>
     {
+        let (slot, _) = self.create_state(tuple)?;
+        // Don't set to open yet, only after having sent the packet.
+        Some(slot)
+    }
+
+    fn create_state(&mut self, tuple: FourTuple)
+        -> Option<(SlotKey, &mut Slot)>
+    {
+        let state = self.create_connection();
+        let (key, state) = unimplemented!();
+        self.ports
+            .entry(tuple)
+            .vacant()?
+            .insert(key);
+        let key = SlotKey {
+            key,
+        };
+        Some((key, state))
+    }
+
+    /// Initialize a closed connection.
+    ///
+    /// The raw method is near useless, transition the connection to an appropriate state
+    /// afterwards.
+    fn create_connection(&mut self) -> Connection {
+        Connection {
+            current: State::Closed,
+            previous: State::Closed,
+            flow_control: NewReno {
+                congestion_window: 0,
+                ssthresh: u32::max_value(),
+                recover: TcpSeqNumber::default(),
+            },
+            receive_window: 0,
+            sender_maximum_segment_size: 0,
+            receiver_maximum_segment_size: 0,
+            last_ack_receive_offset: TcpSeqNumber::default(),
+            last_ack_time: Instant::from_millis(0),
+            last_ack_timeout: Duration::from_millis(500),
+            selective_acknowledgements: false,
+            send: Send {
+                unacked: TcpSeqNumber::default(),
+                next: TcpSeqNumber::default(),
+                window: 0,
+                initial_seq: self.initial_seq_num(),
+            },
+            recv: Receive {
+                acked: TcpSeqNumber::default(),
+                next: TcpSeqNumber::default(),
+                window: 0,
+                initial_seq: TcpSeqNumber::default(),
+            },
+        }
+    }
+
+    fn initial_seq_num(&mut self) -> TcpSeqNumber {
+        // FIXME: should choose one by pseudo-random.
         unimplemented!()
     }
 }
@@ -271,7 +338,7 @@ impl Endpoint<'_> {
 impl Connection {
     pub fn arrives(&mut self, segment: TcpRepr) -> Signals {
         let mut signals = Signals::default();
-
+        unimplemented!();
         signals
     }
 }
