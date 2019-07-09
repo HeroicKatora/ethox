@@ -38,6 +38,7 @@ enum Occupied<'map, 'a, K, V> {
     Pairs {
         list: &'map mut List<'a, (K, V)>,
         index: usize,
+        key: K,
     },
     Btree(btree_map::OccupiedEntry<'map, K, V>),
 }
@@ -49,6 +50,7 @@ pub struct VacantEntry<'map, 'a, K: Ord, V> {
 enum Vacant<'map, 'a, K, V> {
     Pairs {
         list: &'map mut List<'a, (K, V)>,
+        key: K,
     },
     Btree(btree_map::VacantEntry<'map, K, V>),
 }
@@ -80,16 +82,79 @@ impl<'a, K: Ord, V> Map<'a, K, V> {
                         inner: Occupied::Pairs {
                             list,
                             index,
+                            key,
                         },
                     }),
+                    None if list.len() == list.capacity() => Entry::Full,
                     None => Entry::Vacant(VacantEntry {
                         inner: Vacant::Pairs {
                             list,
+                            key,
                         },
                     }),
                 }
             },
             Map::Btree(tree) => tree.entry(key).into(),
+        }
+    }
+}
+
+impl<'map, K: Ord, V> OccupiedEntry<'map, '_, K, V> {
+    pub fn get_mut(&mut self) -> &mut V {
+        match &mut self.inner {
+            Occupied::Pairs { list, index, .. } => &mut list[*index].1,
+            Occupied::Btree(btree) => btree.get_mut(),
+        }
+    }
+
+    pub fn into_mut(self) -> &'map mut V {
+        match self.inner {
+            Occupied::Pairs { list, index, .. } => &mut list[index].1,
+            Occupied::Btree(btree) => btree.into_mut(),
+        }
+    }
+
+    /// Delete the entry.
+    ///
+    /// Contrary to `BtreeMap` the element is *not* always returned as it can not be guaranteed to
+    /// yield an owned version. Instead, Clone or `mem::swap` the entry if you require it and use
+    /// `remove_key` if you require the key.
+    pub fn remove(self) {
+        match self.inner {
+            Occupied::Pairs { list, index, .. } => { list.remove_at(index).expect("Element was present"); },
+            Occupied::Btree(btree) => { btree.remove_entry(); },
+        }
+    }
+
+    /// Delete the entry but return the key.
+    ///
+    /// Contrary to `BtreeMap` the element is *not* always returned as it can not be guaranteed to
+    /// be possible. Instead, Clone or `mem::swap` the entry if you require it.
+    pub fn remove_key(self) -> K {
+        match self.inner {
+            Occupied::Pairs { list, index, key } => { list.remove_at(index).expect("Element was present"); key },
+            Occupied::Btree(btree) => btree.remove_entry().0,
+        }
+    }
+}
+
+impl<'map, K: Ord, V> VacantEntry<'map, '_, K, V> {
+    pub fn into_key(self) -> K {
+        match self.inner {
+            Vacant::Pairs { key, .. } => key,
+            Vacant::Btree(btree) => btree.into_key(),
+        }
+    }
+
+    pub fn insert(self, value: V) -> &'map mut V {
+        match self.inner {
+            Vacant::Pairs { list, key } => {
+                let empty = list.push()
+                    .expect("List was not full");
+                *empty = (key, value);
+                &mut empty.1
+            },
+            Vacant::Btree(btree) => btree.insert(value),
         }
     }
 }

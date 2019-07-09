@@ -58,6 +58,11 @@ impl<C> Partial<C> {
         self.end
     }
 
+    /// Check if the list is empty.
+    pub fn is_empty(&self) -> bool {
+        self.end == 0
+    }
+
     /// Simply increase the length.
     pub fn inc(&mut self) {
         self.end += 1;
@@ -78,6 +83,15 @@ impl<C, T> Partial<C>
             inner,
             end,
         }
+    }
+
+    /// Check how many elements can be inserted at most.
+    ///
+    /// This results in the length of the underlying container, not its capacity since the
+    /// `Partial` is not aware of reallocation or other behaviour to change the underlying
+    /// containers length.
+    pub fn capacity(&self) -> usize {
+        self.inner.len()
     }
 
     /// Get the logically active elements as a slice.

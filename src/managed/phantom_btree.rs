@@ -1,4 +1,6 @@
 //! An uninhabited type masquerading as `BTreeMap<_, _>`.
+#![allow(unused, dead_code)]
+
 use core::borrow::Borrow;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
@@ -100,4 +102,38 @@ pub struct VacantEntry<'a, K, V> {
 pub struct OccupiedEntry<'a, K, V> {
     phantom: PhantomData<&'a (K, V)>,
     void: Void,
+}
+
+impl<K, V> OccupiedEntry<'_, K, V> {
+    pub fn get_mut(&mut self) -> &mut V {
+        match self.void { }
+    }
+
+    pub fn remove(self) { }
+
+    pub fn remove_entry(self) -> (K, V) {
+        match self.void { }
+    }
+}
+
+impl<'a, K, V> OccupiedEntry<'a, K, V> {
+    pub fn into_mut(self) -> &'a mut V {
+        match self.void { }
+    }
+}
+
+impl<K, V> VacantEntry<'_, K, V> {
+    pub fn key(&self) -> &K {
+        match self.void { }
+    }
+
+    pub fn into_key(self) -> K {
+        match self.void { }
+    }
+}
+
+impl<'a, K, V> VacantEntry<'a, K, V> {
+    pub fn insert(self, value: V) -> &'a mut V {
+        match self.void { }
+    }
 }
