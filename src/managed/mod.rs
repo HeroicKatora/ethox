@@ -1,9 +1,11 @@
+mod map;
 mod ordered;
 mod partial;
 mod phantom_vec;
 mod phantom_btree;
 mod slice;
 
+pub use self::map::Map;
 pub use self::slice::Slice;
 pub use self::ordered::Ordered;
 pub use self::partial::Partial;
