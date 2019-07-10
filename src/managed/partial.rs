@@ -105,7 +105,7 @@ impl<C, T> Partial<C>
     pub fn get<'a, I>(&'a self, idx: I) -> Option<&'a I::Output>
         where I: SliceIndex<[T]>, T: 'a,
     {
-        self.inner.get(idx)
+        self.as_slice().get(idx)
     }
 }
 
@@ -173,7 +173,7 @@ impl<C, T> Partial<C>
     pub fn get_mut<'a, I>(&'a mut self, idx: I) -> Option<&'a mut I::Output>
         where I: SliceIndex<[T]>, T: 'a,
     {
-        self.inner.get_mut(idx)
+        self.as_mut_slice().get_mut(idx)
     }
 }
 
@@ -262,5 +262,9 @@ mod tests {
             let element = partial.pop().expect("Still one left");
             assert_eq!(*element, i);
         }
+
+        // Now we can no longer access any element.
+        assert_eq!(partial.get(0), None);
+        assert_eq!(partial.get_mut(0), None);
     }
 }
