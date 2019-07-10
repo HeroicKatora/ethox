@@ -76,6 +76,7 @@
 
 mod connection;
 mod endpoint;
+mod packet;
 
 pub use endpoint::{
     Slot,

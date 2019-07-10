@@ -1,5 +1,5 @@
 use crate::time::{Duration, Instant};
-use crate::wire::{IpAddress, TcpRepr, TcpSeqNumber};
+use crate::wire::{IpAddress, TcpFlags, TcpRepr, TcpSeqNumber};
 
 use super::endpoint::{
     FourTuple,
@@ -197,6 +197,13 @@ pub struct NewReno {
 pub struct Signals {
     /// If the state should be deleted.
     delete: bool,
+
+    /// Need to send some tcp answer.
+    ///
+    /// Since TCP must assume every packet to be potentially lost it is likely technically fine
+    /// *not* to actually send the packet. In particular you could probably advance the internal
+    /// state without acquiring packets to send out. This, however, sounds like a very bad idea.
+    answer: Option<TcpRepr>,
 }
 
 /// An internal, lifetime erased trait for controlling connections of an `Endpoint`.
@@ -215,11 +222,86 @@ pub trait Endpoint {
     fn open(&mut self, tuple: FourTuple) -> Option<SlotKey>;
 }
 
+/// The interface to a single active connection on an endpoint.
+pub struct Operator<'a> {
+    endpoint: &'a mut Endpoint,
+    connection_key: SlotKey,
+}
+
 impl Connection {
     pub fn arrives(&mut self, segment: TcpRepr) -> Signals {
         let mut signals = Signals::default();
-        unimplemented!();
+        match self.current {
+            State::Closed => self.arrives_closed(segment, &mut signals),
+            _ => unimplemented!(),
+        }
         signals
+    }
+
+    fn arrives_closed(&mut self, segment: TcpRepr, signals: &mut Signals) {
+        if segment.flags.rst() {
+            // Avoid answering with RST when packet has RST set.
+            // TODO: debug counters or tracing
+            return;
+        }
+
+        if segment.flags.ack() {
+            signals.answer = Some(TcpRepr {
+                src_port: segment.dst_port,
+                dst_port: segment.src_port,
+                flags: {
+                    let mut flags = TcpFlags::default();
+                    flags.set_ack(true);
+                    flags.set_rst(true);
+                    flags
+                },
+                seq_number: segment.seq_number + segment.sequence_len(),
+                ack_number: Some(segment.seq_number),
+                window_len: 0,
+                window_scale: None,
+                max_seg_size: None,
+                sack_permitted: false,
+                sack_ranges: [None; 3],
+                payload_len: 0,
+            })
+        } else {
+            signals.answer = Some(TcpRepr {
+                src_port: segment.dst_port,
+                dst_port: segment.src_port,
+                flags: {
+                    let mut flags = TcpFlags::default();
+                    flags.set_rst(true);
+                    flags
+                },
+                seq_number: unimplemented!(),
+                ack_number: None,
+                window_len: 0,
+                window_scale: None,
+                max_seg_size: None,
+                sack_permitted: false,
+                sack_ranges: [None; 3],
+                payload_len: 0,
+            })
+        }
+    }
+}
+
+impl Operator<'_> {
+    pub fn key(&self) -> SlotKey {
+        self.connection_key
+    }
+}
+
+impl<'a> Operator<'a> {
+    /// Operate some connection.
+    ///
+    /// This returns `None` if the key does not refer to an existing connection.
+    pub fn new(endpoint: &'a mut Endpoint, key: SlotKey) -> Option<Self> {
+        let _ = endpoint.get(key)?;
+        Some(Operator {
+            endpoint,
+            connection_key: key,
+        })
     }
 }
 

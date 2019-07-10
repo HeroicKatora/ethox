@@ -65,8 +65,8 @@ impl cmp::PartialOrd for SeqNumber {
 }
 
 /// A set of tcp flags.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Flags(u16);
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Flags(pub u16);
 
 /// A read/write wrapper around a Transmission Control Protocol packet buffer.
 #[derive(Debug, PartialEq, Clone)]
