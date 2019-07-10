@@ -4,13 +4,13 @@ mod partial;
 mod phantom_vec;
 mod phantom_btree;
 mod slice;
-mod slotmap;
+pub mod slotmap;
 
 pub use self::map::Map;
 pub use self::ordered::Ordered;
 pub use self::partial::Partial;
 pub use self::slice::Slice;
-pub use self::slotmap::SlotMap;
+pub use self::slotmap::{SlotMap, Slot};
 
 pub type List<'a, T> = Partial<Slice<'a, T>>;
 

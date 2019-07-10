@@ -33,6 +33,24 @@ pub struct Slot {
 /// A slotmap provides a `Vec`-like interface where each entry is associated with a stable
 /// index-like key. Lookup with the key will detect if an entry has been removed but does not
 /// require and lifetime relation.
+///
+/// ## Usage
+///
+/// The important aspect is that the slotmap does not create the storage of its own elements, it
+/// merely manages one given to it at construction time.
+///
+/// ```
+/// # use ethox::managed::{Slice, SlotMap, Slot};
+///
+/// let mut elements = [0usize; 1024];
+/// let mut slots = [Slot::default(); 1024];
+///
+/// let mut map = SlotMap::new(
+///     Slice::Borrowed(&mut elements[..]),
+///     Slice::Borrowed(&mut slots[..]));
+/// let index = map.insert(42).unwrap();
+/// assert_eq!(map.get(index).cloned(), Some(42));
+/// ```
 pub struct SlotMap<'a, T> {
     elements: Slice<'a, T>,
     slots: List<'a, Slot>,
@@ -315,5 +333,49 @@ impl From<Generation> for GenerationOrFreelink {
 impl From<Offset> for GenerationOrFreelink {
     fn from(offset: Offset) -> GenerationOrFreelink {
         GenerationOrFreelink(offset.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::managed::Slice;
+
+    #[test]
+    fn simple() {
+        let mut elements = [0u32; 2];
+        let mut slots = [Slot::default(); 2];
+
+        let mut map = SlotMap::new(
+            Slice::Borrowed(&mut elements[..]),
+            Slice::Borrowed(&mut slots[..]));
+        let key42 = map.insert(42).unwrap();
+        let keylo = map.insert('K' as _).unwrap();
+
+        assert_eq!(map.insert(0x9999), None);
+        assert_eq!(map.get(key42).cloned(), Some(42));
+        assert_eq!(map.get(keylo).cloned(), Some('K' as _));
+    }
+
+    #[test]
+    fn retained() {
+        let mut elements = [0u32; 1];
+        let mut slots = [Slot::default(); 1];
+
+        let mut map = SlotMap::new(
+            Slice::Borrowed(&mut elements[..]),
+            Slice::Borrowed(&mut slots[..]));
+        let key = map.insert(0xde).unwrap();
+        map.remove(key).unwrap();
+        let new_key = map.insert(0xad).unwrap();
+
+        assert_eq!(map.get(key), None);
+        assert_eq!(map.get(new_key).cloned(), Some(0xad));
+
+        assert_eq!(map.remove(key), None);
+        map.remove(new_key).unwrap();
+
+        assert_eq!(map.get(key), None);
+        assert_eq!(map.get(new_key), None);
     }
 }
