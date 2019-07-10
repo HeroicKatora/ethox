@@ -276,7 +276,7 @@ pub use self::tcp::{
     Packet as TcpPacket,
     TcpOption,
     Repr as TcpRepr,
-    Control as TcpControl};
+    Flags as TcpFlags};
 
 #[cfg(feature = "proto-dhcpv4")]
 pub use self::dhcpv4::{

@@ -191,79 +191,7 @@ impl<T: Payload> Packet<T> {
     /// Read all flags at once.
     pub fn flags(&self) -> Flags {
         let data = self.buffer.payload().as_bytes();
-        Flags(NetworkEndian::read_u16(&data[field::FLAGS]))
-    }
-
-    /// Return the FIN flag.
-    #[inline]
-    pub fn fin(&self) -> bool {
-        let data = self.buffer.payload().as_bytes();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        raw & field::FLG_FIN != 0
-    }
-
-    /// Return the SYN flag.
-    #[inline]
-    pub fn syn(&self) -> bool {
-        let data = self.buffer.payload().as_bytes();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        raw & field::FLG_SYN != 0
-    }
-
-    /// Return the RST flag.
-    #[inline]
-    pub fn rst(&self) -> bool {
-        let data = self.buffer.payload().as_bytes();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        raw & field::FLG_RST != 0
-    }
-
-    /// Return the PSH flag.
-    #[inline]
-    pub fn psh(&self) -> bool {
-        let data = self.buffer.payload().as_bytes();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        raw & field::FLG_PSH != 0
-    }
-
-    /// Return the ACK flag.
-    #[inline]
-    pub fn ack(&self) -> bool {
-        let data = self.buffer.payload().as_bytes();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        raw & field::FLG_ACK != 0
-    }
-
-    /// Return the URG flag.
-    #[inline]
-    pub fn urg(&self) -> bool {
-        let data = self.buffer.payload().as_bytes();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        raw & field::FLG_URG != 0
-    }
-
-    /// Return the ECE flag.
-    #[inline]
-    pub fn ece(&self) -> bool {
-        let data = self.buffer.payload().as_bytes();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        raw & field::FLG_ECE != 0
-    }
-
-    /// Return the CWR flag.
-    #[inline]
-    pub fn cwr(&self) -> bool {
-        let data = self.buffer.payload().as_bytes();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        raw & field::FLG_CWR != 0
-    }
-
-    /// Return the NS flag.
-    #[inline]
-    pub fn ns(&self) -> bool {
-        let data = self.buffer.payload().as_bytes();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        raw & field::FLG_NS != 0
+        Flags(NetworkEndian::read_u16(&data[field::FLAGS]) & 0x1ff)
     }
 
     /// Return the header length, in octets.
@@ -296,12 +224,11 @@ impl<T: Payload> Packet<T> {
     }
 
     /// Return the length of the segment, in terms of sequence space.
-    pub fn segment_len(&self) -> usize {
+    pub fn sequence_len(&self) -> usize {
         let data = self.buffer.payload().as_bytes();
-        let mut length = data.len() - self.header_len() as usize;
-        if self.syn() { length += 1 }
-        if self.fin() { length += 1 }
-        length
+        data.len()
+            - self.header_len() as usize
+            + self.flags().sequence_len()
     }
 
     /// Returns whether the selective acknowledgement SYN flag is set or not.
@@ -422,88 +349,8 @@ impl<T: PayloadMut> Packet<T> {
     #[inline]
     pub fn set_flags(&mut self, Flags(flags): Flags) {
         let data = self.buffer.payload_mut().as_bytes_mut();
-        NetworkEndian::write_u16(&mut data[field::FLAGS], flags)
-    }
-
-    /// Set the FIN flag.
-    #[inline]
-    pub fn set_fin(&mut self, value: bool) {
-        let data = self.buffer.payload_mut().as_bytes_mut();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        let raw = if value { raw | field::FLG_FIN } else { raw & !field::FLG_FIN };
-        NetworkEndian::write_u16(&mut data[field::FLAGS], raw)
-    }
-
-    /// Set the SYN flag.
-    #[inline]
-    pub fn set_syn(&mut self, value: bool) {
-        let data = self.buffer.payload_mut().as_bytes_mut();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        let raw = if value { raw | field::FLG_SYN } else { raw & !field::FLG_SYN };
-        NetworkEndian::write_u16(&mut data[field::FLAGS], raw)
-    }
-
-    /// Set the RST flag.
-    #[inline]
-    pub fn set_rst(&mut self, value: bool) {
-        let data = self.buffer.payload_mut().as_bytes_mut();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        let raw = if value { raw | field::FLG_RST } else { raw & !field::FLG_RST };
-        NetworkEndian::write_u16(&mut data[field::FLAGS], raw)
-    }
-
-    /// Set the PSH flag.
-    #[inline]
-    pub fn set_psh(&mut self, value: bool) {
-        let data = self.buffer.payload_mut().as_bytes_mut();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        let raw = if value { raw | field::FLG_PSH } else { raw & !field::FLG_PSH };
-        NetworkEndian::write_u16(&mut data[field::FLAGS], raw)
-    }
-
-    /// Set the ACK flag.
-    #[inline]
-    pub fn set_ack(&mut self, value: bool) {
-        let data = self.buffer.payload_mut().as_bytes_mut();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        let raw = if value { raw | field::FLG_ACK } else { raw & !field::FLG_ACK };
-        NetworkEndian::write_u16(&mut data[field::FLAGS], raw)
-    }
-
-    /// Set the URG flag.
-    #[inline]
-    pub fn set_urg(&mut self, value: bool) {
-        let data = self.buffer.payload_mut().as_bytes_mut();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        let raw = if value { raw | field::FLG_URG } else { raw & !field::FLG_URG };
-        NetworkEndian::write_u16(&mut data[field::FLAGS], raw)
-    }
-
-    /// Set the ECE flag.
-    #[inline]
-    pub fn set_ece(&mut self, value: bool) {
-        let data = self.buffer.payload_mut().as_bytes_mut();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        let raw = if value { raw | field::FLG_ECE } else { raw & !field::FLG_ECE };
-        NetworkEndian::write_u16(&mut data[field::FLAGS], raw)
-    }
-
-    /// Set the CWR flag.
-    #[inline]
-    pub fn set_cwr(&mut self, value: bool) {
-        let data = self.buffer.payload_mut().as_bytes_mut();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        let raw = if value { raw | field::FLG_CWR } else { raw & !field::FLG_CWR };
-        NetworkEndian::write_u16(&mut data[field::FLAGS], raw)
-    }
-
-    /// Set the NS flag.
-    #[inline]
-    pub fn set_ns(&mut self, value: bool) {
-        let data = self.buffer.payload_mut().as_bytes_mut();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        let raw = if value { raw | field::FLG_NS } else { raw & !field::FLG_NS };
-        NetworkEndian::write_u16(&mut data[field::FLAGS], raw)
+        let field = NetworkEndian::read_u16(&mut data[field::FLAGS]) & !0xfff;
+        NetworkEndian::write_u16(&mut data[field::FLAGS], field | (flags & 0x1ff))
     }
 
     /// Set the header length, in octets.
@@ -568,6 +415,142 @@ impl<T: PayloadMut> Packet<T> {
         let header_len = self.header_len() as usize;
         let data = self.buffer.payload_mut().as_bytes_mut();
         &mut data[header_len..]
+    }
+}
+
+impl Flags {
+    /// Return the FIN flag.
+    #[inline]
+    pub fn fin(&self) -> bool {
+        self.0 & field::FLG_FIN != 0
+    }
+
+    /// Return the SYN flag.
+    #[inline]
+    pub fn syn(&self) -> bool {
+        self.0 & field::FLG_SYN != 0
+    }
+
+    /// Return the RST flag.
+    #[inline]
+    pub fn rst(&self) -> bool {
+        self.0 & field::FLG_RST != 0
+    }
+
+    /// Return the PSH flag.
+    #[inline]
+    pub fn psh(&self) -> bool {
+        self.0 & field::FLG_PSH != 0
+    }
+
+    /// Return the ACK flag.
+    #[inline]
+    pub fn ack(&self) -> bool {
+        self.0 & field::FLG_ACK != 0
+    }
+
+    /// Return the URG flag.
+    #[inline]
+    pub fn urg(&self) -> bool {
+        self.0 & field::FLG_URG != 0
+    }
+
+    /// Return the ECE flag.
+    #[inline]
+    pub fn ece(&self) -> bool {
+        self.0 & field::FLG_ECE != 0
+    }
+
+    /// Return the CWR flag.
+    #[inline]
+    pub fn cwr(&self) -> bool {
+        self.0 & field::FLG_CWR != 0
+    }
+
+    /// Return the NS flag.
+    #[inline]
+    pub fn ns(&self) -> bool {
+        self.0 & field::FLG_NS != 0
+    }
+
+    /// Set the FIN flag.
+    #[inline]
+    pub fn set_fin(&mut self, value: bool) {
+        let flag = if value { field::FLG_FIN } else { 0 };
+        let without = self.0 & !field::FLG_FIN;
+        self.0 = without | flag;
+    }
+
+    /// Set the SYN flag.
+    #[inline]
+    pub fn set_syn(&mut self, value: bool) {
+        let flag = if value { field::FLG_SYN } else { 0 };
+        let without = self.0 & !field::FLG_SYN;
+        self.0 = without | flag;
+    }
+
+    /// Set the RST flag.
+    #[inline]
+    pub fn set_rst(&mut self, value: bool) {
+        let flag = if value { field::FLG_RST } else { 0 };
+        let without = self.0 & !field::FLG_RST;
+        self.0 = without | flag;
+    }
+
+    /// Set the PSH flag.
+    #[inline]
+    pub fn set_psh(&mut self, value: bool) {
+        let flag = if value { field::FLG_PSH } else { 0 };
+        let without = self.0 & !field::FLG_PSH;
+        self.0 = without | flag;
+    }
+
+    /// Set the ACK flag.
+    #[inline]
+    pub fn set_ack(&mut self, value: bool) {
+        let flag = if value { field::FLG_ACK } else { 0 };
+        let without = self.0 & !field::FLG_ACK;
+        self.0 = without | flag;
+    }
+
+    /// Set the URG flag.
+    #[inline]
+    pub fn set_urg(&mut self, value: bool) {
+        let flag = if value { field::FLG_URG } else { 0 };
+        let without = self.0 & !field::FLG_URG;
+        self.0 = without | flag;
+    }
+
+    /// Set the ECE flag.
+    #[inline]
+    pub fn set_ece(&mut self, value: bool) {
+        let flag = if value { field::FLG_ECE } else { 0 };
+        let without = self.0 & !field::FLG_ECE;
+        self.0 = without | flag;
+    }
+
+    /// Set the CWR flag.
+    #[inline]
+    pub fn set_cwr(&mut self, value: bool) {
+        let flag = if value { field::FLG_CWR } else { 0 };
+        let without = self.0 & !field::FLG_CWR;
+        self.0 = without | flag;
+    }
+
+    /// Set the NS flag.
+    #[inline]
+    pub fn set_ns(&mut self, value: bool) {
+        let flag = if value { field::FLG_NS } else { 0 };
+        let without = self.0 & !field::FLG_NS;
+        self.0 = without | flag;
+    }
+
+    /// Return the length of a control flag, in terms of sequence space.
+    pub fn sequence_len(self) -> usize {
+        // Syn + Fin is actually weird.
+        // FIXME: find out correct sequence length of this.
+        (if self.syn() { 1 } else { 0 })
+        + (if self.fin() { 1 }  else { 0 })
     }
 }
 
@@ -729,48 +712,12 @@ impl<'a> TcpOption<'a> {
     }
 }
 
-/// The possible control flags of a Transmission Control Protocol packet.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum Control {
-    None,
-    Psh,
-    Syn,
-    Fin,
-    Rst,
-    // Unhandled control options.
-    Other(u16),
-}
-
-impl Control {
-    /// Return the length of a control flag, in terms of sequence space.
-    pub fn len(self) -> usize {
-        match self {
-            Control::Syn | Control::Fin  => 1,
-            Control::Other(flags)
-                if flags & field::FLG_SYN != 0
-                    || flags & field::FLG_FIN != 0
-                    => 1,
-            Control::Other(_) => 0,
-            _ => 0
-        }
-    }
-
-    /// Turn the PSH flag into no flag, and keep the rest as-is.
-    pub fn quash_psh(self) -> Control {
-        match self {
-            Control::Psh => Control::None,
-            Control::Other(flags) => Control::Other(flags & !field::FLG_PSH),
-            _ => self
-        }
-    }
-}
-
 /// A high-level representation of a Transmission Control Protocol packet.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct Repr {
     pub src_port:     u16,
     pub dst_port:     u16,
-    pub control:      Control,
+    pub flags:        Flags,
     pub seq_number:   SeqNumber,
     pub ack_number:   Option<SeqNumber>,
     pub window_len:   u16,
@@ -810,7 +757,7 @@ impl Repr {
         let packet = Packet::new_unchecked(packet, Repr {
             src_port: 0,
             dst_port: 0,
-            control: Control::None,
+            flags: Flags(0),
             seq_number: SeqNumber(0),
             ack_number: None,
             window_len: 0,
@@ -832,20 +779,12 @@ impl Repr {
             }
         }
 
-        let control =
-            match (packet.syn(), packet.fin(), packet.rst(), packet.psh()) {
-                (false, false, false, false) => Control::None,
-                (false, false, false, true)  => Control::Psh,
-                (true,  false, false, _)     => Control::Syn,
-                (false, true,  false, _)     => Control::Fin,
-                (false, false, true , _)     => Control::Rst,
-                _ => Control::Other(packet.flags().0),
-            };
-        let ack_number =
-            match packet.ack() {
-                true  => Some(packet.ack_number()),
-                false => None
-            };
+        let flags = packet.flags();
+        let ack_number = if flags.ack() {
+            Some(packet.ack_number())
+        } else {
+            None
+        };
         // The PSH flag is ignored.
         // The URG flag and the urgent field is ignored. This behavior is standards-compliant,
         // however, most deployed systems (e.g. Linux) are *not* standards-compliant, and would
@@ -887,7 +826,7 @@ impl Repr {
         Ok(Repr {
             src_port:     packet.src_port(),
             dst_port:     packet.dst_port(),
-            control:      control,
+            flags:        flags,
             seq_number:   packet.seq_number(),
             ack_number:   ack_number,
             window_len:   packet.window_len(),
@@ -949,16 +888,9 @@ impl Repr {
         packet.set_ack_number(self.ack_number.unwrap_or(SeqNumber(0)));
         packet.set_window_len(self.window_len);
         packet.set_header_len(self.header_len() as u8);
-        packet.clear_flags();
-        match self.control {
-            Control::None => (),
-            Control::Psh  => packet.set_psh(true),
-            Control::Syn  => packet.set_syn(true),
-            Control::Fin  => packet.set_fin(true),
-            Control::Rst  => packet.set_rst(true),
-            Control::Other(flags) => packet.set_flags(Flags(flags)),
-        }
-        packet.set_ack(self.ack_number.is_some());
+        let mut flags = self.flags;
+        flags.set_ack(self.ack_number.is_some());
+        packet.set_flags(flags);
         {
             let mut options = packet.options_mut();
             if let Some(value) = self.window_scale {
@@ -981,16 +913,14 @@ impl Repr {
     }
 
     /// Return the length of the segment, in terms of sequence space.
-    pub fn segment_len(&self) -> usize {
-        usize::from(self.payload_len) + usize::from(self.control.len())
+    pub fn sequence_len(&self) -> usize {
+        usize::from(self.payload_len) + self.flags.sequence_len()
     }
 
     /// Return whether the segment has no flags set (except PSH) and no data.
     pub fn is_empty(&self) -> bool {
-        match self.control {
-            _ if self.payload_len != 0 => false,
-            Control::Syn  | Control::Fin | Control::Rst | Control::Other(_) => false,
-            Control::None | Control::Psh => true
+        self.payload_len != 0 || {
+            (self.flags.syn() | self.flags.fin() | self.flags.rst())
         }
     }
 }
@@ -1001,20 +931,21 @@ impl<'a, T: Payload + ?Sized> fmt::Display for Packet<&'a T> {
         // FIXME: this is STUPID
         write!(f, "TCP src={} dst={}",
                self.src_port(), self.dst_port())?;
+        let flags = self.flags();
         // FIXME: this should be the display of `Flags` type.
-        if self.syn() { write!(f, " syn")? }
-        if self.fin() { write!(f, " fin")? }
-        if self.rst() { write!(f, " rst")? }
-        if self.psh() { write!(f, " psh")? }
-        if self.ece() { write!(f, " ece")? }
-        if self.cwr() { write!(f, " cwr")? }
-        if self.ns()  { write!(f, " ns" )? }
+        if flags.syn() { write!(f, " syn")? }
+        if flags.fin() { write!(f, " fin")? }
+        if flags.rst() { write!(f, " rst")? }
+        if flags.psh() { write!(f, " psh")? }
+        if flags.ece() { write!(f, " ece")? }
+        if flags.cwr() { write!(f, " cwr")? }
+        if flags.ns()  { write!(f, " ns" )? }
         write!(f, " seq={}", self.seq_number())?;
-        if self.ack() {
+        if flags.ack() {
             write!(f, " ack={}", self.ack_number())?;
         }
         write!(f, " win={}", self.window_len())?;
-        if self.urg() {
+        if flags.urg() {
             write!(f, " urg={}", self.urgent_at())?;
         }
         write!(f, " len={}", self.payload_slice().len())?;
@@ -1050,13 +981,13 @@ impl fmt::Display for Repr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "TCP src={} dst={}",
                self.src_port, self.dst_port)?;
-        match self.control {
-            Control::Syn => write!(f, " syn")?,
-            Control::Fin => write!(f, " fin")?,
-            Control::Rst => write!(f, " rst")?,
-            Control::Psh => write!(f, " psh")?,
-            Control::Other(flags) => write!(f, " {:x}", flags)?,
-            Control::None => ()
+        match self.flags {
+            Flags(field::FLG_SYN) => write!(f, " syn")?,
+            Flags(field::FLG_FIN) => write!(f, " fin")?,
+            Flags(field::FLG_RST) => write!(f, " rst")?,
+            Flags(field::FLG_PSH) => write!(f, " psh")?,
+            Flags(0) => (),
+            Flags(other) => write!(f, " {:x}", other)?,
         }
         write!(f, " seq={}", self.seq_number)?;
         if let Some(ack_number) = self.ack_number {
@@ -1114,12 +1045,12 @@ mod test {
         assert_eq!(packet.seq_number(), SeqNumber(0x01234567));
         assert_eq!(packet.ack_number(), SeqNumber(0x89abcdefu32 as i32));
         assert_eq!(packet.header_len(), 24);
-        assert_eq!(packet.fin(), true);
-        assert_eq!(packet.syn(), false);
-        assert_eq!(packet.rst(), true);
-        assert_eq!(packet.psh(), false);
-        assert_eq!(packet.ack(), true);
-        assert_eq!(packet.urg(), true);
+        assert_eq!(packet.flags().fin(), true);
+        assert_eq!(packet.flags().syn(), false);
+        assert_eq!(packet.flags().rst(), true);
+        assert_eq!(packet.flags().psh(), false);
+        assert_eq!(packet.flags().ack(), true);
+        assert_eq!(packet.flags().urg(), true);
         assert_eq!(packet.window_len(), 0x0123);
         assert_eq!(packet.urgent_at(), 0x0201);
         assert_eq!(packet.checksum(), 0x01b6);
@@ -1139,13 +1070,14 @@ mod test {
         packet.set_seq_number(SeqNumber(0x01234567));
         packet.set_ack_number(SeqNumber(0x89abcdefu32 as i32));
         packet.set_header_len(24);
-        packet.clear_flags();
-        packet.set_fin(true);
-        packet.set_syn(false);
-        packet.set_rst(true);
-        packet.set_psh(false);
-        packet.set_ack(true);
-        packet.set_urg(true);
+        let mut flags = Flags::default();
+        flags.set_fin(true);
+        flags.set_syn(false);
+        flags.set_rst(true);
+        flags.set_psh(false);
+        flags.set_ack(true);
+        flags.set_urg(true);
+        packet.set_flags(flags);
         packet.set_window_len(0x0123);
         packet.set_urgent_at(0x0201);
         packet.set_checksum(0xEEEE);
@@ -1185,7 +1117,7 @@ mod test {
             ack_number:   None,
             window_len:   0x0123,
             window_scale: None,
-            control:      Control::Syn,
+            flags:        Flags(field::FLG_SYN),
             max_seg_size: None,
             sack_permitted: false,
             sack_ranges:  [None, None, None],
