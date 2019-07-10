@@ -74,6 +74,7 @@
 //! SYN packet may contain data. 
 //!
 
+mod connection;
 mod endpoint;
 
 pub use endpoint::{
