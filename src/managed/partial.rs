@@ -58,6 +58,11 @@ impl<C> Partial<C> {
         self.end
     }
 
+    /// Check if the list is empty.
+    pub fn is_empty(&self) -> bool {
+        self.end == 0
+    }
+
     /// Simply increase the length.
     pub fn inc(&mut self) {
         self.end += 1;
@@ -80,6 +85,15 @@ impl<C, T> Partial<C>
         }
     }
 
+    /// Check how many elements can be inserted at most.
+    ///
+    /// This results in the length of the underlying container, not its capacity since the
+    /// `Partial` is not aware of reallocation or other behaviour to change the underlying
+    /// containers length.
+    pub fn capacity(&self) -> usize {
+        self.inner.len()
+    }
+
     /// Get the logically active elements as a slice.
     pub fn as_slice(&self) -> &[T] {
         &self.inner[..self.end]
@@ -91,7 +105,7 @@ impl<C, T> Partial<C>
     pub fn get<'a, I>(&'a self, idx: I) -> Option<&'a I::Output>
         where I: SliceIndex<[T]>, T: 'a,
     {
-        self.inner.get(idx)
+        self.as_slice().get(idx)
     }
 }
 
@@ -159,7 +173,7 @@ impl<C, T> Partial<C>
     pub fn get_mut<'a, I>(&'a mut self, idx: I) -> Option<&'a mut I::Output>
         where I: SliceIndex<[T]>, T: 'a,
     {
-        self.inner.get_mut(idx)
+        self.as_mut_slice().get_mut(idx)
     }
 }
 
@@ -248,5 +262,9 @@ mod tests {
             let element = partial.pop().expect("Still one left");
             assert_eq!(*element, i);
         }
+
+        // Now we can no longer access any element.
+        assert_eq!(partial.get(0), None);
+        assert_eq!(partial.get_mut(0), None);
     }
 }

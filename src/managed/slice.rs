@@ -1,6 +1,8 @@
 use core::ops;
 use core::slice;
 
+use crate::alloc;
+
 /// A list of mutable objects.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Slice<'a, T: 'a> {
@@ -11,7 +13,7 @@ pub enum Slice<'a, T: 'a> {
     One(T),
 
     /// An allocated list of objects.
-    Many(crate::Vec<T>),
+    Many(alloc::vec::Vec<T>),
 
     /// A list of objects living in borrowed memory.
     ///
@@ -60,8 +62,8 @@ impl<T> From<Option<T>> for Slice<'_, T> {
     }
 }
 
-impl<T> From<crate::Vec<T>> for Slice<'_, T> {
-    fn from(t: crate::Vec<T>) -> Self {
+impl<T> From<alloc::vec::Vec<T>> for Slice<'_, T> {
+    fn from(t: alloc::vec::Vec<T>) -> Self {
         Slice::Many(t)
     }
 }

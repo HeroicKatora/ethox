@@ -1,4 +1,6 @@
 //! A uninhabited type masquerading as `Vec<_>`.
+#![allow(unused, dead_code)]
+
 use core::marker::PhantomData;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -7,7 +9,6 @@ pub struct Vec<T> {
     data: Void,
 }
 
-#[allow(unused, dead_code)]
 impl<T> Vec<T> {
     pub fn as_slice(&self) -> &[T] {
         match self.data { }

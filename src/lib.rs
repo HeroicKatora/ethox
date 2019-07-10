@@ -11,11 +11,13 @@ pub mod storage;
 pub mod time;
 pub mod wire;
 
-#[cfg(all(
-    not(feature = "std"),
-    not(test)))]
-pub(crate) use self::managed::Vec;
+/// The `alloc` crate, or a replacement without feature `"std"`.
 #[cfg(any(
     feature = "std",
     test))]
-pub(crate) use std::vec::Vec;
+pub extern crate alloc;
+
+#[cfg(all(
+    not(feature = "std"),
+    not(test)))]
+pub use self::managed::alloc;
