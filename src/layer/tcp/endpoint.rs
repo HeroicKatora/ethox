@@ -28,10 +28,10 @@ pub struct Endpoint<'a> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FourTuple {
-    local: IpAddress,
-    remote: IpAddress,
-    local_port: u16,
-    remote_port: u16,
+    pub local: IpAddress,
+    pub remote: IpAddress,
+    pub local_port: u16,
+    pub remote_port: u16,
 }
 
 /// A connection slot.

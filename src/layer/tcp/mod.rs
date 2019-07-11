@@ -78,7 +78,13 @@ mod connection;
 mod endpoint;
 mod packet;
 
+/// For initial sequence number generation, as recommended by rfc6528.
+mod siphash;
+
 pub use endpoint::{
     Slot,
     SlotKey,
     Endpoint};
+
+// publically exposed for initialization.
+pub use siphash::IsnGenerator;
