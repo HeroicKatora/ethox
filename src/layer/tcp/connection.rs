@@ -2,6 +2,8 @@ use crate::time::{Duration, Instant};
 use crate::wire::{IpAddress, TcpFlags, TcpRepr, TcpSeqNumber};
 
 use super::endpoint::{
+    Entry,
+    EntryKey,
     FourTuple,
     SlotKey};
 
@@ -217,6 +219,8 @@ pub trait Endpoint {
 
     fn get_mut(&mut self, index: SlotKey) -> Option<&mut Connection>;
 
+    fn entry(&mut self, index: SlotKey) -> Option<Entry>;
+
     fn listen(&mut self, ip: IpAddress, port: u16) -> Option<SlotKey>;
 
     fn open(&mut self, tuple: FourTuple) -> Option<SlotKey>;
@@ -231,23 +235,28 @@ pub struct Operator<'a> {
 }
 
 impl Connection {
-    pub fn arrives(&mut self, segment: TcpRepr) -> Signals {
-        let mut signals = Signals::default();
+    pub fn arrives(&mut self, segment: TcpRepr, entry: EntryKey, time: Instant) -> Signals {
         match self.current {
-            State::Closed => self.arrives_closed(segment, &mut signals),
+            State::Closed => self.arrives_closed(segment),
+            State::Listen => self.arrives_listen(segment, entry, time),
+            State::Established => self.arrives_established(segment),
             _ => unimplemented!(),
         }
-        signals
     }
 
-    fn arrives_closed(&mut self, segment: TcpRepr, signals: &mut Signals) {
+    /// Answers packets on closed sockets with resets.
+    ///
+    /// Except when an RST flag is already set on the received packet. Probably the easiest packet
+    /// flow.
+    fn arrives_closed(&mut self, segment: TcpRepr) -> Signals {
+        let mut signals = Signals::default();
         if segment.flags.rst() {
             // Avoid answering with RST when packet has RST set.
             // TODO: debug counters or tracing
-            return;
+            return signals;
         }
 
-        if segment.flags.ack() {
+        if let Some(ack_number) = segment.ack_number {
             signals.answer = Some(TcpRepr {
                 src_port: segment.dst_port,
                 dst_port: segment.src_port,
@@ -257,8 +266,8 @@ impl Connection {
                     flags.set_rst(true);
                     flags
                 },
-                seq_number: segment.seq_number + segment.sequence_len(),
-                ack_number: Some(segment.seq_number),
+                seq_number: ack_number,
+                ack_number: None,
                 window_len: 0,
                 window_scale: None,
                 max_seg_size: None,
@@ -275,8 +284,8 @@ impl Connection {
                     flags.set_rst(true);
                     flags
                 },
-                seq_number: unimplemented!(),
-                ack_number: None,
+                seq_number: TcpSeqNumber(0),
+                ack_number: Some(segment.seq_number + segment.sequence_len()),
                 window_len: 0,
                 window_scale: None,
                 max_seg_size: None,
@@ -285,6 +294,79 @@ impl Connection {
                 payload_len: 0,
             })
         }
+
+        return signals;
+    }
+
+    fn arrives_listen(&mut self, segment: TcpRepr, entry: EntryKey, time: Instant)
+        -> Signals
+    {
+        let mut signals = Signals::default();
+        if segment.flags.rst() {
+            return signals;
+        }
+
+        if let Some(ack_number) = segment.ack_number { // What are you acking? A previous connection.
+            signals.answer = Some(TcpRepr {
+                src_port: segment.dst_port,
+                dst_port: segment.src_port,
+                flags: {
+                    let mut flags = TcpFlags::default();
+                    flags.set_ack(true);
+                    flags.set_rst(true);
+                    flags
+                },
+                seq_number: ack_number,
+                ack_number: None,
+                window_len: 0,
+                window_scale: None,
+                max_seg_size: None,
+                sack_permitted: false,
+                sack_ranges: [None; 3],
+                payload_len: 0,
+            });
+            return signals;
+        }
+
+        if !segment.flags.syn() {
+            // Doesn't have any useful flags. Why was this even sent?
+            return signals;
+        }
+
+        unimplemented!("Change and setup connection four tuple (for isn also)");
+
+        self.recv.next = segment.seq_number + 1;
+        self.recv.initial_seq = segment.seq_number;
+
+        let isn = entry.initial_seq_num(time);
+        self.send.next = isn + 1;
+        self.send.unacked = isn;
+        self.send.initial_seq = isn;
+
+        signals.answer = Some(TcpRepr {
+            src_port: segment.dst_port,
+            dst_port: segment.src_port,
+            flags: {
+                let mut flags = TcpFlags::default();
+                flags.set_ack(true);
+                flags.set_rst(true);
+                flags
+            },
+            seq_number: isn,
+            ack_number: Some(self.recv.next),
+            window_len: 0,
+            window_scale: None,
+            max_seg_size: None,
+            sack_permitted: false,
+            sack_ranges: [None; 3],
+            payload_len: 0,
+        });
+
+        signals
+    }
+
+    fn arrives_established(&mut self, segment: TcpRepr) -> Signals {
+        unimplemented!()
     }
 }
 
@@ -304,6 +386,15 @@ impl<'a> Operator<'a> {
             endpoint,
             connection_key: key,
         })
+    }
+
+    pub fn arrives(&mut self, segment: TcpRepr, time: Instant) -> Signals {
+        let (entry_key, connection) = self.entry().into_key_value();
+        connection.arrives(segment, entry_key, time)
+    }
+
+    fn entry(&mut self) -> Entry {
+        self.endpoint.entry(self.connection_key).unwrap()
     }
 }
 

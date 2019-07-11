@@ -59,11 +59,55 @@ pub struct SlotKey {
     key: Key,
 }
 
+/// A partially mutable reference to a connection.
+///
+/// Retrieving an `Entry` for a given `SlotKey` consists of slicing the internal representation of
+/// the `Endpoint` in such a way that it is possible to consistently change the four-tuple mapping
+/// to that connection, to modify the connection itself, and to access the initial sequence number
+/// generator.
+pub struct Entry<'a> {
+    index: SlotKey,
+    ports: &'a mut PortMap,
+    isn: &'a IsnGenerator,
+    slot: &'a mut Slot,
+}
+
+/// A mutable reference to the key-structure of a connection.
+///
+/// From an `Entry` split into the connection and the keys referring to it in such a manner that
+/// the keys can be edited without affecting the connection itself.
+pub struct EntryKey<'a> {
+    index: SlotKey,
+    ports: &'a mut PortMap,
+    isn: &'a IsnGenerator,
+    key_in_slot: &'a mut FourTuple,
+}
+
+/// Provides remapping a `SlotKey` under a different four tuple.
+///
+/// Erases the lifetime from the underlying `Map` itself.
+trait PortMap {
+    fn remap(&mut self, old: FourTuple, new: FourTuple);
+}
+
 impl Endpoint<'_> {
     pub fn get_mut(&mut self, index: SlotKey)
         -> Option<&mut Slot>
     {
         self.states.get_mut(index.key)
+    }
+
+    pub fn entry(&mut self, index: SlotKey)
+        -> Option<Entry>
+    {
+        let slot = self.states.get_mut(index.key)?;
+
+        Some(Entry {
+            index,
+            ports: &mut self.ports,
+            isn: &mut self.isn_generator,
+            slot,
+        })
     }
 
     pub fn get(&self, index: SlotKey)
@@ -165,6 +209,36 @@ impl Endpoint<'_> {
     }
 }
 
+impl<'a> Entry<'a> {
+    pub fn into_key_value(self) -> (EntryKey<'a>, &'a mut Connection) {
+        let entry_key = EntryKey {
+            index: self.index,
+            ports: self.ports,
+            isn: self.isn,
+            key_in_slot: &mut self.slot.addr,
+        };
+
+        let connection = &mut self.slot.connection;
+
+        (entry_key, connection)
+    }
+}
+
+impl EntryKey<'_> {
+    pub fn initial_seq_num(&self, time: Instant) -> TcpSeqNumber {
+        self.isn.get_isn(*self.key_in_slot, time)
+    }
+
+    pub fn four_tuple(&self) -> FourTuple {
+        *self.key_in_slot
+    }
+
+    pub fn set_four_tuple(&mut self, new: FourTuple) {
+        self.ports.remap(*self.key_in_slot, new);
+        *self.key_in_slot = new;
+    }
+}
+
 impl super::connection::Endpoint for Endpoint<'_> {
     fn get(&self, index: SlotKey) -> Option<&Connection> {
         Endpoint::get(self, index).map(|slot| &slot.connection)
@@ -172,6 +246,10 @@ impl super::connection::Endpoint for Endpoint<'_> {
 
     fn get_mut(&mut self, index: SlotKey) -> Option<&mut Connection> {
         Endpoint::get_mut(self, index).map(|slot| &mut slot.connection)
+    }
+
+    fn entry(&mut self, index: SlotKey) -> Option<Entry> {
+        Endpoint::entry(self, index)
     }
 
     fn listen(&mut self, ip: IpAddress, port: u16) -> Option<SlotKey> {
@@ -184,5 +262,22 @@ impl super::connection::Endpoint for Endpoint<'_> {
 
     fn initial_seq_num(&mut self, id: FourTuple, time: Instant) -> TcpSeqNumber {
         Endpoint::initial_seq_num(self, id, time)
+    }
+}
+
+impl PortMap for Map<'_, FourTuple, Key> {
+    fn remap(&mut self, old: FourTuple, new: FourTuple) {
+        let old = self.entry(old)
+            .occupied()
+            // FIXME: unwrap justified? Seems like it may not.
+            .unwrap();
+        let value = *old.get();
+        old.remove();
+
+        self.entry(new)
+            .vacant()
+            // FIXME: nearly justified but how to ensure it was not mapped?
+            .unwrap()
+            .insert(value);
     }
 }

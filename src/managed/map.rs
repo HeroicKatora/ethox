@@ -127,6 +127,13 @@ impl<'map, 'a, K: Ord, V> Entry<'map, 'a, K, V> {
 }
 
 impl<'map, K: Ord, V> OccupiedEntry<'map, '_, K, V> {
+    pub fn get(&self) -> &V {
+        match &self.inner {
+            Occupied::Pairs { list, index, .. } => &list[*index].1,
+            Occupied::Btree(btree) => btree.get(),
+        }
+    }
+
     pub fn get_mut(&mut self) -> &mut V {
         match &mut self.inner {
             Occupied::Pairs { list, index, .. } => &mut list[*index].1,
