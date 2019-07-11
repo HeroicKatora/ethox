@@ -19,11 +19,13 @@ use super::connection::{
     Send,
     State,
     Receive};
+use super::siphash::IsnGenerator;
 
 /// Handles TCP connection states.
 pub struct Endpoint<'a> {
     ports: Map<'a, FourTuple, Key>,
     states: SlotMap<'a, Slot>,
+    isn_generator: IsnGenerator,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -39,8 +41,12 @@ pub struct FourTuple {
 /// Can be used to open or accept a new connection. Usage of this acts similar to a slotmap where a
 /// dedicated `SlotKey` allows referring to a connection outside of its lifetime without
 /// introducing lifetime-tracked references and dependencies.
+///
+/// Contains the four-tuple which maps to the slot, completing the loop for lookups
+/// (slotkey->4tuple,4tuple->slotkey).
 #[derive(Clone, Copy, Debug, Hash)]
 pub struct Slot {
+    addr: FourTuple,
     connection: Connection,
 }
 
@@ -78,33 +84,45 @@ impl Endpoint<'_> {
             remote_port: 0,
         };
 
-        let (slot, state) = self.create_state(key)?;
+        let (key, state) = self.create_state(key)?;
         state.connection.current = State::Listen;
-        Some(slot)
+        Some(key)
     }
 
     /// Actively try to connect to a remote TCP.
     fn open(&mut self, tuple: FourTuple)
         -> Option<SlotKey>
     {
-        let (slot, _) = self.create_state(tuple)?;
+        let (key, _) = self.create_state(tuple)?;
         // Don't set to open yet, only after having sent the packet.
-        Some(slot)
+        Some(key)
     }
 
-    fn create_state(&mut self, tuple: FourTuple)
+    fn create_state(&mut self, addr: FourTuple)
         -> Option<(SlotKey, &mut Slot)>
     {
-        let state = self.create_connection();
-        let (key, state) = unimplemented!();
-        self.ports
-            .entry(tuple)
-            .vacant()?
-            .insert(key);
+        let connection = self.create_connection();
+
+        let vacant = self.ports
+            .entry(addr)
+            .vacant()?;
+
+        // FIXME: would be nicer to have an `Entry` api on the slotmap for peace of mind. It is
+        // however mostly inconsequential right now.
+        //
+        // Reserves a slot, don't lose the key or we'd leak that reservation.
+        let (key, slot) = self.states
+            .reserve()?;
+
+        slot.connection = connection;
+        slot.addr = addr;
+        vacant.insert(key);
+
         let key = SlotKey {
             key,
         };
-        Some((key, state))
+
+        Some((key, slot))
     }
 
     /// Initialize a closed connection.
@@ -131,7 +149,7 @@ impl Endpoint<'_> {
                 unacked: TcpSeqNumber::default(),
                 next: TcpSeqNumber::default(),
                 window: 0,
-                initial_seq: self.initial_seq_num(),
+                initial_seq: TcpSeqNumber::default(),
             },
             recv: Receive {
                 acked: TcpSeqNumber::default(),
@@ -142,26 +160,29 @@ impl Endpoint<'_> {
         }
     }
 
-    fn initial_seq_num(&mut self) -> TcpSeqNumber {
-        // FIXME: should choose one by pseudo-random.
-        unimplemented!()
+    fn initial_seq_num(&mut self, id: FourTuple, time: Instant) -> TcpSeqNumber {
+        self.isn_generator.get_isn(id, time)
     }
 }
 
 impl super::connection::Endpoint for Endpoint<'_> {
     fn get(&self, index: SlotKey) -> Option<&Connection> {
-        unimplemented!()
+        Endpoint::get(self, index).map(|slot| &slot.connection)
     }
 
     fn get_mut(&mut self, index: SlotKey) -> Option<&mut Connection> {
-        unimplemented!()
+        Endpoint::get_mut(self, index).map(|slot| &mut slot.connection)
     }
 
     fn listen(&mut self, ip: IpAddress, port: u16) -> Option<SlotKey> {
-        unimplemented!()
+        Endpoint::listen(self, ip, port)
     }
 
     fn open(&mut self, tuple: FourTuple) -> Option<SlotKey> {
-        unimplemented!()
+        Endpoint::open(self, tuple)
+    }
+
+    fn initial_seq_num(&mut self, id: FourTuple, time: Instant) -> TcpSeqNumber {
+        Endpoint::initial_seq_num(self, id, time)
     }
 }

@@ -220,6 +220,8 @@ pub trait Endpoint {
     fn listen(&mut self, ip: IpAddress, port: u16) -> Option<SlotKey>;
 
     fn open(&mut self, tuple: FourTuple) -> Option<SlotKey>;
+
+    fn initial_seq_num(&mut self, id: FourTuple, time: Instant) -> TcpSeqNumber;
 }
 
 /// The interface to a single active connection on an endpoint.
