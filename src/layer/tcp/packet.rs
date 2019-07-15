@@ -2,15 +2,28 @@ use crate::layer::ip;
 use crate::wire::{Reframe, Payload, PayloadMut, PayloadResult, payload};
 use crate::wire::{TcpPacket, TcpRepr, TcpSeqNumber};
 
-use super::connection::{Endpoint, Operator};
+use super::connection::{Endpoint, Operator, Signals};
 use super::endpoint::FourTuple;
 
 /// An incoming tcp packet.
 ///
 /// Don't worry, you can't really do anything with it yet. Not that you'd want to because
 /// connections are always closed or not actually responding.
-pub struct In<'a, P: Payload> {
-    inner: Kind<'a, P>,
+pub enum In<'a, P: PayloadMut> {
+    /// A packet that elicited an immediate response.
+    ///
+    /// May be interesting for logging this but you may as well drop this variant immediately.
+    Sending(Sending<'a, P>),
+
+    /// There is an open connection and you may send and receive data.
+    Open(Open<'a, P>),
+
+    /// A packet for no connection arrived.
+    ///
+    /// Maybe you are interested anyways? At least the packet was valid tcp traffic and maybe you
+    /// want to retro-actively open a new, due some funny port-knocking business or w/e. Your hacks
+    /// stay your own, and keep the bugs you find along the way.
+    Stray(Stray<'a, P>),
 }
 
 pub trait SendBuf {
@@ -49,7 +62,10 @@ pub trait RecvBuf {
     fn window(&self) -> usize;
 }
 
-enum Kind<'a, P: Payload> {
+/// Packet representation *after* it has been applied to its connection.
+///
+/// This is purely internal to transition to the handled `In` state.
+enum Unhandled<'a, P: Payload> {
     Open {
         operator: Operator<'a>,
         tcp: TcpPacket<ip::IpPacket<'a, P>>,
@@ -60,28 +76,52 @@ enum Kind<'a, P: Payload> {
     },
 }
 
-impl<'a, P: PayloadMut> Kind<'a, P> {
+/// There was some content to send **immediately**.
+///
+/// The packet has been prepared and already queued on the socket. Not handling or dropping the
+/// packet structure now will emit the packet.
+pub struct Sending<'a, P: Payload> {
+    operator: Operator<'a>,
+    out: ip::OutPacket<'a, P>,
+}
+
+/// An open connection on which we might want to send and receive data.
+///
+/// Reading of incoming data and sending of ones own is largely independent of each other.
+pub struct Open<'a, P: PayloadMut> {
+    operator: Operator<'a>,
+    signals: Signals,
+    tcp: TcpPacket<ip::IpPacket<'a, P>>,
+}
+
+pub struct Stray<'a, P: PayloadMut> {
+    tcp: TcpPacket<ip::IpPacket<'a, P>>,
+}
+
+impl<'a, P: PayloadMut> Unhandled<'a, P> {
     pub fn try_open(
         endpoint: &'a mut Endpoint,
         tcp: TcpPacket<ip::IpPacket<'a, P>>,
     ) -> Self {
-        let repr = tcp.repr();
+        let tcp_repr = tcp.repr();
+        let ip_repr = tcp.inner().repr();
 
         let connection = FourTuple {
-            local: unimplemented!(),
-            local_port: repr.dst_port,
-            remote: unimplemented!(),
-            remote_port: repr.src_port,
+            local: ip_repr.src_addr(),
+            local_port: tcp_repr.dst_port,
+            remote: ip_repr.dst_addr(),
+            remote_port: tcp_repr.src_port,
         };
 
+        // Either we have an existing one, or one listening.
         let key = unimplemented!();
 
         match Operator::new(endpoint, key) {
-            Some(operator) => Kind::Open {
+            Some(operator) => Unhandled::Open {
                 operator,
                 tcp,
             },
-            None => Kind::Closed {
+            None => Unhandled::Closed {
                 endpoint,
                 tcp,
             }

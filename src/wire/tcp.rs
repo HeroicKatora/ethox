@@ -150,6 +150,10 @@ impl<T: Payload> Packet<T> {
         }
     }
 
+    pub fn inner(&self) -> &T {
+        &self.buffer
+    }
+
     /// Consume the packet, returning the underlying buffer.
     pub fn into_inner(self) -> T {
         self.buffer
