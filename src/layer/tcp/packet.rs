@@ -1,6 +1,6 @@
 use crate::layer::ip;
 use crate::wire::{Reframe, Payload, PayloadMut, PayloadResult, payload};
-use crate::wire::{TcpPacket, TcpRepr, TcpSeqNumber};
+use crate::wire::{IpProtocol, TcpPacket, TcpRepr, TcpSeqNumber};
 
 use super::connection::{Endpoint, InPacket, Operator, Signals};
 use super::endpoint::FourTuple;
@@ -13,7 +13,7 @@ pub enum In<'a, P: PayloadMut> {
     /// A packet that elicited an immediate response.
     ///
     /// May be interesting for logging this but you may as well drop this variant immediately.
-    Sending(Sending<'a, P>),
+    Sending(Sending<'a>),
 
     /// There is an open connection and you may send and receive data.
     Open(Open<'a, P>),
@@ -21,7 +21,7 @@ pub enum In<'a, P: PayloadMut> {
     /// A packet from us will close the connection.
     ///
     /// This is very similar to `Sending` but it no longer contains a valid connection.
-    Closing(Closing<'a, P>),
+    Closing(Closing<'a>),
 
     /// Connection has just been closed by the packet.
     Closed(Stray<'a, P>),
@@ -91,19 +91,17 @@ enum Unhandled<'a, P: Payload> {
 ///
 /// Note that there may still be data that can be received, or the possibility to piggy-back more
 /// data to be sent onto the packet. There are flags to test for this.
-pub struct Sending<'a, P: Payload> {
+pub struct Sending<'a> {
     operator: Operator<'a>,
     signals: Signals,
-    out: ip::OutPacket<'a, P>,
 }
 
 /// A closing message from us.
 /// 
 /// Same as `Sending`, the packet has already been prepared and queue.
-pub struct Closing<'a, P: Payload> {
+pub struct Closing<'a> {
     endpoint: &'a mut Endpoint,
     signals: Signals,
-    out: ip::OutPacket<'a, P>,
 }
 
 /// An open connection on which we might want to send and receive data.
@@ -156,14 +154,14 @@ impl<'a, P: PayloadMut> In<'a, P> {
         endpoint: &'a mut Endpoint,
         ip_control: ip::Handle<'a>,
         tcp: TcpPacket<ip::IpPacket<'a, P>>,
-    ) -> Self {
+    ) -> Result<Self, crate::layer::Error> {
         let (mut operator, tcp) = match Unhandled::try_open(endpoint, tcp) {
             Unhandled::Open { operator, tcp } => (operator, tcp),
             Unhandled::Closed { endpoint, tcp } => {
-                return In::Stray(Stray {
+                return Ok(In::Stray(Stray {
                     endpoint,
                     tcp,
-                });
+                }));
             }
         };
 
@@ -183,10 +181,10 @@ impl<'a, P: PayloadMut> In<'a, P> {
             debug_assert_eq!(signals.may_send, false);
             let endpoint = operator.delete();
             // TODO: Propagate `reset` bit
-            return In::Closed(Stray {
+            return Ok(In::Closed(Stray {
                 endpoint,
                 tcp,
-            });
+            }));
         }
 
         // If no answer we are free to send anything.
@@ -197,32 +195,62 @@ impl<'a, P: PayloadMut> In<'a, P> {
                 debug_assert_eq!(signals.may_send, true);
                 debug_assert_eq!(signals.reset, false);
                 debug_assert_eq!(signals.delete, false);
-                return In::Open(Open {
+                return Ok(In::Open(Open {
                     operator,
                     signals,
                     tcp,
-                });
+                }));
             },
         };
 
         // Prepare the answer packet itself.
-        let out = unimplemented!();
+
+        control_answer(tcp, answer, ip_control)?;
 
         // We need to close the connection. The sent packet should be an RST.
         if signals.delete {
             let endpoint = operator.delete();
-            return In::Closing(Closing {
+            return Ok(In::Closing(Closing {
                 endpoint,
                 signals,
-                out,
-            });
+            }));
         }
 
         debug_assert_eq!(signals.reset, false);
-        In::Sending(Sending {
+        Ok(In::Sending(Sending {
             operator,
             signals,
-            out,
-        })
+        }))
     }
+}
+
+fn control_answer<'a, P: PayloadMut>(
+    tcp: TcpPacket<ip::IpPacket<'a, P>>,
+    answer: TcpRepr,
+    ip: ip::Handle<'a>,
+) -> Result<(), crate::layer::Error> {
+    assert_eq!(answer.payload_len, 0, "Control answer can not handle data");
+
+    let raw_buffer = tcp.into_inner();
+    let ip_repr = raw_buffer.repr();
+    let ip_payload_len = answer.header_len();
+
+    let packet = ip::InPacket {
+        handle: ip,
+        packet: raw_buffer,
+    };
+
+    // Send a packet back.
+    let ip::InPacket { handle, mut packet, } = packet.reinit(ip::Init {
+        source: ip::Source::Exact(ip_repr.dst_addr()),
+        dst_addr: ip_repr.src_addr(),
+        protocol: IpProtocol::Tcp,
+        payload: ip_payload_len,
+    })?.into_incoming();
+
+    let raw_packet = TcpPacket::new_unchecked(&mut packet, answer.clone());
+    answer.emit(raw_packet);
+
+    ip::OutPacket::new_unchecked(handle, packet)
+        .send()
 }
