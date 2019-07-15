@@ -73,6 +73,7 @@
 //!
 //! SYN packet may contain data. 
 //!
+use crate::wire::PayloadMut;
 
 mod connection;
 mod endpoint;
@@ -86,7 +87,7 @@ pub use endpoint::{
     Endpoint};
 
 pub use packet::{
-    In,
+    In as InPacket,
     Open,
     RecvBuf,
     SendBuf,
@@ -95,3 +96,13 @@ pub use packet::{
 
 // publically exposed for initialization.
 pub use siphash::IsnGenerator;
+
+pub trait Recv<P: PayloadMut> {
+    fn receive(&mut self, frame: InPacket<P>);
+}
+
+/*
+pub trait Send<P: Payload> {
+    fn send(&mut self, raw: RawPacket<P>);
+}
+*/

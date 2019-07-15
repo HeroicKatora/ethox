@@ -9,8 +9,10 @@
 //! Selective ACKs: https://tools.ietf.org/html/rfc2018
 //! RST handling specifically: https://www.snellman.net/blog/archive/2016-02-01-tcp-rst/
 //!     OS comparison in particular
+use crate::layer::ip;
 use crate::managed::{Map, SlotMap, slotmap::Key};
-use crate::wire::{IpAddress, TcpSeqNumber};
+use crate::wire::{IpAddress, TcpChecksum, TcpPacket, TcpSeqNumber};
+use crate::wire::PayloadMut;
 use crate::time::{Duration, Instant};
 
 use super::connection::{
@@ -19,6 +21,7 @@ use super::connection::{
     Send,
     State,
     Receive};
+use super::packet::{In};
 use super::siphash::IsnGenerator;
 
 /// Handles TCP connection states.
@@ -57,6 +60,22 @@ pub struct Slot {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SlotKey {
     key: Key,
+}
+
+/// An endpoint borrowed for receiving.
+///
+/// Dispatching to higher protocols is configurerd here, and not in the endpoint state.
+pub struct Receiver<'a, 'e, H> {
+    endpoint: Borrow<'a, 'e>,
+
+    /// The upper protocol receiver.
+    handler: H,
+}
+
+struct Borrow<'a, 'e> {
+    // TODO: could be immutable as well, just disallowing updates. Evaluate whether this is useful
+    // or needed somewhere.
+    inner: &'a mut Endpoint<'e>,
 }
 
 /// A partially mutable reference to a connection.
@@ -208,6 +227,16 @@ impl Endpoint<'_> {
     }
 }
 
+impl<'ep> Endpoint<'ep> {
+    pub fn recv<H>(&mut self, handler: H) -> Receiver<'_, 'ep, H> {
+        Receiver { endpoint: self.borrow(), handler }
+    }
+
+    fn borrow(&mut self) -> Borrow<'_, 'ep> {
+        Borrow { inner: self, }
+    }
+}
+
 impl<'a> Entry<'a> {
     pub fn into_key_value(self) -> (EntryKey<'a>, &'a mut Connection) {
         let entry_key = EntryKey {
@@ -287,3 +316,35 @@ impl PortMap for Map<'_, FourTuple, Key> {
             .insert(value);
     }
 }
+
+impl<H, P> ip::Recv<P> for Receiver<'_, '_, H>
+where
+    P: PayloadMut,
+    H: super::Recv<P>,
+{
+    fn receive(&mut self, ip_packet: ip::InPacket<P>) {
+        let ip::InPacket { mut handle, packet } = ip_packet;
+        let repr = packet.repr();
+
+        let checksum = TcpChecksum::Manual {
+            src_addr: repr.src_addr(),
+            dst_addr: repr.dst_addr(),
+        };
+
+        let packet = match TcpPacket::new_checked(packet, checksum) {
+            Ok(packet) => packet,
+            // TODO: error logging.
+            Err(_) => return,
+        };
+
+        let arrived = match In::from_arriving(self.endpoint.inner, handle.borrow_mut(), packet) {
+            Ok(arrived) => arrived,
+
+            // TODO: error logging.
+            Err(_) => return,
+        };
+
+        self.handler.receive(arrived)
+    }
+}
+
