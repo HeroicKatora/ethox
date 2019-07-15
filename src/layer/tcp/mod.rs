@@ -77,6 +77,7 @@ use crate::wire::PayloadMut;
 
 mod connection;
 mod endpoint;
+pub mod io;
 mod packet;
 
 mod siphash;
