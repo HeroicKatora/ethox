@@ -18,6 +18,11 @@ pub enum In<'a, P: PayloadMut> {
     /// There is an open connection and you may send and receive data.
     Open(Open<'a, P>),
 
+    /// A packet from us will close the connection.
+    ///
+    /// This is very similar to `Sending` but it no longer contains a valid connection.
+    Closing(Closing<'a, P>),
+
     /// Connection has just been closed by the packet.
     Closed(Stray<'a, P>),
 
@@ -83,8 +88,21 @@ enum Unhandled<'a, P: Payload> {
 ///
 /// The packet has been prepared and already queued on the socket. Not handling or dropping the
 /// packet structure now will emit the packet.
+///
+/// Note that there may still be data that can be received, or the possibility to piggy-back more
+/// data to be sent onto the packet. There are flags to test for this.
 pub struct Sending<'a, P: Payload> {
     operator: Operator<'a>,
+    signals: Signals,
+    out: ip::OutPacket<'a, P>,
+}
+
+/// A closing message from us.
+/// 
+/// Same as `Sending`, the packet has already been prepared and queue.
+pub struct Closing<'a, P: Payload> {
+    endpoint: &'a mut Endpoint,
+    signals: Signals,
     out: ip::OutPacket<'a, P>,
 }
 
@@ -157,19 +175,54 @@ impl<'a, P: PayloadMut> In<'a, P> {
             time,
         };
 
-        let signals = operator.arrives(&in_packet);
+        let mut signals = operator.arrives(&in_packet);
 
-        if signals.delete {
+        // Deleting the connection nothing to be sent.
+        if signals.delete && signals.answer.is_none() {
             debug_assert_eq!(signals.receive, false);
             debug_assert_eq!(signals.may_send, false);
-            debug_assert_eq!(signals.answer.is_none(), true);
             let endpoint = operator.delete();
+            // TODO: Propagate `reset` bit
             return In::Closed(Stray {
                 endpoint,
                 tcp,
             });
         }
 
-        unimplemented!()
+        // If no answer we are free to send anything.
+        let answer = match signals.answer.take() {
+            Some(answer) => answer,
+            None => {
+                // We can not be forced to drop this.
+                debug_assert_eq!(signals.may_send, true);
+                debug_assert_eq!(signals.reset, false);
+                debug_assert_eq!(signals.delete, false);
+                return In::Open(Open {
+                    operator,
+                    signals,
+                    tcp,
+                });
+            },
+        };
+
+        // Prepare the answer packet itself.
+        let out = unimplemented!();
+
+        // We need to close the connection. The sent packet should be an RST.
+        if signals.delete {
+            let endpoint = operator.delete();
+            return In::Closing(Closing {
+                endpoint,
+                signals,
+                out,
+            });
+        }
+
+        debug_assert_eq!(signals.reset, false);
+        In::Sending(Sending {
+            operator,
+            signals,
+            out,
+        })
     }
 }
