@@ -72,7 +72,6 @@ pub struct Connection {
     /// In RFC793 this is referred to as `SND`.
     pub send: Send,
 
-
     /// The receiving state.
     ///
     /// In RFC793 this is referred to as `RCV`.
@@ -91,11 +90,18 @@ pub struct Send {
     /// In RFC793 this is referred to as `SND.NXT`.
     pub next: TcpSeqNumber,
 
+    /// Number of bytes available for sending in total.
+    ///
+    /// In contrast to `unacked` this is the number of bytes that have not yet been sent. The
+    /// driver will update this number prior to sending or receiving packets so that an optimal
+    /// answer packet can be determined.
+    pub unsent: usize,
+
     /// The send window size indicated by the receiver.
     ///
     /// Must not send packet containing a sequence number beyond `unacked + window`. In RFC793 this
     /// is referred to as `SND.WND`.
-    pub window: u32,
+    pub window: u16,
 
     /// The initial sequence number.
     ///
@@ -124,7 +130,7 @@ pub struct Receive {
     ///
     /// Incoming packet containing a sequence number beyond `unacked + window`. In RFC793 this
     /// is referred to as `SND.WND`.
-    pub window: u32,
+    pub window: u16,
 
     /// The initial receive sequence number.
     ///
@@ -196,9 +202,19 @@ pub struct NewReno {
 ///
 /// Private representation since they also influence handling of the state itself.
 #[derive(Clone, Copy, Default, Debug)]
+#[must_use = "Doesn't do anything on its own, make sure any answer is actually sent."]
 pub struct Signals {
     /// If the state should be deleted.
     delete: bool,
+
+    /// The user should be notified of this reset connection.
+    reset: bool,
+
+    /// There is valid data in the packet to receive.
+    receive: bool,
+
+    /// Whether the Operator could send data.
+    may_send: bool,
 
     /// Need to send some tcp answer.
     ///
@@ -206,6 +222,18 @@ pub struct Signals {
     /// *not* to actually send the packet. In particular you could probably advance the internal
     /// state without acquiring packets to send out. This, however, sounds like a very bad idea.
     answer: Option<TcpRepr>,
+}
+
+/// An ingoing communication.
+pub struct InPacket {
+    /// Metadata of the tcp layer packet.
+    pub segment: TcpRepr,
+
+    /// The sender address.
+    pub from: IpAddress,
+
+    /// The arrival time of the packet at the nic.
+    pub time: Instant,
 }
 
 /// An internal, lifetime erased trait for controlling connections of an `Endpoint`.
@@ -234,12 +262,20 @@ pub struct Operator<'a> {
     connection_key: SlotKey,
 }
 
+/// Internal return determining how a received ack is handled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AckUpdate {
+    None,
+    Updated,
+    Unsent,
+}
+
 impl Connection {
-    pub fn arrives(&mut self, segment: TcpRepr, entry: EntryKey, time: Instant) -> Signals {
+    pub fn arrives(&mut self, incoming: &InPacket, entry: EntryKey) -> Signals {
         match self.current {
-            State::Closed => self.arrives_closed(segment),
-            State::Listen => self.arrives_listen(segment, entry, time),
-            State::Established => self.arrives_established(segment),
+            State::Closed => self.arrives_closed(incoming),
+            State::Listen => self.arrives_listen(incoming, entry),
+            State::Established => self.arrives_established(incoming),
             _ => unimplemented!(),
         }
     }
@@ -248,7 +284,8 @@ impl Connection {
     ///
     /// Except when an RST flag is already set on the received packet. Probably the easiest packet
     /// flow.
-    fn arrives_closed(&mut self, segment: TcpRepr) -> Signals {
+    fn arrives_closed(&mut self, incoming: &InPacket) -> Signals {
+        let segment = incoming.segment;
         let mut signals = Signals::default();
         if segment.flags.rst() {
             // Avoid answering with RST when packet has RST set.
@@ -298,10 +335,12 @@ impl Connection {
         return signals;
     }
 
-    fn arrives_listen(&mut self, segment: TcpRepr, entry: EntryKey, time: Instant)
+    fn arrives_listen(&mut self, incoming: &InPacket, mut entry: EntryKey)
         -> Signals
     {
+        let InPacket { segment, from, time, } = incoming;
         let mut signals = Signals::default();
+
         if segment.flags.rst() {
             return signals;
         }
@@ -333,12 +372,16 @@ impl Connection {
             return signals;
         }
 
-        unimplemented!("Change and setup connection four tuple (for isn also)");
-
+        let current_four = entry.four_tuple();
+        let new_four = FourTuple {
+            remote: *from,
+            .. current_four
+        };
+        entry.set_four_tuple(new_four);
         self.recv.next = segment.seq_number + 1;
         self.recv.initial_seq = segment.seq_number;
 
-        let isn = entry.initial_seq_num(time);
+        let isn = entry.initial_seq_num(*time);
         self.send.next = isn + 1;
         self.send.unacked = isn;
         self.send.initial_seq = isn;
@@ -365,8 +408,160 @@ impl Connection {
         signals
     }
 
-    fn arrives_established(&mut self, segment: TcpRepr) -> Signals {
-        unimplemented!()
+    fn arrives_established(&mut self, incoming: &InPacket) -> Signals {
+        // TODO: time for RTT estimation, ...
+        let InPacket { segment, from, time: _, } = incoming;
+
+        let acceptable = self.ingress_acceptable(segment);
+
+        if !acceptable {
+            if segment.flags.rst() {
+                return self.forced_close_by_reset();
+            }
+
+            let mut signals = Signals::default();
+            signals.answer = Some(TcpRepr {
+                src_port: segment.dst_port,
+                dst_port: segment.src_port,
+                flags: TcpFlags::default(),
+                seq_number: self.send.next,
+                ack_number: Some(self.recv.next),
+                window_len: 0,
+                window_scale: None,
+                max_seg_size: None,
+                sack_permitted: false,
+                sack_ranges: [None; 3],
+                payload_len: 0,
+            });
+        }
+
+        if segment.flags.syn() {
+            debug_assert!(self.recv.in_window(segment.seq_number));
+
+            // This is not acceptable, reset the connection.
+            return self.force_close(segment);
+        }
+
+        let ack = match segment.ack_number {
+            // Not good, but not bad either.
+            None => return Signals::default(),
+            Some(ack) => ack,
+        };
+
+        let ack = self.send.incoming_ack(ack);
+
+        if ack == AckUpdate::Unsent {
+            // That acked something we hadn't sent yet. A madlad at the other end.
+            // Ignore the packet but we ack back the previous state.
+            let mut signals = Signals::default();
+            signals.answer = Some(TcpRepr {
+                src_port: segment.dst_port,
+                dst_port: segment.src_port,
+                flags: TcpFlags::default(),
+                seq_number: self.send.next,
+                ack_number: Some(self.recv.next),
+                window_len: 0,
+                window_scale: None,
+                max_seg_size: None,
+                sack_permitted: false,
+                sack_ranges: [None; 3],
+                payload_len: 0,
+            });
+
+            return signals;
+        }
+
+        if ack == AckUpdate::Updated {
+            self.send.window = segment.window_len;
+        }
+
+        // URG lol
+
+        // Actually accept the segment data. Note that we do not control the receive buffer
+        // ourselves but rather only know the precise buffer lengths at this point. Also, the
+        // window we indicated to the remote may not reflect exactly what we can actually accept.
+        // Furthermore, we a) want to piggy-back data on the ACK to reduce the number of packet
+        // sent and b) may want to delay ACKs as given by data in flight and RTT considerations
+        // such as RFC1122. Thus, we merely signal the precence of available data to the operator
+        // above.
+        let mut signals = Signals::default();
+        signals.receive = true;
+        signals
+    }
+
+    /// Determine if a packet should be deemed acceptable on an open connection.
+    ///
+    /// See: https://tools.ietf.org/html/rfc793#page-40
+    fn ingress_acceptable(&self, repr: &TcpRepr) -> bool {
+        match (self.recv.window, repr.payload_len) {
+            (0, 0) => repr.seq_number == self.recv.next,
+            (0, _) => self.recv.in_window(repr.seq_number),
+            (_, 0) => false,
+            (_, _) => self.recv.in_window(repr.seq_number)
+                || self.recv.in_window(repr.seq_number + repr.payload_len.into() - 1),
+        }
+    }
+
+    /// Close from an incoming reset.
+    ///
+    /// This shared logic is used by some states on receiving a packet with RST set.
+    fn forced_close_by_reset(&mut self) -> Signals {
+        self.previous = self.current;
+        self.current = State::Closed;
+
+        let mut signals = Signals::default();
+        signals.reset = true;
+        signals.delete = true;
+        return signals;
+    }
+
+    /// Close due to invalid incoming packet.
+    ///
+    /// As opposed to `forced_close_by_reset` this one is proactive and we send the RST.
+    fn force_close(&mut self, segment: &TcpRepr) -> Signals {
+        self.previous = self.current;
+        self.current = State::Closed;
+
+        let mut signals = Signals::default();
+        signals.reset = true;
+        signals.delete = true;
+        signals.answer = Some(TcpRepr {
+            src_port: segment.dst_port,
+            dst_port: segment.src_port,
+            flags: {
+                let mut flags = TcpFlags::default();
+                flags.set_rst(true);
+                flags
+            },
+            seq_number: self.send.next,
+            ack_number: Some(self.recv.next),
+            window_len: 0,
+            window_scale: None,
+            max_seg_size: None,
+            sack_permitted: false,
+            sack_ranges: [None; 3],
+            payload_len: 0,
+        });
+        signals
+    }
+}
+
+impl Receive {
+    fn in_window(&self, seq: TcpSeqNumber) -> bool {
+        self.next <= seq && seq < self.next + self.window.into()
+    }
+}
+
+impl Send {
+    fn incoming_ack(&mut self, seq: TcpSeqNumber) -> AckUpdate {
+        if seq <= self.unacked {
+            AckUpdate::None
+        } else if seq <= self.next {
+            self.unacked = seq;
+            AckUpdate::Updated
+        } else {
+            AckUpdate::Unsent
+        }
     }
 }
 
@@ -388,9 +583,9 @@ impl<'a> Operator<'a> {
         })
     }
 
-    pub fn arrives(&mut self, segment: TcpRepr, time: Instant) -> Signals {
+    pub fn arrives(&mut self, incoming: &InPacket) -> Signals {
         let (entry_key, connection) = self.entry().into_key_value();
-        connection.arrives(segment, entry_key, time)
+        connection.arrives(incoming, entry_key)
     }
 
     fn entry(&mut self) -> Entry {

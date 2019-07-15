@@ -66,7 +66,6 @@ pub struct SlotKey {
 /// to that connection, to modify the connection itself, and to access the initial sequence number
 /// generator.
 pub struct Entry<'a> {
-    index: SlotKey,
     ports: &'a mut PortMap,
     isn: &'a IsnGenerator,
     slot: &'a mut Slot,
@@ -77,7 +76,6 @@ pub struct Entry<'a> {
 /// From an `Entry` split into the connection and the keys referring to it in such a manner that
 /// the keys can be edited without affecting the connection itself.
 pub struct EntryKey<'a> {
-    index: SlotKey,
     ports: &'a mut PortMap,
     isn: &'a IsnGenerator,
     key_in_slot: &'a mut FourTuple,
@@ -87,6 +85,7 @@ pub struct EntryKey<'a> {
 ///
 /// Erases the lifetime from the underlying `Map` itself.
 trait PortMap {
+    /// Note: does not permit failure so we must never expose it.
     fn remap(&mut self, old: FourTuple, new: FourTuple);
 }
 
@@ -103,7 +102,6 @@ impl Endpoint<'_> {
         let slot = self.states.get_mut(index.key)?;
 
         Some(Entry {
-            index,
             ports: &mut self.ports,
             isn: &mut self.isn_generator,
             slot,
@@ -192,6 +190,7 @@ impl Endpoint<'_> {
             send: Send {
                 unacked: TcpSeqNumber::default(),
                 next: TcpSeqNumber::default(),
+                unsent: 0,
                 window: 0,
                 initial_seq: TcpSeqNumber::default(),
             },
@@ -212,7 +211,6 @@ impl Endpoint<'_> {
 impl<'a> Entry<'a> {
     pub fn into_key_value(self) -> (EntryKey<'a>, &'a mut Connection) {
         let entry_key = EntryKey {
-            index: self.index,
             ports: self.ports,
             isn: self.isn,
             key_in_slot: &mut self.slot.addr,
@@ -233,6 +231,10 @@ impl EntryKey<'_> {
         *self.key_in_slot
     }
 
+    /// Move the connection state to a new connection tuple.
+    ///
+    /// # Panics
+    /// `new` must not be taken by any other connection yet.
     pub fn set_four_tuple(&mut self, new: FourTuple) {
         self.ports.remap(*self.key_in_slot, new);
         *self.key_in_slot = new;
