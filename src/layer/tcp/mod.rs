@@ -85,5 +85,13 @@ pub use endpoint::{
     SlotKey,
     Endpoint};
 
+pub use packet::{
+    In,
+    Open,
+    RecvBuf,
+    SendBuf,
+    Sending,
+    Stray,};
+
 // publically exposed for initialization.
 pub use siphash::IsnGenerator;

@@ -220,6 +220,10 @@ impl<'a> Entry<'a> {
 
         (entry_key, connection)
     }
+
+    pub fn remove(self) {
+        unimplemented!()
+    }
 }
 
 impl EntryKey<'_> {

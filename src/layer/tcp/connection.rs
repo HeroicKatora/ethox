@@ -205,23 +205,23 @@ pub struct NewReno {
 #[must_use = "Doesn't do anything on its own, make sure any answer is actually sent."]
 pub struct Signals {
     /// If the state should be deleted.
-    delete: bool,
+    pub delete: bool,
 
     /// The user should be notified of this reset connection.
-    reset: bool,
+    pub reset: bool,
 
     /// There is valid data in the packet to receive.
-    receive: bool,
+    pub receive: bool,
 
     /// Whether the Operator could send data.
-    may_send: bool,
+    pub may_send: bool,
 
     /// Need to send some tcp answer.
     ///
     /// Since TCP must assume every packet to be potentially lost it is likely technically fine
     /// *not* to actually send the packet. In particular you could probably advance the internal
     /// state without acquiring packets to send out. This, however, sounds like a very bad idea.
-    answer: Option<TcpRepr>,
+    pub answer: Option<TcpRepr>,
 }
 
 /// An ingoing communication.
@@ -581,6 +581,12 @@ impl<'a> Operator<'a> {
             endpoint,
             connection_key: key,
         })
+    }
+
+    /// Remove the connection and close the operator.
+    pub(crate) fn delete(mut self) -> &'a mut Endpoint {
+        self.entry().remove();
+        self.endpoint
     }
 
     pub fn arrives(&mut self, incoming: &InPacket) -> Signals {

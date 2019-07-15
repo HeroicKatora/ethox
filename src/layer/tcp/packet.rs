@@ -2,7 +2,7 @@ use crate::layer::ip;
 use crate::wire::{Reframe, Payload, PayloadMut, PayloadResult, payload};
 use crate::wire::{TcpPacket, TcpRepr, TcpSeqNumber};
 
-use super::connection::{Endpoint, Operator, Signals};
+use super::connection::{Endpoint, InPacket, Operator, Signals};
 use super::endpoint::FourTuple;
 
 /// An incoming tcp packet.
@@ -17,6 +17,9 @@ pub enum In<'a, P: PayloadMut> {
 
     /// There is an open connection and you may send and receive data.
     Open(Open<'a, P>),
+
+    /// Connection has just been closed by the packet.
+    Closed(Stray<'a, P>),
 
     /// A packet for no connection arrived.
     ///
@@ -95,6 +98,7 @@ pub struct Open<'a, P: PayloadMut> {
 }
 
 pub struct Stray<'a, P: PayloadMut> {
+    endpoint: &'a mut Endpoint,
     tcp: TcpPacket<ip::IpPacket<'a, P>>,
 }
 
@@ -126,5 +130,46 @@ impl<'a, P: PayloadMut> Unhandled<'a, P> {
                 tcp,
             }
         }
+    }
+}
+
+impl<'a, P: PayloadMut> In<'a, P> {
+    pub fn from_arriving(
+        endpoint: &'a mut Endpoint,
+        ip_control: ip::Handle<'a>,
+        tcp: TcpPacket<ip::IpPacket<'a, P>>,
+    ) -> Self {
+        let (mut operator, tcp) = match Unhandled::try_open(endpoint, tcp) {
+            Unhandled::Open { operator, tcp } => (operator, tcp),
+            Unhandled::Closed { endpoint, tcp } => {
+                return In::Stray(Stray {
+                    endpoint,
+                    tcp,
+                });
+            }
+        };
+
+        let from = tcp.inner().repr().src_addr();
+        let time = ip_control.info().timestamp();
+        let in_packet = InPacket {
+            segment: tcp.repr(),
+            from,
+            time,
+        };
+
+        let signals = operator.arrives(&in_packet);
+
+        if signals.delete {
+            debug_assert_eq!(signals.receive, false);
+            debug_assert_eq!(signals.may_send, false);
+            debug_assert_eq!(signals.answer.is_none(), true);
+            let endpoint = operator.delete();
+            return In::Closed(Stray {
+                endpoint,
+                tcp,
+            });
+        }
+
+        unimplemented!()
     }
 }
