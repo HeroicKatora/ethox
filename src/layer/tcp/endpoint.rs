@@ -17,7 +17,7 @@ use crate::time::{Duration, Instant};
 
 use super::connection::{
     Connection,
-    NewReno,
+    Flow,
     Send,
     State,
     Receive};
@@ -122,7 +122,7 @@ impl Endpoint<'_> {
         let slot = self.states.get_mut(index.key)?;
 
         Some(Entry {
-            key: index.key,
+            key: SlotKey { key: index.key },
             ports: &mut self.ports,
             isn: &mut self.isn_generator,
             slot,
@@ -133,7 +133,7 @@ impl Endpoint<'_> {
         -> Option<Entry>
     {
         let key = self.ports.get(&tuple).cloned()?;
-        self.entry(key)
+        self.entry(SlotKey { key })
     }
 
     pub fn get(&self, index: SlotKey)
@@ -203,7 +203,7 @@ impl Endpoint<'_> {
         Connection {
             current: State::Closed,
             previous: State::Closed,
-            flow_control: NewReno {
+            flow_control: Flow {
                 congestion_window: 0,
                 ssthresh: u32::max_value(),
                 recover: TcpSeqNumber::default(),
@@ -212,19 +212,26 @@ impl Endpoint<'_> {
             sender_maximum_segment_size: 0,
             receiver_maximum_segment_size: 0,
             last_ack_receive_offset: TcpSeqNumber::default(),
-            last_ack_time: Instant::from_millis(0),
-            last_ack_timeout: Duration::from_millis(500),
+            ack_timer: Instant::from_millis(0),
+            ack_timeout: Duration::from_millis(500),
+            retransmission_timer: Instant::from_millis(0),
+            retransmission_timeout: Duration::from_millis(3000),
+            restart_timeout: Duration::from_millis(30000),
             selective_acknowledgements: false,
+            duplicate_ack: 0,
             send: Send {
                 unacked: TcpSeqNumber::default(),
                 next: TcpSeqNumber::default(),
+                last_time: Instant::from_millis(0),
                 unsent: 0,
                 window: 0,
+                window_scale: 0,
                 initial_seq: TcpSeqNumber::default(),
             },
             recv: Receive {
                 acked: TcpSeqNumber::default(),
                 next: TcpSeqNumber::default(),
+                last_time: Instant::from_millis(0),
                 window: 0,
                 initial_seq: TcpSeqNumber::default(),
             },
@@ -301,18 +308,16 @@ impl super::connection::Endpoint for Endpoint<'_> {
     }
 
     fn find_tuple(&mut self, tuple: FourTuple) -> Option<Entry> {
-        match Endpoint::entry_from_tuple(self, tuple) {
-            Some(entry) => return Some(entry),
-            None => (),
+        if self.ports.entry(tuple).occupied().is_some() {
+            Endpoint::entry_from_tuple(self, tuple)
+        } else {
+            Endpoint::entry_from_tuple(self, FourTuple {
+                local: tuple.local,
+                local_port: tuple.local_port,
+                remote: IpAddress::Unspecified,
+                remote_port: 0,
+            })
         }
-
-        // Try the listening address.
-        Endpoint::entry_from_tuple(self, FourTuple {
-            local: tuple.local,
-            local_port: tuple.local_port,
-            remote: IpAddress::Unspecified,
-            remote_port: 0,
-        })
     }
 
     fn listen(&mut self, ip: IpAddress, port: u16) -> Option<SlotKey> {

@@ -1,3 +1,5 @@
+use core::convert::TryFrom;
+use core::ops::Range;
 use crate::time::{Duration, Instant};
 use crate::wire::{IpAddress, TcpFlags, TcpRepr, TcpSeqNumber};
 
@@ -26,7 +28,7 @@ pub struct Connection {
     ///
     /// Currently hard coded as TCP Reno but practically could also be an enum when we find a
     /// suitable common interface.
-    pub flow_control: NewReno,
+    pub flow_control: Flow,
 
     /// The indicated receive window (rcwd) of the other side.
     pub receive_window: u32,
@@ -55,17 +57,33 @@ pub struct Connection {
     ///
     /// We MUST NOT wait more than 500ms before sending the ACK after receiving some new segment
     /// bytes. However, we CAN wait shorter, see `last_ack_timeout`.
-    pub last_ack_time: Instant,
+    pub ack_timer: Instant,
 
     /// Timeout before sending the next ACK after a new segment.
     ///
     /// For compliance with RFC1122 this MUST NOT be greater than 500ms but it could be smaller.
-    pub last_ack_timeout: Duration,
+    pub ack_timeout: Duration,
+
+    /// When to start retransmission and/or detect a loss.
+    pub retransmission_timer: Instant,
+
+    /// The duration of the retransmission timer.
+    pub retransmission_timeout: Duration,
+
+    /// Timeout of no packets in either direction after which restart is used.
+    ///
+    /// This will only occur if no data is to be transmitted in either direction as otherwise we
+    /// would try sending or receive at least recovery packets. Well, the user could not have
+    /// called us for a very long time but then this is also fine.
+    pub restart_timeout: Duration,
 
     /// If we are permitted to use SACKs.
     ///
     /// This is true if the SYN packet allowed it in its options since we support it [WIP].
     pub selective_acknowledgements: bool,
+
+    /// Counter of duplicated acks.
+    pub duplicate_ack: u8,
 
     /// The sending state.
     ///
@@ -90,6 +108,9 @@ pub struct Send {
     /// In RFC793 this is referred to as `SND.NXT`.
     pub next: TcpSeqNumber,
 
+    /// The time of the last valid packet.
+    pub last_time: Instant,
+
     /// Number of bytes available for sending in total.
     ///
     /// In contrast to `unacked` this is the number of bytes that have not yet been sent. The
@@ -102,6 +123,11 @@ pub struct Send {
     /// Must not send packet containing a sequence number beyond `unacked + window`. In RFC793 this
     /// is referred to as `SND.WND`.
     pub window: u16,
+
+    /// The window scale parameter.
+    ///
+    /// Guaranteed to be at most 14 so that shifting the window in a `u32`/`i32` is always safe.
+    pub window_scale: u8,
 
     /// The initial sequence number.
     ///
@@ -125,6 +151,9 @@ pub struct Receive {
     /// publicly announed as our `NXT` sequence. Validity checks of incoming packet should be done
     /// relative to this value instead of `next`. In Linux, this is called `wup`.
     pub acked: TcpSeqNumber,
+
+    /// The time the last segment was sent.
+    pub last_time: Instant,
 
     /// The receive window size indicated by us.
     ///
@@ -180,9 +209,9 @@ pub enum State {
     LastAck,
 }
 
-/// Models TCP NewReno flow control and congestion avoidance.
+/// Models TCP Reno flow control and congestion avoidance.
 #[derive(Clone, Copy, Debug, Hash)]
-pub struct NewReno {
+pub struct Flow {
     /// Decider between slow-start and congestion.
     ///
     /// Set to MAX initially, then updated on occurance of congestion.
@@ -236,6 +265,14 @@ pub struct InPacket {
     pub time: Instant,
 }
 
+pub struct Segment {
+    /// The segment number to choose.
+    seq_number: TcpSeqNumber,
+
+    /// Range of the data within the (re-)transmit buffer.
+    range: Range<usize>,
+}
+
 /// An internal, lifetime erased trait for controlling connections of an `Endpoint`.
 ///
 /// This decouples the required interface for a packet from the implementation details of
@@ -267,8 +304,11 @@ pub struct Operator<'a> {
 /// Internal return determining how a received ack is handled.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AckUpdate {
-    None,
-    Updated,
+    TooLow,
+    Duplicate,
+    Updated {
+        new_bytes: u32
+    },
     Unsent,
 }
 
@@ -450,31 +490,36 @@ impl Connection {
             Some(ack) => ack,
         };
 
-        let ack = self.send.incoming_ack(ack);
+        match self.send.incoming_ack(ack) {
+            AckUpdate::Unsent => {
+                // That acked something we hadn't sent yet. A madlad at the other end.
+                // Ignore the packet but we ack back the previous state.
+                let mut signals = Signals::default();
+                signals.answer = Some(TcpRepr {
+                    src_port: segment.dst_port,
+                    dst_port: segment.src_port,
+                    flags: TcpFlags::default(),
+                    seq_number: self.send.next,
+                    ack_number: Some(self.recv.next),
+                    window_len: 0,
+                    window_scale: None,
+                    max_seg_size: None,
+                    sack_permitted: false,
+                    sack_ranges: [None; 3],
+                    payload_len: 0,
+                });
 
-        if ack == AckUpdate::Unsent {
-            // That acked something we hadn't sent yet. A madlad at the other end.
-            // Ignore the packet but we ack back the previous state.
-            let mut signals = Signals::default();
-            signals.answer = Some(TcpRepr {
-                src_port: segment.dst_port,
-                dst_port: segment.src_port,
-                flags: TcpFlags::default(),
-                seq_number: self.send.next,
-                ack_number: Some(self.recv.next),
-                window_len: 0,
-                window_scale: None,
-                max_seg_size: None,
-                sack_permitted: false,
-                sack_ranges: [None; 3],
-                payload_len: 0,
-            });
-
-            return signals;
-        }
-
-        if ack == AckUpdate::Updated {
-            self.send.window = segment.window_len;
+                return signals;
+            },
+            AckUpdate::Duplicate => {
+                self.duplicate_ack = self.duplicate_ack.saturating_add(1);
+            },
+            // This is a reordered packet, potentially an attack. Do nothing.
+            AckUpdate::TooLow => (),
+            AckUpdate::Updated { new_bytes } => {
+                self.send.window = segment.window_len;
+                self.window_update(segment, new_bytes);
+            },
         }
 
         // URG lol
@@ -546,6 +591,91 @@ impl Connection {
         });
         signals
     }
+
+    /// Choose a next data segment to send.
+    ///
+    /// May choose to send an empty range for cases where there is no data to send but a delayed
+    /// ACK is expected.
+    fn next_send_segment(&mut self, available: usize, time: Instant) -> Option<Segment> {
+        // Convert the input to `u32`, our window can never be that large anyways.
+        let available = u32::try_from(available)
+            .ok().unwrap_or_else(u32::max_value);
+        // Connection restarted after idle time.
+        let last_time = self.recv.last_time.max(self.send.last_time);
+        if time > last_time + self.restart_timeout {
+            self.flow_control.congestion_window = self.restart_window();
+        }
+
+        if self.duplicate_ack >= 2 {
+            // Fast retransmit?
+            //
+            // this would be a return path but just don't do anything atm.
+        }
+
+        if self.retransmission_timer > time {
+            // Choose segments to retransmit:
+            return unimplemented!();
+        }
+
+        let window = self.send.window()
+            .min(self.flow_control.congestion_window);
+        let sent = self.send.in_flight();
+        let max_sent = window.min(available);
+
+        // TODO: may want to buffer. But that could be done in the upper `SendBuf` as well.
+        // Probably even the better place as its more immediately accessible to the user.
+        if sent < max_sent {
+            // Send one new segment of new data.
+            let end = sent.saturating_add(self.sender_maximum_segment_size).min(max_sent);
+            // UNWRAP: Available was larger than `end` so these will not fail (even on 16-bit
+            // platforms where the buffer may be smaller than the `u32` window). Math:
+            // `sent_u32 <= end_u32 <= available_u32 <= available_usize`
+            let sent = usize::try_from(end).unwrap();
+            let end = usize::try_from(end).unwrap();
+            let range = sent..end;
+
+            let seq_number = self.send.next;
+            self.send.next = self.send.next + range.len();
+            return Some(Segment { seq_number, range, });
+        }
+
+        // There is nothing to send but we may need to ack anyways.
+        if time > self.ack_timer {
+            self.release_ack_timer(time);
+            return Some(Segment {
+                seq_number: self.send.next,
+                range: 0..0,
+            });
+        }
+
+        None
+    }
+
+    fn window_update(&mut self, segment: &TcpRepr, new_bytes: u32) {
+        let flow = &mut self.flow_control;
+        if self.duplicate_ack > 0 {
+            flow.congestion_window = flow.ssthresh;
+        } else if flow.congestion_window <= flow.ssthresh {
+            flow.congestion_window = flow.congestion_window.saturating_mul(2);
+        } else {
+            // https://tools.ietf.org/html/rfc5681, avoid cwnd flooding from ack splitting.
+            let update = self.sender_maximum_segment_size.min(new_bytes);
+            flow.congestion_window = flow.congestion_window.saturating_add(update);
+        }
+    }
+
+    fn release_retransmit(&mut self, now: Instant) {
+        self.retransmission_timer = now + self.retransmission_timeout;
+    }
+
+    fn release_ack_timer(&mut self, now: Instant) {
+        self.ack_timer = now + self.ack_timeout;
+    }
+
+    /// RFC5681 restart window.
+    fn restart_window(&self) -> u32 {
+        self.flow_control.congestion_window.min(self.send.window.into())
+    }
 }
 
 impl Receive {
@@ -556,14 +686,29 @@ impl Receive {
 
 impl Send {
     fn incoming_ack(&mut self, seq: TcpSeqNumber) -> AckUpdate {
-        if seq <= self.unacked {
-            AckUpdate::None
+        if seq < self.unacked {
+            AckUpdate::TooLow
+        } else if seq == self.unacked {
+            AckUpdate::Duplicate
         } else if seq <= self.next {
+            // FIXME: this calculation could be safe without `as` coercion.
+            let new_bytes = (seq - self.unacked) as u32;
             self.unacked = seq;
-            AckUpdate::Updated
+            AckUpdate::Updated { new_bytes }
         } else {
             AckUpdate::Unsent
         }
+    }
+
+    /// Get the actual window (combination of indicated window and scale).
+    fn window(&self) -> u32 {
+        u32::from(self.window) << self.window_scale
+    }
+
+    /// Get the segments in flight.
+    fn in_flight(&self) -> u32 {
+        assert!(self.unacked > self.next);
+        (self.next - self.unacked) as u32
     }
 }
 
@@ -585,12 +730,19 @@ impl<'a> Operator<'a> {
         })
     }
 
-    pub fn from_tuple(endpoint: &'a mut Endpoint, tuple: FourTuple) -> Option<Self> {
-        let entry = endpoint.find_tuple(tuple)?;
-        Some(Operator {
-            endpoint,
-            connection_key: entry.slot_key(),
-        })
+    pub fn from_tuple(endpoint: &'a mut Endpoint, tuple: FourTuple) -> Result<Self, &'a mut Endpoint> {
+        let key = match endpoint.find_tuple(tuple) {
+            Some(entry) => Some(entry.slot_key()),
+            None => None,
+        };
+
+        match key {
+            Some(key) => Ok(Operator {
+                endpoint,
+                connection_key: key,
+            }),
+            None => Err(endpoint),
+        }
     }
 
     /// Remove the connection and close the operator.

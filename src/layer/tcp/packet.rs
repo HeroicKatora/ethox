@@ -135,11 +135,11 @@ impl<'a, P: PayloadMut> Unhandled<'a, P> {
         };
 
         match Operator::from_tuple(endpoint, connection) {
-            Some(operator) => Unhandled::Open {
+            Ok(operator) => Unhandled::Open {
                 operator,
                 tcp,
             },
-            None => Unhandled::Closed {
+            Err(endpoint) => Unhandled::Closed {
                 endpoint,
                 tcp,
             }
