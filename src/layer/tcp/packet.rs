@@ -113,6 +113,7 @@ pub struct Open<'a, P: PayloadMut> {
     tcp: TcpPacket<ip::IpPacket<'a, P>>,
 }
 
+/// A valid tcp packet not belonging to a connection.
 pub struct Stray<'a, P: PayloadMut> {
     endpoint: &'a mut Endpoint,
     tcp: TcpPacket<ip::IpPacket<'a, P>>,
@@ -133,10 +134,7 @@ impl<'a, P: PayloadMut> Unhandled<'a, P> {
             remote_port: tcp_repr.src_port,
         };
 
-        // Either we have an existing one, or one listening.
-        let key = unimplemented!();
-
-        match Operator::new(endpoint, key) {
+        match Operator::from_tuple(endpoint, connection) {
             Some(operator) => Unhandled::Open {
                 operator,
                 tcp,

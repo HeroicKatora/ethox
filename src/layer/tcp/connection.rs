@@ -249,6 +249,8 @@ pub trait Endpoint {
 
     fn entry(&mut self, index: SlotKey) -> Option<Entry>;
 
+    fn find_tuple(&mut self, tuple: FourTuple) -> Option<Entry>;
+
     fn listen(&mut self, ip: IpAddress, port: u16) -> Option<SlotKey>;
 
     fn open(&mut self, tuple: FourTuple) -> Option<SlotKey>;
@@ -548,7 +550,7 @@ impl Connection {
 
 impl Receive {
     fn in_window(&self, seq: TcpSeqNumber) -> bool {
-        self.next <= seq && seq < self.next + self.window.into()
+        self.next.contains_in_window(seq, self.window.into())
     }
 }
 
@@ -580,6 +582,14 @@ impl<'a> Operator<'a> {
         Some(Operator {
             endpoint,
             connection_key: key,
+        })
+    }
+
+    pub fn from_tuple(endpoint: &'a mut Endpoint, tuple: FourTuple) -> Option<Self> {
+        let entry = endpoint.find_tuple(tuple)?;
+        Some(Operator {
+            endpoint,
+            connection_key: entry.slot_key(),
         })
     }
 

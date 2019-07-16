@@ -36,7 +36,9 @@ impl SendBuf for Empty {
 
 impl RecvBuf for Sink {
     fn receive(&mut self, buf: &[u8], begin: TcpSeqNumber) {
-        unimplemented!()
+        if begin.contains_in_window(self.highest, buf.len()) {
+            self.highest = begin + buf.len();
+        }
     }
 
     fn ack(&mut self) -> TcpSeqNumber {

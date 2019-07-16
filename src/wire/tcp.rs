@@ -64,6 +64,15 @@ impl cmp::PartialOrd for SeqNumber {
     }
 }
 
+impl SeqNumber {
+    /// Check if the window contains the other sequence number.
+    ///
+    /// The length of the window must be at most `i32::MAX`.
+    pub fn contains_in_window(self, other: SeqNumber, len: usize) -> bool {
+        self < other && other < (self + len)
+    }
+}
+
 /// A set of tcp flags.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Flags(pub u16);

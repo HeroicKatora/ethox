@@ -85,6 +85,7 @@ struct Borrow<'a, 'e> {
 /// to that connection, to modify the connection itself, and to access the initial sequence number
 /// generator.
 pub struct Entry<'a> {
+    key: SlotKey,
     ports: &'a mut PortMap,
     isn: &'a IsnGenerator,
     slot: &'a mut Slot,
@@ -121,10 +122,18 @@ impl Endpoint<'_> {
         let slot = self.states.get_mut(index.key)?;
 
         Some(Entry {
+            key: index.key,
             ports: &mut self.ports,
             isn: &mut self.isn_generator,
             slot,
         })
+    }
+
+    pub fn entry_from_tuple(&mut self, tuple: FourTuple)
+        -> Option<Entry>
+    {
+        let key = self.ports.get(&tuple).cloned()?;
+        self.entry(key)
     }
 
     pub fn get(&self, index: SlotKey)
@@ -250,6 +259,10 @@ impl<'a> Entry<'a> {
         (entry_key, connection)
     }
 
+    pub fn slot_key(&self) -> SlotKey {
+        self.key
+    }
+
     pub fn remove(self) {
         unimplemented!()
     }
@@ -285,6 +298,21 @@ impl super::connection::Endpoint for Endpoint<'_> {
 
     fn entry(&mut self, index: SlotKey) -> Option<Entry> {
         Endpoint::entry(self, index)
+    }
+
+    fn find_tuple(&mut self, tuple: FourTuple) -> Option<Entry> {
+        match Endpoint::entry_from_tuple(self, tuple) {
+            Some(entry) => return Some(entry),
+            None => (),
+        }
+
+        // Try the listening address.
+        Endpoint::entry_from_tuple(self, FourTuple {
+            local: tuple.local,
+            local_port: tuple.local_port,
+            remote: IpAddress::Unspecified,
+            remote_port: 0,
+        })
     }
 
     fn listen(&mut self, ip: IpAddress, port: u16) -> Option<SlotKey> {
