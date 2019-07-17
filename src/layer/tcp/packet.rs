@@ -3,7 +3,7 @@ use crate::wire::{Reframe, Payload, PayloadMut, PayloadResult, payload};
 use crate::wire::{IpProtocol, TcpPacket, TcpRepr, TcpSeqNumber};
 
 use super::connection::{Endpoint, InPacket, Operator, Signals};
-use super::endpoint::FourTuple;
+use super::endpoint::{FourTuple, SlotKey};
 
 /// An incoming tcp packet.
 ///
@@ -219,6 +219,21 @@ impl<'a, P: PayloadMut> In<'a, P> {
             operator,
             signals,
         }))
+    }
+}
+
+impl<'a, P: PayloadMut> Open<'a, P> {
+    pub fn key(&self) -> SlotKey {
+        self.operator.connection_key
+    }
+
+    pub fn read(&self, with: &mut impl RecvBuf) {
+        let payload = self.tcp.payload_slice();
+        with.receive(payload, self.tcp.seq_number());
+    }
+
+    pub fn write(self, with: &mut impl SendBuf) -> Sending<'a> {
+        unimplemented!()
     }
 }
 

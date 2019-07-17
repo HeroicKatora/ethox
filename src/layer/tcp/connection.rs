@@ -296,9 +296,9 @@ pub trait Endpoint {
 }
 
 /// The interface to a single active connection on an endpoint.
-pub struct Operator<'a> {
-    endpoint: &'a mut Endpoint,
-    connection_key: SlotKey,
+pub(crate) struct Operator<'a> {
+    pub endpoint: &'a mut Endpoint,
+    pub connection_key: SlotKey,
 }
 
 /// Internal return determining how a received ack is handled.

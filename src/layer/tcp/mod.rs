@@ -79,6 +79,7 @@ mod connection;
 mod endpoint;
 pub mod io;
 mod packet;
+mod socket;
 
 mod siphash;
 
@@ -94,6 +95,9 @@ pub use packet::{
     SendBuf,
     Sending,
     Stray,};
+
+pub use socket::{
+    Client};
 
 // publically exposed for initialization.
 pub use siphash::IsnGenerator;

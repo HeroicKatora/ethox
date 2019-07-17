@@ -300,6 +300,14 @@ impl<T: Payload> Packet<T> {
             checksum::data(data)
         ]) == !0
     }
+
+    /// Return a pointer to the payload.
+    #[inline]
+    pub fn payload_slice(&self) -> &[u8] {
+        let header_len = self.header_len() as usize;
+        let data = self.buffer.payload().as_bytes();
+        &data[header_len..]
+    }
 }
 
 impl<'a, T: Payload + ?Sized> Packet<&'a T> {
@@ -311,9 +319,9 @@ impl<'a, T: Payload + ?Sized> Packet<&'a T> {
         &data[field::OPTIONS(header_len)]
     }
 
-    /// Return a pointer to the payload.
+    /// Turn into a reference to the payload.
     #[inline]
-    pub fn payload_slice(&self) -> &'a [u8] {
+    pub fn into_payload_slice(&self) -> &'a [u8] {
         let header_len = self.header_len() as usize;
         let data = self.buffer.payload().as_bytes();
         &data[header_len..]
