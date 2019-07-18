@@ -254,6 +254,7 @@ impl<'ep> Endpoint<'ep> {
 }
 
 impl<'a> Entry<'a> {
+    /// Destructure into mapping metadata and a reference to the connection.
     pub fn into_key_value(self) -> (EntryKey<'a>, &'a mut Connection) {
         let entry_key = EntryKey {
             ports: self.ports,
@@ -268,6 +269,11 @@ impl<'a> Entry<'a> {
 
     pub fn slot_key(&self) -> SlotKey {
         self.key
+    }
+
+    /// Get a mutable reference to the connection without destructuring.
+    pub fn connection(&mut self) -> &mut Connection {
+        &mut self.slot.connection
     }
 
     pub fn remove(self) {

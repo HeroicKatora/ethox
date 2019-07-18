@@ -756,6 +756,12 @@ impl<'a> Operator<'a> {
         connection.arrives(incoming, entry_key)
     }
 
+    pub fn next_send_segment(&mut self, available: usize, time: Instant)
+        -> Option<Segment>
+    {
+        self.entry().connection().next_send_segment(available, time)
+    }
+
     fn entry(&mut self) -> Entry {
         self.endpoint.entry(self.connection_key).unwrap()
     }

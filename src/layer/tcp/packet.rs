@@ -108,6 +108,7 @@ pub struct Closing<'a> {
 ///
 /// Reading of incoming data and sending of ones own is largely independent of each other.
 pub struct Open<'a, P: PayloadMut> {
+    ip: ip::Handle<'a>,
     operator: Operator<'a>,
     signals: Signals,
     tcp: TcpPacket<ip::IpPacket<'a, P>>,
@@ -194,6 +195,7 @@ impl<'a, P: PayloadMut> In<'a, P> {
                 debug_assert_eq!(signals.reset, false);
                 debug_assert_eq!(signals.delete, false);
                 return Ok(In::Open(Open {
+                    ip: ip_control,
                     operator,
                     signals,
                     tcp,
@@ -232,7 +234,10 @@ impl<'a, P: PayloadMut> Open<'a, P> {
         with.receive(payload, self.tcp.seq_number());
     }
 
-    pub fn write(self, with: &mut impl SendBuf) -> Sending<'a> {
+    pub fn write(mut self, with: &mut impl SendBuf) -> Result<Sending<'a>, Self> {
+        let available = with.available();
+        let time = self.ip.info().timestamp();
+        let range = self.operator.next_send_segment(available, time);
         unimplemented!()
     }
 }
