@@ -91,6 +91,7 @@ pub use endpoint::{
 pub use packet::{
     In as InPacket,
     Open,
+    Raw as RawPacket,
     RecvBuf,
     SendBuf,
     Sending,
@@ -106,8 +107,6 @@ pub trait Recv<P: PayloadMut> {
     fn receive(&mut self, frame: InPacket<P>);
 }
 
-/*
-pub trait Send<P: Payload> {
+pub trait Send<P: PayloadMut> {
     fn send(&mut self, raw: RawPacket<P>);
 }
-*/

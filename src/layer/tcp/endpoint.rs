@@ -243,6 +243,16 @@ impl Endpoint<'_> {
     }
 }
 
+impl Slot {
+    pub fn four_tuple(&self) -> FourTuple {
+        self.addr
+    }
+
+    pub fn connection(&self) -> &Connection {
+        &self.connection
+    }
+}
+
 impl<'ep> Endpoint<'ep> {
     pub fn recv<H>(&mut self, handler: H) -> Receiver<'_, 'ep, H> {
         Receiver { endpoint: self.borrow(), handler }
@@ -301,12 +311,12 @@ impl EntryKey<'_> {
 }
 
 impl super::connection::Endpoint for Endpoint<'_> {
-    fn get(&self, index: SlotKey) -> Option<&Connection> {
-        Endpoint::get(self, index).map(|slot| &slot.connection)
+    fn get(&self, index: SlotKey) -> Option<&Slot> {
+        Endpoint::get(self, index)
     }
 
-    fn get_mut(&mut self, index: SlotKey) -> Option<&mut Connection> {
-        Endpoint::get_mut(self, index).map(|slot| &mut slot.connection)
+    fn get_mut(&mut self, index: SlotKey) -> Option<&mut Slot> {
+        Endpoint::get_mut(self, index)
     }
 
     fn entry(&mut self, index: SlotKey) -> Option<Entry> {

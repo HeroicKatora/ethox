@@ -1,8 +1,8 @@
 use crate::layer::ip;
 use crate::wire::{Reframe, Payload, PayloadMut, PayloadResult, payload};
-use crate::wire::{IpProtocol, TcpPacket, TcpRepr, TcpSeqNumber};
+use crate::wire::{IpAddress, IpProtocol, TcpPacket, TcpRepr, TcpSeqNumber};
 
-use super::connection::{Endpoint, InPacket, Operator, Signals};
+use super::connection::{Endpoint, InPacket, Operator, Segment, Signals};
 use super::endpoint::{FourTuple, SlotKey};
 
 /// An incoming tcp packet.
@@ -111,13 +111,31 @@ pub struct Open<'a, P: PayloadMut> {
     ip: ip::Handle<'a>,
     operator: Operator<'a>,
     signals: Signals,
-    tcp: TcpPacket<ip::IpPacket<'a, P>>,
+    packet: OpenPacket<'a, P>,
 }
 
 /// A valid tcp packet not belonging to a connection.
 pub struct Stray<'a, P: PayloadMut> {
     endpoint: &'a mut Endpoint,
     tcp: TcpPacket<ip::IpPacket<'a, P>>,
+}
+
+enum OpenPacket<'a, P: PayloadMut> {
+    /// There is an incoming packet and data to be read.
+    In {
+        tcp: TcpPacket<ip::IpPacket<'a, P>>,
+    },
+
+    /// We got this from the outgoing direction, no data to read.
+    Out {
+        raw: &'a mut P,
+    },
+}
+
+/// A raw opportunity to create a packet.
+pub struct Raw<'a, P: PayloadMut> {
+    ip: ip::RawPacket<'a, P>,
+    endpoint: &'a mut Endpoint,
 }
 
 impl<'a, P: PayloadMut> Unhandled<'a, P> {
@@ -198,7 +216,7 @@ impl<'a, P: PayloadMut> In<'a, P> {
                     ip: ip_control,
                     operator,
                     signals,
-                    tcp,
+                    packet: OpenPacket::In { tcp },
                 }));
             },
         };
@@ -230,15 +248,99 @@ impl<'a, P: PayloadMut> Open<'a, P> {
     }
 
     pub fn read(&self, with: &mut impl RecvBuf) {
-        let payload = self.tcp.payload_slice();
-        with.receive(payload, self.tcp.seq_number());
+        if let OpenPacket::In { tcp } = &self.packet {
+            let payload = tcp.payload_slice();
+            with.receive(payload, tcp.seq_number());
+        }
     }
 
-    pub fn write(mut self, with: &mut impl SendBuf) -> Result<Sending<'a>, Self> {
+    /// Try to send parts of the available data.
+    ///
+    /// If the method succeeds returns a view on the packet being sent. Else, it will return a
+    /// handle to the connection again (this struct).
+    ///
+    /// Any data that is currently held as an incoming packet will be lost, even if this method fails.
+    pub fn write(self, with: &mut impl SendBuf) -> Result<Sending<'a>, crate::layer::Error> {
+        let Open { ip, mut operator, signals: _, packet, } = self;
+        let payload: &'a mut P = match packet {
+            OpenPacket::In { tcp } => tcp.into_inner().into_inner().into_inner(),
+            OpenPacket::Out { raw } => raw,
+        };
+
+        let tcp_seq = operator.connection().send.unacked;
+        with.ack(tcp_seq);
         let available = with.available();
-        let time = self.ip.info().timestamp();
-        let range = self.operator.next_send_segment(available, time);
-        unimplemented!()
+        let time = ip.info().timestamp();
+
+        let Segment { repr, range } = match operator.next_send_segment(available, time) {
+            Some(segment) => segment,
+            None => return Err(crate::layer::Error::Illegal),
+        };
+
+        let raw_ip = ip::RawPacket {
+            handle: ip,
+            payload,
+        };
+
+        let mut out_ip = prepare(raw_ip, &mut operator, repr)?;
+        let mut tcp = TcpPacket::new_unchecked(out_ip.payload_mut_slice(), repr);
+        with.fill(tcp.payload_mut_slice(), tcp_seq + range.start);
+
+        out_ip.send()?;
+
+        Ok(Sending {
+            operator,
+            signals: Signals::default(),
+        })
+    }
+}
+
+impl<'a, P: PayloadMut> Raw<'a, P> {
+    /// Create a new connection.
+    pub fn open(self, addr: IpAddress, port: u16) -> Result<Sending<'a>, crate::layer::Error> {
+        let new = FourTuple {
+            local: addr,
+            local_port: port,
+            remote: IpAddress::Unspecified,
+            remote_port: 0,
+        };
+
+        let mut operator = match self.endpoint.open(new) {
+            None => return Err(crate::layer::Error::Exhausted),
+            Some(key) => Operator::new(self.endpoint, key).unwrap(),
+        };
+
+        let repr = unimplemented!();
+        let out_ip = prepare(self.ip, &mut operator, repr)?;
+        out_ip.send()?;
+
+        Ok(Sending {
+            operator,
+            signals: Signals::default(),
+        })
+    }
+
+    /// Attach to an existing connection.
+    ///
+    /// If successful, this return an `Open` packet with which you can send data on the connection.
+    pub fn attach(self, key: SlotKey) -> Result<Open<'a, P>, Self> {
+        if self.endpoint.get(key).is_none() {
+            return Err(self);
+        };
+
+        let operator = Operator::new(self.endpoint, key).unwrap();
+
+        let ip::RawPacket {
+            handle: ip,
+            payload: raw,
+        } = self.ip;
+
+        Ok(Open {
+            operator,
+            signals: Signals::default(),
+            ip,
+            packet: OpenPacket::Out { raw },
+        })
     }
 }
 
@@ -271,4 +373,26 @@ fn control_answer<'a, P: PayloadMut>(
 
     ip::OutPacket::new_unchecked(handle, packet)
         .send()
+}
+
+fn prepare<'a, P: PayloadMut>(
+    packet: ip::RawPacket<'a, P>,
+    operator: &mut Operator,
+    repr: TcpRepr,
+) -> Result<ip::OutPacket<'a, P>, crate::layer::Error> {
+
+    let tuple = operator.four_tuple();
+    let init_ip = packet.prepare(ip::Init {
+        dst_addr: tuple.remote,
+        source: ip::Source::Exact(tuple.local),
+        protocol: IpProtocol::Tcp,
+        payload: repr.header_len() + usize::from(repr.payload_len),
+    })?;
+
+    let ip::InPacket { handle, mut packet } = init_ip.into_incoming();
+
+    let tcp = TcpPacket::new_unchecked(&mut packet, repr);
+    repr.emit(tcp);
+
+    Ok(ip::OutPacket::new_unchecked(handle, packet))
 }

@@ -3,7 +3,7 @@
 //! An actual socket layer requires allocation all buffers and depends on a few details in the
 //! layer below and these do not (that was not the end goal but some may be added in the future),
 //! but it tries to give a slightly more familiar interface.
-use super::{InPacket, Recv, RecvBuf, SendBuf, SlotKey};
+use super::{InPacket, RawPacket, Recv, RecvBuf, Send, SendBuf, SlotKey};
 use crate::wire::{IpAddress, PayloadMut};
 
 pub struct Client<R, S> {
@@ -70,5 +70,15 @@ where
             InPacket::Closing(closing) => {
             },
         }
+    }
+}
+
+impl<R, S, P> Send<P> for Client<R, S>
+where
+    R: RecvBuf,
+    S: SendBuf,
+    P: PayloadMut,
+{
+    fn send(&mut self, packet: RawPacket<P>) {
     }
 }

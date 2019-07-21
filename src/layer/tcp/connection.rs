@@ -7,6 +7,7 @@ use super::endpoint::{
     Entry,
     EntryKey,
     FourTuple,
+    Slot,
     SlotKey};
 
 /// The state of a connection.
@@ -266,11 +267,11 @@ pub struct InPacket {
 }
 
 pub struct Segment {
-    /// The segment number to choose.
-    seq_number: TcpSeqNumber,
+    /// Representation for the packet.
+    pub repr: TcpRepr,
 
     /// Range of the data within the (re-)transmit buffer.
-    range: Range<usize>,
+    pub range: Range<usize>,
 }
 
 /// An internal, lifetime erased trait for controlling connections of an `Endpoint`.
@@ -280,9 +281,9 @@ pub struct Segment {
 /// want to expose the endpoint's lifetime to the packet handler but also to establish a somewhat
 /// cleaner boundary.
 pub trait Endpoint {
-    fn get(&self, index: SlotKey) -> Option<&Connection>;
+    fn get(&self, index: SlotKey) -> Option<&Slot>;
 
-    fn get_mut(&mut self, index: SlotKey) -> Option<&mut Connection>;
+    fn get_mut(&mut self, index: SlotKey) -> Option<&mut Slot>;
 
     fn entry(&mut self, index: SlotKey) -> Option<Entry>;
 
@@ -312,12 +313,26 @@ enum AckUpdate {
     Unsent,
 }
 
+/// Tcp repr without the connection meta data.
+#[derive(Clone, Copy, Debug)]
+struct InnerRepr {
+    flags:        TcpFlags,
+    seq_number:   TcpSeqNumber,
+    ack_number:   Option<TcpSeqNumber>,
+    window_len:   u16,
+    window_scale: Option<u8>,
+    max_seg_size: Option<u16>,
+    sack_permitted: bool,
+    sack_ranges:  [Option<(u32, u32)>; 3],
+    payload_len:  u16,
+}
+
 impl Connection {
     pub fn arrives(&mut self, incoming: &InPacket, entry: EntryKey) -> Signals {
         match self.current {
             State::Closed => self.arrives_closed(incoming),
             State::Listen => self.arrives_listen(incoming, entry),
-            State::Established => self.arrives_established(incoming),
+            State::Established => self.arrives_established(incoming, entry),
             _ => unimplemented!(),
         }
     }
@@ -327,7 +342,7 @@ impl Connection {
     /// Except when an RST flag is already set on the received packet. Probably the easiest packet
     /// flow.
     fn arrives_closed(&mut self, incoming: &InPacket) -> Signals {
-        let segment = incoming.segment;
+        let segment = &incoming.segment;
         let mut signals = Signals::default();
         if segment.flags.rst() {
             // Avoid answering with RST when packet has RST set.
@@ -336,9 +351,7 @@ impl Connection {
         }
 
         if let Some(ack_number) = segment.ack_number {
-            signals.answer = Some(TcpRepr {
-                src_port: segment.dst_port,
-                dst_port: segment.src_port,
+            signals.answer = Some(InnerRepr {
                 flags: {
                     let mut flags = TcpFlags::default();
                     flags.set_ack(true);
@@ -353,11 +366,9 @@ impl Connection {
                 sack_permitted: false,
                 sack_ranges: [None; 3],
                 payload_len: 0,
-            })
+            }.send_back(segment));
         } else {
-            signals.answer = Some(TcpRepr {
-                src_port: segment.dst_port,
-                dst_port: segment.src_port,
+            signals.answer = Some(InnerRepr {
                 flags: {
                     let mut flags = TcpFlags::default();
                     flags.set_rst(true);
@@ -371,7 +382,7 @@ impl Connection {
                 sack_permitted: false,
                 sack_ranges: [None; 3],
                 payload_len: 0,
-            })
+            }.send_back(segment));
         }
 
         return signals;
@@ -388,9 +399,7 @@ impl Connection {
         }
 
         if let Some(ack_number) = segment.ack_number { // What are you acking? A previous connection.
-            signals.answer = Some(TcpRepr {
-                src_port: segment.dst_port,
-                dst_port: segment.src_port,
+            signals.answer = Some(InnerRepr {
                 flags: {
                     let mut flags = TcpFlags::default();
                     flags.set_ack(true);
@@ -405,7 +414,7 @@ impl Connection {
                 sack_permitted: false,
                 sack_ranges: [None; 3],
                 payload_len: 0,
-            });
+            }.send_back(segment));
             return signals;
         }
 
@@ -428,9 +437,7 @@ impl Connection {
         self.send.unacked = isn;
         self.send.initial_seq = isn;
 
-        signals.answer = Some(TcpRepr {
-            src_port: segment.dst_port,
-            dst_port: segment.src_port,
+        signals.answer = Some(InnerRepr {
             flags: {
                 let mut flags = TcpFlags::default();
                 flags.set_ack(true);
@@ -445,12 +452,12 @@ impl Connection {
             sack_permitted: false,
             sack_ranges: [None; 3],
             payload_len: 0,
-        });
+        }.send_to(new_four));
 
         signals
     }
 
-    fn arrives_established(&mut self, incoming: &InPacket) -> Signals {
+    fn arrives_established(&mut self, incoming: &InPacket, entry: EntryKey) -> Signals {
         // TODO: time for RTT estimation, ...
         let InPacket { segment, from, time: _, } = incoming;
 
@@ -462,9 +469,7 @@ impl Connection {
             }
 
             let mut signals = Signals::default();
-            signals.answer = Some(TcpRepr {
-                src_port: segment.dst_port,
-                dst_port: segment.src_port,
+            signals.answer = Some(InnerRepr {
                 flags: TcpFlags::default(),
                 seq_number: self.send.next,
                 ack_number: Some(self.recv.next),
@@ -474,14 +479,14 @@ impl Connection {
                 sack_permitted: false,
                 sack_ranges: [None; 3],
                 payload_len: 0,
-            });
+            }.send_to(entry.four_tuple()));
         }
 
         if segment.flags.syn() {
             debug_assert!(self.recv.in_window(segment.seq_number));
 
             // This is not acceptable, reset the connection.
-            return self.force_close(segment);
+            return self.force_close(segment, entry);
         }
 
         let ack = match segment.ack_number {
@@ -495,9 +500,7 @@ impl Connection {
                 // That acked something we hadn't sent yet. A madlad at the other end.
                 // Ignore the packet but we ack back the previous state.
                 let mut signals = Signals::default();
-                signals.answer = Some(TcpRepr {
-                    src_port: segment.dst_port,
-                    dst_port: segment.src_port,
+                signals.answer = Some(InnerRepr {
                     flags: TcpFlags::default(),
                     seq_number: self.send.next,
                     ack_number: Some(self.recv.next),
@@ -507,7 +510,7 @@ impl Connection {
                     sack_permitted: false,
                     sack_ranges: [None; 3],
                     payload_len: 0,
-                });
+                }.send_to(entry.four_tuple()));
 
                 return signals;
             },
@@ -565,16 +568,14 @@ impl Connection {
     /// Close due to invalid incoming packet.
     ///
     /// As opposed to `forced_close_by_reset` this one is proactive and we send the RST.
-    fn force_close(&mut self, segment: &TcpRepr) -> Signals {
+    fn force_close(&mut self, segment: &TcpRepr, entry: EntryKey) -> Signals {
         self.previous = self.current;
         self.current = State::Closed;
 
         let mut signals = Signals::default();
         signals.reset = true;
         signals.delete = true;
-        signals.answer = Some(TcpRepr {
-            src_port: segment.dst_port,
-            dst_port: segment.src_port,
+        signals.answer = Some(InnerRepr {
             flags: {
                 let mut flags = TcpFlags::default();
                 flags.set_rst(true);
@@ -588,7 +589,7 @@ impl Connection {
             sack_permitted: false,
             sack_ranges: [None; 3],
             payload_len: 0,
-        });
+        }.send_to(entry.four_tuple()));
         signals
     }
 
@@ -596,7 +597,9 @@ impl Connection {
     ///
     /// May choose to send an empty range for cases where there is no data to send but a delayed
     /// ACK is expected.
-    fn next_send_segment(&mut self, available: usize, time: Instant) -> Option<Segment> {
+    pub fn next_send_segment(&mut self, available: usize, time: Instant, entry: EntryKey)
+        -> Option<Segment>
+    {
         // Convert the input to `u32`, our window can never be that large anyways.
         let available = u32::try_from(available)
             .ok().unwrap_or_else(u32::max_value);
@@ -636,14 +639,37 @@ impl Connection {
 
             let seq_number = self.send.next;
             self.send.next = self.send.next + range.len();
-            return Some(Segment { seq_number, range, });
+            return Some(Segment {
+                repr: InnerRepr {
+                    seq_number,
+                    flags: TcpFlags::default(),
+                    ack_number: Some(self.recv.next),
+                    window_len: 0,
+                    window_scale: None,
+                    max_seg_size: None,
+                    sack_permitted: false,
+                    sack_ranges: [None; 3],
+                    payload_len: 0,
+                }.send_to(entry.four_tuple()),
+                range,
+            });
         }
 
         // There is nothing to send but we may need to ack anyways.
         if time > self.ack_timer {
             self.release_ack_timer(time);
             return Some(Segment {
-                seq_number: self.send.next,
+                repr: InnerRepr {
+                    seq_number: self.send.next,
+                    flags: TcpFlags::default(),
+                    ack_number: Some(self.recv.next),
+                    window_len: 0,
+                    window_scale: None,
+                    max_seg_size: None,
+                    sack_permitted: false,
+                    sack_ranges: [None; 3],
+                    payload_len: 0,
+                }.send_to(entry.four_tuple()),
                 range: 0..0,
             });
         }
@@ -716,6 +742,14 @@ impl Operator<'_> {
     pub fn key(&self) -> SlotKey {
         self.connection_key
     }
+
+    pub fn four_tuple(&self) -> FourTuple {
+        self.slot().four_tuple()
+    }
+
+    pub fn connection(&self) -> &Connection {
+        self.slot().connection()
+    }
 }
 
 impl<'a> Operator<'a> {
@@ -759,16 +793,47 @@ impl<'a> Operator<'a> {
     pub fn next_send_segment(&mut self, available: usize, time: Instant)
         -> Option<Segment>
     {
-        self.entry().connection().next_send_segment(available, time)
+        let (entry_key, connection) = self.entry().into_key_value();
+        connection.next_send_segment(available, time, entry_key)
     }
 
     fn entry(&mut self) -> Entry {
         self.endpoint.entry(self.connection_key).unwrap()
+    }
+
+    fn slot(&self) -> &Slot {
+        self.endpoint.get(self.connection_key).unwrap()
     }
 }
 
 impl Default for State {
     fn default() -> Self {
         State::Closed
+    }
+}
+
+impl InnerRepr {
+    pub fn send_back(&self, incoming: &TcpRepr) -> TcpRepr {
+        self.send_impl(incoming.dst_port, incoming.src_port)
+    }
+
+    pub fn send_to(&self, tuple: FourTuple) -> TcpRepr {
+        self.send_impl(tuple.local_port, tuple.remote_port)
+    }
+
+    fn send_impl(&self, src: u16, dst: u16) -> TcpRepr {
+        TcpRepr {
+            src_port: src,
+            dst_port: dst,
+            seq_number: self.seq_number,
+            flags: self.flags,
+            ack_number: self.ack_number,
+            window_len: self.window_len,
+            window_scale: self.window_scale,
+            max_seg_size: self.max_seg_size,
+            sack_permitted: self.sack_permitted,
+            sack_ranges: self.sack_ranges,
+            payload_len: self.payload_len,
+        }
     }
 }
