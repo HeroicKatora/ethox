@@ -210,9 +210,10 @@ impl<C: PayloadMut> Device for TapInterface<C> {
 
         if handle.was_sent() {
             self.send()?;
+            Ok(1)
+        } else {
+            Ok(0)
         }
-
-        Ok(1)
     }
 
     fn rx(&mut self, _: usize, mut receptor: impl nic::Recv<Self::Handle, Self::Payload>)
