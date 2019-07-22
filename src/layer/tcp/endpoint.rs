@@ -247,6 +247,7 @@ impl Endpoint<'_> {
                 next: TcpSeqNumber::default(),
                 last_time: Instant::from_millis(0),
                 window: 0,
+                window_scale: 0,
                 initial_seq: TcpSeqNumber::default(),
             },
         }
@@ -427,14 +428,14 @@ where
         let packet = match TcpPacket::new_checked(packet, checksum) {
             Ok(packet) => packet,
             // TODO: error logging.
-            Err(_) => return,
+            Err(_) => return eprintln!("Oh not a tcp"),
         };
 
         let arrived = match In::from_arriving(self.endpoint.inner, handle.borrow_mut(), packet) {
             Ok(arrived) => arrived,
 
             // TODO: error logging.
-            Err(_) => return,
+            Err(_) => return eprintln!("not really for us"),
         };
 
         self.handler.receive(arrived)

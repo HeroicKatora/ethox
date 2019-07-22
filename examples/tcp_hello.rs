@@ -55,10 +55,6 @@ fn main() {
         let rx = interface.rx(10, eth.recv(ip.recv(tcp.recv(&mut tcp_client)))).unwrap();
         let tx = interface.tx(10, eth.send(ip.send(tcp.send(&mut tcp_client)))).unwrap();
 
-        if rx + tx > 0 {
-            dbg!((rx, tx));
-        }
-
         if tcp_client.is_closed() {
             break;
         }

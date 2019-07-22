@@ -208,8 +208,10 @@ impl<'a, P: PayloadMut> In<'a, P> {
 
         // Deleting the connection nothing to be sent.
         if signals.delete && signals.answer.is_none() {
+            /*
             debug_assert_eq!(signals.receive, false);
             debug_assert_eq!(signals.may_send, false);
+            */
             let previous = operator.connection_key;
             let endpoint = operator.delete();
             // TODO: Propagate `reset` bit
@@ -226,9 +228,11 @@ impl<'a, P: PayloadMut> In<'a, P> {
             Some(answer) => answer,
             None => {
                 // We can not be forced to drop this.
+                /*
                 debug_assert_eq!(signals.may_send, true);
                 debug_assert_eq!(signals.reset, false);
                 debug_assert_eq!(signals.delete, false);
+                */
                 return Ok(In::Open(Open {
                     ip: ip_control,
                     operator,
@@ -276,7 +280,8 @@ impl<'a, P: PayloadMut> Open<'a, P> {
         self.operator.connection_key
     }
 
-    pub fn read(&self, with: &mut impl RecvBuf) {
+    pub fn read(&mut self, with: &mut impl RecvBuf) {
+        self.operator.connection_mut().recv.update_window(with.window());
         if let OpenPacket::In { tcp } = &self.packet {
             let payload = tcp.payload_slice();
             with.receive(payload, tcp.seq_number());

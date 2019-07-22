@@ -79,6 +79,8 @@ impl Instant {
 #[cfg(feature = "std")]
 impl From<::std::time::Instant> for Instant {
     fn from(other: ::std::time::Instant) -> Instant {
+        // FIXME:
+        unimplemented!("This is broken. Elapsed is relative to creation of the Instant, not some fixed point.");
         let elapsed = other.elapsed();
         Instant::from_millis((elapsed.as_secs() * 1_000) as i64 + (elapsed.subsec_nanos() / 1_000_000) as i64)
     }

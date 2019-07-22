@@ -39,14 +39,14 @@ pub struct Connection {
     /// This value can be based on the maximum transmission unit of the network, the path MTU
     /// discovery [RFC1191, RFC4821] algorithm, RMSS (see next item), or other factors.  The size
     /// does not include the TCP/IP headers and options.
-    pub sender_maximum_segment_size: u32,
+    pub sender_maximum_segment_size: u16,
 
     /// The RMSS is the size of the largest segment the receiver is willing to accept.
     ///
     /// This is the value specified in the MSS option sent by the receiver during connection
     /// startup.  Or, if the MSS option is not used, it is 536 bytes [RFC1122].  The size does not
     /// include the TCP/IP headers and options.
-    pub receiver_maximum_segment_size: u32,
+    pub receiver_maximum_segment_size: u16,
 
     /// The received byte offset when the last ack was sent.
     ///
@@ -162,6 +162,11 @@ pub struct Receive {
     /// is referred to as `SND.WND`.
     pub window: u16,
 
+    /// The window scale parameter.
+    ///
+    /// Guaranteed to be at most 14 so that shifting the window in a `u32`/`i32` is always safe.
+    pub window_scale: u8,
+
     /// The initial receive sequence number.
     ///
     /// This is read-only and only kept for potentially reading it for debugging later. It
@@ -255,6 +260,7 @@ pub struct Signals {
 }
 
 /// An ingoing communication.
+#[derive(Debug)]
 pub struct InPacket {
     /// Metadata of the tcp layer packet.
     pub segment: TcpRepr,
@@ -266,6 +272,7 @@ pub struct InPacket {
     pub time: Instant,
 }
 
+#[derive(Debug)]
 pub struct Segment {
     /// Representation for the packet.
     pub repr: TcpRepr,
@@ -365,6 +372,7 @@ impl Connection {
                 acked: TcpSeqNumber::default(),
                 last_time: Instant::from_millis(0),
                 window: 0,
+                window_scale: 0,
                 initial_seq: TcpSeqNumber::default(),
             },
         }
@@ -374,6 +382,7 @@ impl Connection {
         match self.current {
             State::Closed => self.arrives_closed(incoming),
             State::Listen => self.arrives_listen(incoming, entry),
+            State::SynSent => self.arrives_syn_sent(incoming, entry),
             State::Established => self.arrives_established(incoming, entry),
             _ => unimplemented!(),
         }
@@ -385,9 +394,10 @@ impl Connection {
             _ => return None,
         }
 
-        self.previous = self.current;
-        self.current = State::SynSent;
+        self.change_state(State::SynSent);
         self.send.initial_seq = entry.initial_seq_num(time);
+        self.send.unacked = self.send.initial_seq;
+        self.send.next = self.send.initial_seq + 1;
 
         Some(self.send_open(entry.four_tuple()))
     }
@@ -501,7 +511,7 @@ impl Connection {
             },
             seq_number: isn,
             ack_number: Some(self.recv.next),
-            window_len: 0,
+            window_len: self.recv.window,
             window_scale: None,
             max_seg_size: None,
             sack_permitted: false,
@@ -510,6 +520,97 @@ impl Connection {
         }.send_to(new_four));
 
         signals
+    }
+
+    fn arrives_syn_sent(&mut self, incoming: &InPacket, entry: EntryKey)
+        -> Signals
+    {
+        let InPacket { segment, from, time, } = incoming;
+
+        if let Some(ack) = segment.ack_number {
+            if ack <= self.send.initial_seq || ack > self.send.next {
+                if segment.flags.rst() { // Discard the segment
+                    return Signals::default();
+                }
+
+                // Packet out of window. Send a RST with fitting sequence number.
+                let mut signals = Signals::default();
+                signals.answer = Some(InnerRepr {
+                    flags: {
+                        let mut flags = TcpFlags::default();
+                        flags.set_rst(true);
+                        flags
+                    },
+                    seq_number: ack,
+                    ack_number: None,
+                    window_len: 0,
+                    window_scale: None,
+                    max_seg_size: None,
+                    sack_permitted: false,
+                    sack_ranges: [None; 3],
+                    payload_len: 0,
+                }.send_back(segment));
+                return signals;
+            }
+        }
+
+        if segment.flags.rst() {
+            // Can only reset the connection if you ack the SYN.
+            if segment.ack_number.is_none() {
+                return Signals::default();
+            }
+
+            return self.forced_close_by_reset();
+        }
+
+        if !segment.flags.syn() {
+            // No control flags at all.
+            return Signals::default();
+        }
+
+        self.recv.initial_seq = segment.seq_number;
+        self.recv.next = segment.seq_number + 1;
+        self.send.window = segment.window_len;
+        self.send.window_scale = segment.window_scale.unwrap_or(0);
+
+        // TODO: better mss
+        self.sender_maximum_segment_size = segment.max_seg_size
+            .unwrap_or(536)
+            .max(536);
+        self.receiver_maximum_segment_size = self.sender_maximum_segment_size;
+
+        if let Some(ack) = segment.ack_number {
+            self.send.unacked = ack;
+        }
+
+        // The SYN didn't actually ack our SYN. So change to SYN-RECEIVED.
+        if self.send.unacked == self.send.initial_seq {
+            self.change_state(State::SynReceived);
+
+            let mut signals = Signals::default();
+            signals.answer = Some(InnerRepr {
+                flags: {
+                    let mut flags = TcpFlags::default();
+                    flags.set_syn(true);
+                    flags
+                },
+                seq_number: self.send.initial_seq,
+                ack_number: Some(self.recv.next),
+                window_len: self.recv.window,
+                window_scale: Some(self.send.window_scale),
+                max_seg_size: None,
+                sack_permitted: false,
+                sack_ranges: [None; 3],
+                payload_len: 0,
+            }.send_to(entry.four_tuple()));
+            return signals;
+        }
+
+        self.change_state(State::Established);
+        // The rfc would immediately ack etc. We may want to send data and that requires the
+        // cooperation of io. Defer but mark as ack required immediately.
+        self.ack_timer = *time;
+        return Signals::default();
     }
 
     fn arrives_established(&mut self, incoming: &InPacket, entry: EntryKey) -> Signals {
@@ -535,6 +636,7 @@ impl Connection {
                 sack_ranges: [None; 3],
                 payload_len: 0,
             }.send_to(entry.four_tuple()));
+            return signals;
         }
 
         if segment.flags.syn() {
@@ -611,8 +713,7 @@ impl Connection {
     ///
     /// This shared logic is used by some states on receiving a packet with RST set.
     fn forced_close_by_reset(&mut self) -> Signals {
-        self.previous = self.current;
-        self.current = State::Closed;
+        self.change_state(State::Closed);
 
         let mut signals = Signals::default();
         signals.reset = true;
@@ -624,8 +725,7 @@ impl Connection {
     ///
     /// As opposed to `forced_close_by_reset` this one is proactive and we send the RST.
     fn force_close(&mut self, segment: &TcpRepr, entry: EntryKey) -> Signals {
-        self.previous = self.current;
-        self.current = State::Closed;
+        self.change_state(State::Closed);
 
         let mut signals = Signals::default();
         signals.reset = true;
@@ -694,8 +794,8 @@ impl Connection {
             return unimplemented!();
         }
 
-        let window = self.send.window()
-            .min(self.flow_control.congestion_window);
+        let window = self.send.window();
+            // .min(self.flow_control.congestion_window);
         let sent = self.send.in_flight();
         let max_sent = window.min(available);
 
@@ -703,13 +803,14 @@ impl Connection {
         // Probably even the better place as its more immediately accessible to the user.
         if sent < max_sent {
             // Send one new segment of new data.
-            let end = sent.saturating_add(self.sender_maximum_segment_size).min(max_sent);
+            let end = sent.saturating_add(self.sender_maximum_segment_size.into()).min(max_sent);
             // UNWRAP: Available was larger than `end` so these will not fail (even on 16-bit
             // platforms where the buffer may be smaller than the `u32` window). Math:
             // `sent_u32 <= end_u32 <= available_u32 <= available_usize`
-            let sent = usize::try_from(end).unwrap();
+            let sent = usize::try_from(sent).unwrap();
             let end = usize::try_from(end).unwrap();
             let range = sent..end;
+            assert!(range.len() > 0);
 
             let seq_number = self.send.next;
             self.send.next = self.send.next + range.len();
@@ -718,26 +819,28 @@ impl Connection {
                     seq_number,
                     flags: TcpFlags::default(),
                     ack_number: Some(self.recv.next),
-                    window_len: 0,
+                    window_len: self.recv.window,
                     window_scale: None,
                     max_seg_size: None,
                     sack_permitted: false,
                     sack_ranges: [None; 3],
-                    payload_len: 0,
+                    payload_len: range.len() as u16,
                 }.send_to(entry.four_tuple()),
                 range,
             });
         }
 
+        // dbg!(time, self.ack_timer);
         // There is nothing to send but we may need to ack anyways.
-        if time > self.ack_timer {
+        if time >= self.ack_timer {
+            dbg!(available, window, sent, max_sent);
             self.release_ack_timer(time);
             return Some(Segment {
                 repr: InnerRepr {
                     seq_number: self.send.next,
                     flags: TcpFlags::default(),
                     ack_number: Some(self.recv.next),
-                    window_len: 0,
+                    window_len: self.recv.window,
                     window_scale: None,
                     max_seg_size: None,
                     sack_permitted: false,
@@ -759,9 +862,15 @@ impl Connection {
             flow.congestion_window = flow.congestion_window.saturating_mul(2);
         } else {
             // https://tools.ietf.org/html/rfc5681, avoid cwnd flooding from ack splitting.
-            let update = self.sender_maximum_segment_size.min(new_bytes);
+            let update = u32::from(self.sender_maximum_segment_size).min(new_bytes);
             flow.congestion_window = flow.congestion_window.saturating_add(update);
         }
+    }
+
+    fn change_state(&mut self, new: State) {
+        self.previous = self.current;
+        self.current = new;
+        eprintln!("Changed state: {:?} -> {:?}", self.previous, self.current);
     }
 
     fn release_retransmit(&mut self, now: Instant) {
@@ -781,6 +890,16 @@ impl Connection {
 impl Receive {
     fn in_window(&self, seq: TcpSeqNumber) -> bool {
         self.next.contains_in_window(seq, self.window.into())
+    }
+
+    pub fn update_window(&mut self, window: usize) {
+        let max = u32::from(u16::max_value()) << self.window_scale;
+        let capped = u32::try_from(window)
+            .unwrap_or_else(|_| u32::max_value())
+            .min(max);
+        let scaled_down = (capped >> self.window_scale)
+            + if capped % (1 << self.window_scale) == 0 { 0 }  else { 1 };
+        self.window = u16::try_from(scaled_down).unwrap();
     }
 }
 
@@ -807,7 +926,7 @@ impl Send {
 
     /// Get the segments in flight.
     fn in_flight(&self) -> u32 {
-        assert!(self.unacked >= self.next);
+        assert!(self.unacked <= self.next);
         (self.next - self.unacked) as u32
     }
 }
@@ -823,6 +942,10 @@ impl Operator<'_> {
 
     pub fn connection(&self) -> &Connection {
         self.slot().connection()
+    }
+
+    pub fn connection_mut(&mut self) -> &mut Connection {
+        self.entry().into_key_value().1
     }
 }
 

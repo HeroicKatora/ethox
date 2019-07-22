@@ -12,6 +12,7 @@ pub struct Client<R, S> {
     send: S,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum ClientState {
     Uninstantiated {
         remote: IpAddress,
@@ -60,11 +61,14 @@ where
     P: PayloadMut,
 {
     fn receive(&mut self, packet: InPacket<P>) {
+        dbg!(&self.state);
         let key = match self.state {
             // We really need to send first.
             ClientState::InStack { key } => key,
             _ => return,
         };
+
+        dbg!(packet.key());
 
         // Not a packet for our connection. Ignore.
         if packet.key() != Some(key) {
@@ -76,7 +80,7 @@ where
             InPacket::Closed(_) | InPacket::Closing(_) => {
                 self.state = ClientState::Finished;
             },
-            InPacket::Open(open) => {
+            InPacket::Open(mut open) => {
                 open.read(&mut self.recv);
                 let _ = open.write(&mut self.send);
             },
