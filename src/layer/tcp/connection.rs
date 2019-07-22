@@ -337,6 +337,19 @@ impl Connection {
         }
     }
 
+    pub fn open(&mut self, time: Instant, entry: EntryKey) -> Option<TcpRepr> {
+        match self.current {
+            State::Closed | State::Listen => (),
+            _ => return None,
+        }
+
+        self.previous = self.current;
+        self.current = State::SynSent;
+        self.send.initial_seq = entry.initial_seq_num(time);
+
+        Some(self.send_open(entry.four_tuple()))
+    }
+
     /// Answers packets on closed sockets with resets.
     ///
     /// Except when an RST flag is already set on the received packet. Probably the easiest packet
@@ -593,6 +606,25 @@ impl Connection {
         signals
     }
 
+    fn send_open(&mut self, to: FourTuple) -> TcpRepr {
+        InnerRepr {
+            flags: {
+                let mut flags = TcpFlags::default();
+                flags.set_syn(true);
+                flags
+            },
+            seq_number: self.send.initial_seq,
+            ack_number: None,
+            window_len: 0,
+            window_scale: Some(self.send.window_scale),
+            max_seg_size: None,
+            sack_permitted: false,
+            sack_ranges: [None; 3],
+            payload_len: 0,
+
+        }.send_to(to)
+    }
+
     /// Choose a next data segment to send.
     ///
     /// May choose to send an empty range for cases where there is no data to send but a delayed
@@ -779,12 +811,6 @@ impl<'a> Operator<'a> {
         }
     }
 
-    /// Remove the connection and close the operator.
-    pub(crate) fn delete(mut self) -> &'a mut Endpoint {
-        self.entry().remove();
-        self.endpoint
-    }
-
     pub fn arrives(&mut self, incoming: &InPacket) -> Signals {
         let (entry_key, connection) = self.entry().into_key_value();
         connection.arrives(incoming, entry_key)
@@ -796,6 +822,19 @@ impl<'a> Operator<'a> {
         let (entry_key, connection) = self.entry().into_key_value();
         connection.next_send_segment(available, time, entry_key)
     }
+
+    pub fn open(&mut self, time: Instant) -> Result<TcpRepr, crate::layer::Error> {
+        let (entry_key, connection) = self.entry().into_key_value();
+        connection.open(time, entry_key)
+            .ok_or(crate::layer::Error::Illegal)
+    }
+
+    /// Remove the connection and close the operator.
+    pub(crate) fn delete(mut self) -> &'a mut Endpoint {
+        self.entry().remove();
+        self.endpoint
+    }
+
 
     fn entry(&mut self) -> Entry {
         self.endpoint.entry(self.connection_key).unwrap()

@@ -23,7 +23,7 @@ enum ClientState {
     Finished,
 }
 
-impl<R, S> Client<R, S> 
+impl<R, S> Client<R, S>
 where
     R: RecvBuf,
     S: SendBuf,
@@ -57,17 +57,20 @@ where
             ClientState::InStack { key } => key,
             _ => return,
         };
-        match packet {
-            InPacket::Closed(_) | InPacket::Stray(_) | InPacket::Sending(_) => (),
-            InPacket::Open(mut open) => {
-                if open.key() != key {
-                    return;
-                }
 
-                open.read(&mut self.recv);
-                let send = open.write(&mut self.send);
+        // Not a packet for our connection. Ignore.
+        if packet.key() != Some(key) {
+            return;
+        }
+
+        match packet {
+            InPacket::Stray(_) | InPacket::Sending(_) => (),
+            InPacket::Closed(_) | InPacket::Closing(_) => {
+                self.state = ClientState::Finished;
             },
-            InPacket::Closing(closing) => {
+            InPacket::Open(open) => {
+                open.read(&mut self.recv);
+                let _ = open.write(&mut self.send);
             },
         }
     }
@@ -80,5 +83,25 @@ where
     P: PayloadMut,
 {
     fn send(&mut self, packet: RawPacket<P>) {
+        match self.state {
+            ClientState::Uninstantiated { remote, remote_port } => {
+                match packet.open(remote, remote_port) {
+                    Ok(sending) => {
+                        self.state = ClientState::InStack { key: sending.key() };
+                    },
+                    // TODO: error handling.
+                    Err(_) => self.state = ClientState::Finished,
+                }
+            },
+            ClientState::InStack { key } => {
+                match packet.attach(key) {
+                    Ok(open) => {
+                        let _ = open.write(&mut self.send);
+                    },
+                    Err(_) => (),
+                }
+            },
+            ClientState::Finished => (),
+        }
     }
 }

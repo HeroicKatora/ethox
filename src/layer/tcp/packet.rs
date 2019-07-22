@@ -24,7 +24,7 @@ pub enum In<'a, P: PayloadMut> {
     Closing(Closing<'a>),
 
     /// Connection has just been closed by the packet.
-    Closed(Stray<'a, P>),
+    Closed(Closed<'a, P>),
 
     /// A packet for no connection arrived.
     ///
@@ -97,11 +97,22 @@ pub struct Sending<'a> {
 }
 
 /// A closing message from us.
-/// 
+///
 /// Same as `Sending`, the packet has already been prepared and queue.
 pub struct Closing<'a> {
     endpoint: &'a mut Endpoint,
+    previous: SlotKey,
     signals: Signals,
+}
+
+/// A connection was closed by a remote packet.
+///
+/// Similar to a `Stray` packet but we retain which connection was closed.
+pub struct Closed<'a, P: PayloadMut> {
+    ip: ip::Handle<'a>,
+    endpoint: &'a mut Endpoint,
+    previous: SlotKey,
+    tcp: TcpPacket<ip::IpPacket<'a, P>>,
 }
 
 /// An open connection on which we might want to send and receive data.
@@ -116,6 +127,7 @@ pub struct Open<'a, P: PayloadMut> {
 
 /// A valid tcp packet not belonging to a connection.
 pub struct Stray<'a, P: PayloadMut> {
+    ip: ip::Handle<'a>,
     endpoint: &'a mut Endpoint,
     tcp: TcpPacket<ip::IpPacket<'a, P>>,
 }
@@ -177,6 +189,7 @@ impl<'a, P: PayloadMut> In<'a, P> {
             Unhandled::Closed { endpoint, tcp } => {
                 return Ok(In::Stray(Stray {
                     endpoint,
+                    ip: ip_control,
                     tcp,
                 }));
             }
@@ -196,10 +209,13 @@ impl<'a, P: PayloadMut> In<'a, P> {
         if signals.delete && signals.answer.is_none() {
             debug_assert_eq!(signals.receive, false);
             debug_assert_eq!(signals.may_send, false);
+            let previous = operator.connection_key;
             let endpoint = operator.delete();
             // TODO: Propagate `reset` bit
-            return Ok(In::Closed(Stray {
+            return Ok(In::Closed(Closed {
+                ip: ip_control,
                 endpoint,
+                previous,
                 tcp,
             }));
         }
@@ -227,9 +243,11 @@ impl<'a, P: PayloadMut> In<'a, P> {
 
         // We need to close the connection. The sent packet should be an RST.
         if signals.delete {
+            let previous = operator.connection_key;
             let endpoint = operator.delete();
             return Ok(In::Closing(Closing {
                 endpoint,
+                previous,
                 signals,
             }));
         }
@@ -239,6 +257,16 @@ impl<'a, P: PayloadMut> In<'a, P> {
             operator,
             signals,
         }))
+    }
+
+    pub fn key(&self) -> Option<SlotKey> {
+        match self {
+            In::Sending(sending) => Some(sending.key()),
+            In::Open(open) => Some(open.key()),
+            In::Closing(closing) => Some(closing.key()),
+            In::Closed(closed) => Some(closed.key()),
+            In::Stray(_) => None,
+        }
     }
 }
 
@@ -310,7 +338,8 @@ impl<'a, P: PayloadMut> Raw<'a, P> {
             Some(key) => Operator::new(self.endpoint, key).unwrap(),
         };
 
-        let repr = unimplemented!();
+        let time = self.ip.handle.info().timestamp();
+        let repr = operator.open(time)?;
         let out_ip = prepare(self.ip, &mut operator, repr)?;
         out_ip.send()?;
 
@@ -341,6 +370,50 @@ impl<'a, P: PayloadMut> Raw<'a, P> {
             ip,
             packet: OpenPacket::Out { raw },
         })
+    }
+}
+
+impl<'a> Sending<'a> {
+    pub fn key(&self) -> SlotKey {
+        self.operator.connection_key
+    }
+}
+
+impl<'a> Closing<'a> {
+    pub fn key(&self) -> SlotKey {
+        self.previous
+    }
+}
+
+impl<'a, P: PayloadMut> Closed<'a, P> {
+    pub fn key(&self) -> SlotKey {
+        self.previous
+    }
+
+    pub fn into_raw(self) -> Raw<'a, P> {
+        let raw_ip = ip::RawPacket {
+            handle: self.ip,
+            payload: self.tcp.into_inner().into_inner().into_inner(),
+        };
+
+        Raw {
+            ip: raw_ip,
+            endpoint: self.endpoint,
+        }
+    }
+}
+
+impl<'a, P: PayloadMut> Stray<'a, P> {
+    pub fn into_raw(self) -> Raw<'a, P> {
+        let raw_ip = ip::RawPacket {
+            handle: self.ip,
+            payload: self.tcp.into_inner().into_inner().into_inner(),
+        };
+
+        Raw {
+            ip: raw_ip,
+            endpoint: self.endpoint,
+        }
     }
 }
 
