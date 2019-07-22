@@ -160,9 +160,9 @@ impl<'a, P: PayloadMut> Unhandled<'a, P> {
         let ip_repr = tcp.inner().repr();
 
         let connection = FourTuple {
-            local: ip_repr.src_addr(),
+            local: ip_repr.dst_addr(),
             local_port: tcp_repr.dst_port,
-            remote: ip_repr.dst_addr(),
+            remote: ip_repr.src_addr(),
             remote_port: tcp_repr.src_port,
         };
 
