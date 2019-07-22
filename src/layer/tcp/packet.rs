@@ -312,8 +312,10 @@ impl<'a, P: PayloadMut> Open<'a, P> {
         };
 
         let mut out_ip = prepare(raw_ip, &mut operator, repr)?;
+        let ip_repr = out_ip.repr();
         let mut tcp = TcpPacket::new_unchecked(out_ip.payload_mut_slice(), repr);
         with.fill(tcp.payload_mut_slice(), tcp_seq + range.start);
+        tcp.fill_checksum(ip_repr.src_addr(), ip_repr.dst_addr());
 
         out_ip.send()?;
 
@@ -345,7 +347,9 @@ impl<'a, P: PayloadMut> Raw<'a, P> {
 
         let time = self.ip.handle.info().timestamp();
         let repr = operator.open(time)?;
-        let out_ip = prepare(self.ip, &mut operator, repr)?;
+        let mut out_ip = prepare(self.ip, &mut operator, repr)?;
+        let mut tcp = TcpPacket::new_unchecked(out_ip.payload_mut_slice(), repr);
+        tcp.fill_checksum(local, addr);
         out_ip.send()?;
 
         Ok(Sending {
