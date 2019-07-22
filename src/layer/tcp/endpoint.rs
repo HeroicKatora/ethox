@@ -375,6 +375,11 @@ impl super::connection::Endpoint for Endpoint<'_> {
         }
     }
 
+    fn source_port(&mut self, _: IpAddress) -> Option<u16> {
+        // FIXME: find a suitable source port....
+        Some(80)
+    }
+
     fn listen(&mut self, ip: IpAddress, port: u16) -> Option<SlotKey> {
         Endpoint::listen(self, ip, port)
     }

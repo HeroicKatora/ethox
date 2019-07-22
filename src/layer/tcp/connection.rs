@@ -289,6 +289,8 @@ pub trait Endpoint {
 
     fn find_tuple(&mut self, tuple: FourTuple) -> Option<Entry>;
 
+    fn source_port(&mut self, addr: IpAddress) -> Option<u16>;
+
     fn listen(&mut self, ip: IpAddress, port: u16) -> Option<SlotKey>;
 
     fn open(&mut self, tuple: FourTuple) -> Option<SlotKey>;
@@ -805,7 +807,7 @@ impl Send {
 
     /// Get the segments in flight.
     fn in_flight(&self) -> u32 {
-        assert!(self.unacked > self.next);
+        assert!(self.unacked >= self.next);
         (self.next - self.unacked) as u32
     }
 }

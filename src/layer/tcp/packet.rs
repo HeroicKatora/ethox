@@ -1,6 +1,7 @@
 use crate::layer::ip;
-use crate::wire::{Reframe, Payload, PayloadMut, PayloadResult, payload};
-use crate::wire::{IpAddress, IpProtocol, TcpPacket, TcpRepr, TcpSeqNumber};
+use crate::wire::{Payload, PayloadMut};
+use crate::wire::{IpAddress, Ipv4Subnet, Ipv6Subnet, IpSubnet, IpProtocol};
+use crate::wire::{TcpPacket, TcpRepr, TcpSeqNumber};
 
 use super::connection::{Endpoint, InPacket, Operator, Segment, Signals};
 use super::endpoint::{FourTuple, SlotKey};
@@ -326,11 +327,15 @@ impl<'a, P: PayloadMut> Open<'a, P> {
 impl<'a, P: PayloadMut> Raw<'a, P> {
     /// Create a new connection.
     pub fn open(self, addr: IpAddress, port: u16) -> Result<Sending<'a>, crate::layer::Error> {
+        let local = self.source(addr)?;
+        let local_port = self.endpoint.source_port(local)
+            .ok_or(crate::layer::Error::Exhausted)?;
+
         let new = FourTuple {
-            local: addr,
-            local_port: port,
-            remote: IpAddress::Unspecified,
-            remote_port: 0,
+            local,
+            local_port,
+            remote: addr,
+            remote_port: port,
         };
 
         let mut operator = match self.endpoint.open(new) {
@@ -370,6 +375,18 @@ impl<'a, P: PayloadMut> Raw<'a, P> {
             ip,
             packet: OpenPacket::Out { raw },
         })
+    }
+
+    fn source(&self, dst: IpAddress) -> Result<IpAddress, crate::layer::Error> {
+        // Find a suitable ip source address.
+        let source = match dst {
+            IpAddress::Ipv4(_) => IpSubnet::Ipv4(Ipv4Subnet::ANY),
+            IpAddress::Ipv6(_) => IpSubnet::Ipv6(Ipv6Subnet::ANY),
+            _ => return Err(crate::layer::Error::Illegal),
+        };
+
+        self.ip.handle().local_ip(source)
+            .ok_or(crate::layer::Error::Unreachable)
     }
 }
 
