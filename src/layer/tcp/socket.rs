@@ -43,6 +43,14 @@ where
             send,
         }
     }
+
+    /// Check if the connection was closed.
+    pub fn is_closed(&self) -> bool {
+        match self.state {
+            ClientState::Finished => true,
+            _ => false,
+        }
+    }
 }
 
 impl<R, S, P> Recv<P> for &'_ mut Client<R, S>
