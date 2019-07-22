@@ -45,7 +45,7 @@ where
     }
 }
 
-impl<R, S, P> Recv<P> for Client<R, S>
+impl<R, S, P> Recv<P> for &'_ mut Client<R, S>
 where
     R: RecvBuf,
     S: SendBuf,
@@ -76,7 +76,7 @@ where
     }
 }
 
-impl<R, S, P> Send<P> for Client<R, S>
+impl<R, S, P> Send<P> for &'_ mut Client<R, S>
 where
     R: RecvBuf,
     S: SendBuf,

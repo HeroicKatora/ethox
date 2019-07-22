@@ -21,7 +21,7 @@ use super::connection::{
     Send,
     State,
     Receive};
-use super::packet::{In};
+use super::packet::{In, Raw};
 use super::siphash::IsnGenerator;
 
 /// Handles TCP connection states.
@@ -31,7 +31,7 @@ pub struct Endpoint<'a> {
     isn_generator: IsnGenerator,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FourTuple {
     pub local: IpAddress,
     pub remote: IpAddress,
@@ -64,8 +64,22 @@ pub struct SlotKey {
 
 /// An endpoint borrowed for receiving.
 ///
-/// Dispatching to higher protocols is configurerd here, and not in the endpoint state.
+/// Incoming packets are matched against open ports and connections. Many parts of connection
+/// state transitions are then performed automatically. If no direct answer was required the packet
+/// becomes available for other uses.
 pub struct Receiver<'a, 'e, H> {
+    endpoint: Borrow<'a, 'e>,
+
+    /// The upper protocol receiver.
+    handler: H,
+}
+
+/// An endpoint borrowed for sending.
+///
+/// The send handler gets exclusive access the the internal state in order to create new active
+/// connections or listening sockets. Each packet that becomes available for sending can be
+/// committed to any of the open connections, or for creating or closing one as well.
+pub struct Sender<'a, 'e, H> {
     endpoint: Borrow<'a, 'e>,
 
     /// The upper protocol receiver.
@@ -254,8 +268,24 @@ impl Slot {
 }
 
 impl<'ep> Endpoint<'ep> {
+    pub fn new(
+        ports: Map<'ep, FourTuple, Key>,
+        states: SlotMap<'ep, Slot>,
+        isn_generator: IsnGenerator,
+    ) -> Self {
+        Endpoint {
+            ports,
+            states,
+            isn_generator,
+        }
+    }
+
     pub fn recv<H>(&mut self, handler: H) -> Receiver<'_, 'ep, H> {
         Receiver { endpoint: self.borrow(), handler }
+    }
+
+    pub fn send<H>(&mut self, handler: H) -> Sender<'_, 'ep, H> {
+        Sender { endpoint: self.borrow(), handler }
     }
 
     fn borrow(&mut self) -> Borrow<'_, 'ep> {
@@ -307,6 +337,15 @@ impl EntryKey<'_> {
     pub fn set_four_tuple(&mut self, new: FourTuple) {
         self.ports.remap(*self.key_in_slot, new);
         *self.key_in_slot = new;
+    }
+}
+
+impl Default for Slot {
+    fn default() -> Self {
+       Slot {
+           addr: FourTuple::default(),
+           connection: Connection::zeroed(),
+       }
     }
 }
 
@@ -397,3 +436,19 @@ where
     }
 }
 
+impl<H, P> ip::Send<P> for Sender<'_, '_, H>
+where
+    P: PayloadMut,
+    H: super::Send<P>,
+{
+    fn send(&mut self, ip_raw: ip::RawPacket<P>) {
+        let ip::RawPacket { mut handle, payload } = ip_raw;
+
+        let raw = Raw {
+            ip: ip::RawPacket { handle: handle.borrow_mut(), payload },
+            endpoint: self.endpoint.inner,
+        };
+
+        self.handler.send(raw)
+    }
+}

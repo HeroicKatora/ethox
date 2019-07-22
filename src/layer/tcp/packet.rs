@@ -146,8 +146,8 @@ enum OpenPacket<'a, P: PayloadMut> {
 
 /// A raw opportunity to create a packet.
 pub struct Raw<'a, P: PayloadMut> {
-    ip: ip::RawPacket<'a, P>,
-    endpoint: &'a mut Endpoint,
+    pub(super) ip: ip::RawPacket<'a, P>,
+    pub(super) endpoint: &'a mut Endpoint,
 }
 
 impl<'a, P: PayloadMut> Unhandled<'a, P> {

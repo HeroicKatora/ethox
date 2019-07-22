@@ -27,6 +27,28 @@ struct State {
 }
 
 impl IsnGenerator {
+    #[cfg(feature = "std")]
+    pub fn from_std_hash() -> Self {
+        use std::hash::{Hasher, BuildHasher};
+        use std::collections::hash_map::RandomState;
+
+        let hash = RandomState::new().build_hasher();
+        let x0 = {
+            let mut hash = hash.clone();
+            hash.write_u64(0);
+            hash.finish()
+        };
+        let x1 = {
+            let mut hash = hash.clone();
+            hash.write_u64(1);
+            hash.finish()
+        };
+
+        IsnGenerator {
+            keys: (x0, x1),
+        }
+    }
+
     /// Get the initial sequence number for a connection.
     ///
     /// The value varies every 4ms or when the underlying secret key is updated.

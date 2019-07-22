@@ -328,6 +328,46 @@ struct InnerRepr {
 }
 
 impl Connection {
+    /// Construct a closed connection with zeroed state.
+    pub fn zeroed() -> Self {
+        Connection {
+            current: State::Closed,
+            previous: State::Closed,
+            flow_control: Flow {
+                ssthresh: 0,
+                congestion_window: 0,
+                recover: TcpSeqNumber::default(),
+            },
+            receive_window: 0,
+            sender_maximum_segment_size: 0,
+            receiver_maximum_segment_size: 0,
+            last_ack_receive_offset: TcpSeqNumber::default(),
+            ack_timer: Instant::from_millis(0),
+            ack_timeout: Duration::from_millis(0),
+            retransmission_timer: Instant::from_millis(0),
+            retransmission_timeout: Duration::from_millis(0),
+            restart_timeout: Duration::from_millis(0),
+            selective_acknowledgements: false,
+            duplicate_ack: 0,
+            send: Send {
+                unacked: TcpSeqNumber::default(),
+                next: TcpSeqNumber::default(),
+                last_time: Instant::from_millis(0),
+                unsent: 0,
+                window: 0,
+                window_scale: 0,
+                initial_seq: TcpSeqNumber::default(),
+            },
+            recv: Receive {
+                next: TcpSeqNumber::default(),
+                acked: TcpSeqNumber::default(),
+                last_time: Instant::from_millis(0),
+                window: 0,
+                initial_seq: TcpSeqNumber::default(),
+            },
+        }
+    }
+
     pub fn arrives(&mut self, incoming: &InPacket, entry: EntryKey) -> Signals {
         match self.current {
             State::Closed => self.arrives_closed(incoming),
