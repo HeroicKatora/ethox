@@ -13,7 +13,7 @@ use crate::layer::ip;
 use crate::managed::{Map, SlotMap, slotmap::Key};
 use crate::wire::{IpAddress, TcpChecksum, TcpPacket, TcpSeqNumber};
 use crate::wire::PayloadMut;
-use crate::time::{Duration, Instant};
+use crate::time::{Duration, Expiration, Instant};
 
 use super::connection::{
     Connection,
@@ -226,7 +226,7 @@ impl Endpoint<'_> {
             sender_maximum_segment_size: 0,
             receiver_maximum_segment_size: 0,
             last_ack_receive_offset: TcpSeqNumber::default(),
-            ack_timer: Instant::from_millis(0),
+            ack_timer: Expiration::Never,
             ack_timeout: Duration::from_millis(500),
             retransmission_timer: Instant::from_millis(0),
             retransmission_timeout: Duration::from_millis(3000),

@@ -69,7 +69,7 @@ impl SeqNumber {
     ///
     /// The length of the window must be at most `i32::MAX`.
     pub fn contains_in_window(self, other: SeqNumber, len: usize) -> bool {
-        self < other && other < (self + len)
+        self <= other && other < (self + len)
     }
 }
 

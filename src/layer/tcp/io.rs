@@ -67,6 +67,7 @@ impl SendBuf for Empty {
 
 impl RecvBuf for Sink {
     fn receive(&mut self, buf: &[u8], begin: TcpSeqNumber) {
+        dbg!(begin, buf.len(), self.highest);
         let highest = *self.highest.get_or_insert(begin);
 
         if begin.contains_in_window(highest, buf.len()) {

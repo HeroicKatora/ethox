@@ -27,7 +27,7 @@ pub struct Instant {
 }
 
 /// An expiration time, inversion of `Option`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Expiration {
     When(Instant),
     Never,

@@ -281,10 +281,15 @@ impl<'a, P: PayloadMut> Open<'a, P> {
     }
 
     pub fn read(&mut self, with: &mut impl RecvBuf) {
-        self.operator.connection_mut().recv.update_window(with.window());
+        let connection = self.operator.connection_mut();
+        connection.recv.update_window(with.window());
+
         if let OpenPacket::In { tcp } = &self.packet {
+            let time = self.ip.info().timestamp();
             let payload = tcp.payload_slice();
-            with.receive(payload, tcp.seq_number());
+
+            with.receive(payload, tcp.seq_number() + tcp.flags().sequence_len());
+            connection.set_recv_ack(with.ack(), time);
         }
     }
 
@@ -301,7 +306,7 @@ impl<'a, P: PayloadMut> Open<'a, P> {
             OpenPacket::Out { raw } => raw,
         };
 
-        let tcp_seq = operator.connection().send.unacked;
+        let tcp_seq = operator.connection().get_send_ack();
         with.ack(tcp_seq);
         let available = with.available();
         let time = ip.info().timestamp();

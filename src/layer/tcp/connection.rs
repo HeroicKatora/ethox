@@ -1,6 +1,6 @@
 use core::convert::TryFrom;
 use core::ops::Range;
-use crate::time::{Duration, Instant};
+use crate::time::{Duration, Expiration, Instant};
 use crate::wire::{IpAddress, TcpFlags, TcpRepr, TcpSeqNumber};
 
 use super::endpoint::{
@@ -54,11 +54,11 @@ pub struct Connection {
     /// requirement, see `last_ack_time`.
     pub last_ack_receive_offset: TcpSeqNumber,
 
-    /// The time when the last ack was sent.
+    /// The time when the next ack must be sent.
     ///
     /// We MUST NOT wait more than 500ms before sending the ACK after receiving some new segment
-    /// bytes. However, we CAN wait shorter, see `last_ack_timeout`.
-    pub ack_timer: Instant,
+    /// bytes. However, we CAN wait shorter, see `ack_timeout`.
+    pub ack_timer: Expiration,
 
     /// Timeout before sending the next ACK after a new segment.
     ///
@@ -351,7 +351,7 @@ impl Connection {
             sender_maximum_segment_size: 0,
             receiver_maximum_segment_size: 0,
             last_ack_receive_offset: TcpSeqNumber::default(),
-            ack_timer: Instant::from_millis(0),
+            ack_timer: Expiration::Never,
             ack_timeout: Duration::from_millis(0),
             retransmission_timer: Instant::from_millis(0),
             retransmission_timeout: Duration::from_millis(0),
@@ -609,7 +609,7 @@ impl Connection {
         self.change_state(State::Established);
         // The rfc would immediately ack etc. We may want to send data and that requires the
         // cooperation of io. Defer but mark as ack required immediately.
-        self.ack_timer = *time;
+        self.ack_timer = Expiration::When(*time);
         return Signals::default();
     }
 
@@ -832,7 +832,7 @@ impl Connection {
 
         // dbg!(time, self.ack_timer);
         // There is nothing to send but we may need to ack anyways.
-        if time >= self.ack_timer {
+        if Expiration::When(time) >= self.ack_timer {
             dbg!(available, window, sent, max_sent);
             self.release_ack_timer(time);
             return Some(Segment {
@@ -867,6 +867,20 @@ impl Connection {
         }
     }
 
+    pub fn set_recv_ack(&mut self, ack: TcpSeqNumber, now: Instant) {
+        if !(self.recv.next < ack) {
+            return;
+        }
+
+        self.recv.next = ack;
+        let new_timer = Expiration::When(now + self.ack_timeout);
+        self.ack_timer = self.ack_timer.min(new_timer);
+    }
+
+    pub fn get_send_ack(&self) -> TcpSeqNumber {
+        self.send.unacked
+    }
+
     fn change_state(&mut self, new: State) {
         self.previous = self.current;
         self.current = new;
@@ -878,7 +892,11 @@ impl Connection {
     }
 
     fn release_ack_timer(&mut self, now: Instant) {
-        self.ack_timer = now + self.ack_timeout;
+        if self.recv.next != self.recv.acked {
+            self.ack_timer = Expiration::When(now + self.ack_timeout);
+        } else {
+            self.ack_timer = Expiration::Never;
+        }
     }
 
     /// RFC5681 restart window.
