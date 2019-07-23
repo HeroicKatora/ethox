@@ -61,14 +61,11 @@ where
     P: PayloadMut,
 {
     fn receive(&mut self, packet: InPacket<P>) {
-        dbg!(&self.state);
         let key = match self.state {
             // We really need to send first.
             ClientState::InStack { key } => key,
             _ => return,
         };
-
-        dbg!(packet.key());
 
         // Not a packet for our connection. Ignore.
         if packet.key() != Some(key) {

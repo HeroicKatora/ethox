@@ -3,7 +3,7 @@
 //! This is not quite a compatibility layer with socket APIs but parts of it may be reasonably
 //! close to enabling it.
 use crate::wire::TcpSeqNumber;
-use super::{ReceivedSegment, RecvBuf, SendBuf};
+use super::{AvailableBytes, ReceivedSegment, RecvBuf, SendBuf};
 
 /// A sender with no data.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -52,8 +52,11 @@ impl<B: AsRef<[u8]>> SendOnce<B> {
 }
 
 impl SendBuf for Empty {
-    fn available(&self) -> usize {
-        0
+    fn available(&self) -> AvailableBytes {
+        AvailableBytes {
+            total: 0,
+            fin: true,
+        }
     }
 
     fn fill(&mut self, buf: &mut [u8], _: TcpSeqNumber) {
@@ -66,7 +69,7 @@ impl SendBuf for Empty {
 }
 
 impl RecvBuf for Sink {
-    fn receive(&mut self, buf: &[u8], segment: ReceivedSegment) {
+    fn receive(&mut self, _: &[u8], segment: ReceivedSegment) {
         let highest = *self.highest.get_or_insert(segment.begin);
 
         if segment.contains_in_window(highest) {
@@ -84,8 +87,11 @@ impl RecvBuf for Sink {
 }
 
 impl<B: AsRef<[u8]>> SendBuf for SendOnce<B> {
-    fn available(&self) -> usize {
-        self.data.as_ref().len() - self.consumed
+    fn available(&self) -> AvailableBytes {
+        AvailableBytes {
+            total: self.data.as_ref().len() - self.consumed,
+            fin: self.data.as_ref().len() == self.consumed,
+        }
     }
 
     fn fill(&mut self, buf: &mut [u8], begin: TcpSeqNumber) {

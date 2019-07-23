@@ -260,6 +260,15 @@ pub struct Signals {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub struct AvailableBytes {
+    /// Set when no more data will come.
+    pub fin: bool,
+
+    /// The total number of bytes buffered for retransmission and newly available.
+    pub total: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct ReceivedSegment {
     /// If the segment has a syn.
     ///
@@ -802,11 +811,11 @@ impl Connection {
     ///
     /// May choose to send an empty range for cases where there is no data to send but a delayed
     /// ACK is expected.
-    pub fn next_send_segment(&mut self, available: usize, time: Instant, entry: EntryKey)
+    pub fn next_send_segment(&mut self, available: AvailableBytes, time: Instant, entry: EntryKey)
         -> Option<Segment>
     {
         // Convert the input to `u32`, our window can never be that large anyways.
-        let available = u32::try_from(available)
+        let byte_window = u32::try_from(available.total)
             .ok().unwrap_or_else(u32::max_value);
         // Connection restarted after idle time.
         let last_time = self.recv.last_time.max(self.send.last_time);
@@ -828,7 +837,7 @@ impl Connection {
         let window = self.send.window();
             // .min(self.flow_control.congestion_window);
         let sent = self.send.in_flight();
-        let max_sent = window.min(available);
+        let max_sent = window.min(byte_window);
 
         // TODO: may want to buffer. But that could be done in the upper `SendBuf` as well.
         // Probably even the better place as its more immediately accessible to the user.
@@ -845,10 +854,15 @@ impl Connection {
 
             let seq_number = self.send.next;
             self.send.next = self.send.next + range.len();
+
             return Some(Segment {
                 repr: InnerRepr {
                     seq_number,
-                    flags: TcpFlags::default(),
+                    flags: {
+                        let mut flags = TcpFlags::default();
+                        flags.set_fin(available.fin && end as usize == available.total);
+                        flags
+                    },
                     ack_number: Some(self.ack_all()),
                     window_len: self.recv.window,
                     window_scale: None,
@@ -905,6 +919,14 @@ impl Connection {
             return;
         }
 
+        if meta.fin {
+            match self.current {
+                State::CloseWait | State::Closing | State::LastAck | State::TimeWait => (),
+                State::Established | State::SynReceived => self.change_state(State::CloseWait),
+                _ => unimplemented!(),
+            }
+        }
+
         self.recv.next = end;
         let new_timer = Expiration::When(meta.timestamp + self.ack_timeout);
         self.ack_timer = self.ack_timer.min(new_timer);
@@ -942,14 +964,6 @@ impl Connection {
 
     fn release_retransmit(&mut self, now: Instant) {
         self.retransmission_timer = now + self.retransmission_timeout;
-    }
-
-    fn release_ack_timer(&mut self, now: Instant) {
-        if self.recv.next != self.recv.acked {
-            self.ack_timer = Expiration::When(now + self.ack_timeout);
-        } else {
-            self.ack_timer = Expiration::Never;
-        }
     }
 
     /// RFC5681 restart window.
@@ -1090,7 +1104,7 @@ impl<'a> Operator<'a> {
         connection.arrives(incoming, entry_key)
     }
 
-    pub fn next_send_segment(&mut self, available: usize, time: Instant)
+    pub fn next_send_segment(&mut self, available: AvailableBytes, time: Instant)
         -> Option<Segment>
     {
         let (entry_key, connection) = self.entry().into_key_value();

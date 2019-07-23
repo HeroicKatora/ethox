@@ -3,7 +3,7 @@ use crate::wire::{Payload, PayloadMut};
 use crate::wire::{IpAddress, Ipv4Subnet, Ipv6Subnet, IpSubnet, IpProtocol};
 use crate::wire::{TcpPacket, TcpRepr, TcpSeqNumber};
 
-use super::connection::{Endpoint, InPacket, Operator, ReceivedSegment, Segment, Signals};
+use super::connection::{AvailableBytes, Endpoint, InPacket, Operator, ReceivedSegment, Segment, Signals};
 use super::endpoint::{FourTuple, SlotKey};
 
 /// An incoming tcp packet.
@@ -39,7 +39,7 @@ pub trait SendBuf {
     /// Check the available data.
     ///
     /// This should be the total of previously sent bytes and unsent bytes.
-    fn available(&self) -> usize;
+    fn available(&self) -> AvailableBytes;
 
     /// Fill in some retransmited data.
     ///

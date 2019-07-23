@@ -84,6 +84,7 @@ mod socket;
 mod siphash;
 
 pub use connection::{
+    AvailableBytes,
     ReceivedSegment};
 
 pub use endpoint::{
