@@ -510,7 +510,7 @@ impl Connection {
                 flags
             },
             seq_number: isn,
-            ack_number: Some(self.recv.next),
+            ack_number: Some(self.ack_all()),
             window_len: self.recv.window,
             window_scale: None,
             max_seg_size: None,
@@ -595,7 +595,7 @@ impl Connection {
                     flags
                 },
                 seq_number: self.send.initial_seq,
-                ack_number: Some(self.recv.next),
+                ack_number: Some(self.ack_all()),
                 window_len: self.recv.window,
                 window_scale: Some(self.send.window_scale),
                 max_seg_size: None,
@@ -624,6 +624,7 @@ impl Connection {
                 return self.forced_close_by_reset();
             }
 
+            // TODO: find out why this triggers in a nice tcp connection (python -m http.server)
             let mut signals = Signals::default();
             signals.answer = Some(InnerRepr {
                 flags: TcpFlags::default(),
@@ -737,7 +738,7 @@ impl Connection {
                 flags
             },
             seq_number: self.send.next,
-            ack_number: Some(self.recv.next),
+            ack_number: Some(self.ack_all()),
             window_len: 0,
             window_scale: None,
             max_seg_size: None,
@@ -818,7 +819,7 @@ impl Connection {
                 repr: InnerRepr {
                     seq_number,
                     flags: TcpFlags::default(),
-                    ack_number: Some(self.recv.next),
+                    ack_number: Some(self.ack_all()),
                     window_len: self.recv.window,
                     window_scale: None,
                     max_seg_size: None,
@@ -839,7 +840,7 @@ impl Connection {
                 repr: InnerRepr {
                     seq_number: self.send.next,
                     flags: TcpFlags::default(),
-                    ack_number: Some(self.recv.next),
+                    ack_number: Some(self.ack_all()),
                     window_len: self.recv.window,
                     window_scale: None,
                     max_seg_size: None,
@@ -879,6 +880,17 @@ impl Connection {
 
     pub fn get_send_ack(&self) -> TcpSeqNumber {
         self.send.unacked
+    }
+
+    /// Indicate sending an ack for all arrived packets.
+    ///
+    /// When delaying acks for better throughput we split the recv ack counter into two: One for
+    /// the apparent state of actually sent acknowledgments and one for the acks we have queued.
+    /// Sending a packet with the current received state catches the former up to the latter
+    /// counter.
+    fn ack_all(&mut self) -> TcpSeqNumber {
+        self.recv.acked = self.recv.next;
+        self.recv.next
     }
 
     fn change_state(&mut self, new: State) {
