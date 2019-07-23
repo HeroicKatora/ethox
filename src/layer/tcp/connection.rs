@@ -741,7 +741,7 @@ impl Connection {
     ///
     /// See: https://tools.ietf.org/html/rfc793#page-40
     fn ingress_acceptable(&self, repr: &TcpRepr) -> bool {
-        match (self.recv.window, repr.payload_len) {
+        match (repr.payload_len, self.recv.window) {
             (0, 0) => repr.seq_number == self.recv.next,
             (0, _) => self.recv.in_window(repr.seq_number),
             (_, 0) => false,
@@ -942,13 +942,9 @@ impl Connection {
     /// be accurate.
     pub fn set_recv_ack(&mut self, meta: ReceivedSegment) {
         let end = meta.sequence_end();
-        if !(self.recv.next < end) {
-            return;
-        }
+        let acked_all = self.send.next == self.send.unacked;
 
-        let acks_all = self.recv.next == end;
-
-        match (self.current, meta.fin, acks_all) {
+        match (self.current, meta.fin, acked_all) {
             (State::Established, true, _) | (State::SynReceived, true, _) => self.change_state(State::CloseWait),
             (State::FinWait, true, true) | (State::Closing, _, true) => self.change_state(State::TimeWait),
             (State::FinWait, true, false) => self.change_state(State::Closing),
