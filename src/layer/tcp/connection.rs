@@ -861,11 +861,8 @@ impl Connection {
             });
         }
 
-        // dbg!(time, self.ack_timer);
         // There is nothing to send but we may need to ack anyways.
-        if Expiration::When(time) >= self.ack_timer {
-            dbg!(available, window, sent, max_sent);
-            self.release_ack_timer(time);
+        if self.should_ack() || Expiration::When(time) >= self.ack_timer {
             return Some(Segment {
                 repr: InnerRepr {
                     seq_number: self.send.next,
@@ -925,7 +922,16 @@ impl Connection {
     /// counter.
     fn ack_all(&mut self) -> TcpSeqNumber {
         self.recv.acked = self.recv.next;
+        self.ack_timer = Expiration::Never;
         self.recv.next
+    }
+
+    /// Determine whether to send an ACK.
+    ///
+    /// This is currently always true when there is any sequence space to ack but that may change
+    /// for delayed acks.
+    fn should_ack(&self) -> bool {
+        self.recv.acked < self.recv.next
     }
 
     fn change_state(&mut self, new: State) {
