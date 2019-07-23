@@ -197,10 +197,11 @@ pub enum State {
     Established,
 
     /// Closed our side of the connection.
-    FinWait1,
-
-    /// Closing connection nicely, initiated by us and acknowledged.
-    FinWait2,
+    ///
+    /// This is split into two states (FinWait1 and FinWait2) in the RFC where we track whether our
+    /// own FIN has been ack'ed. This is of importance for answering CLOSE calls but can be
+    /// supplemented in the io implementation. Transition the the TimeWait state works the same.
+    FinWait,
 
     /// Closed both sides but we don't know the other knows.
     Closing,
@@ -414,7 +415,7 @@ impl Connection {
             State::Closed => self.arrives_closed(incoming),
             State::Listen => self.arrives_listen(incoming, entry),
             State::SynSent => self.arrives_syn_sent(incoming, entry),
-            State::Established => self.arrives_established(incoming, entry),
+            State::Established | State::FinWait => self.arrives_established(incoming, entry),
             _ => unimplemented!(),
         }
     }
@@ -811,7 +812,22 @@ impl Connection {
     ///
     /// May choose to send an empty range for cases where there is no data to send but a delayed
     /// ACK is expected.
-    pub fn next_send_segment(&mut self, available: AvailableBytes, time: Instant, entry: EntryKey)
+    pub fn next_send_segment(&mut self, mut available: AvailableBytes, time: Instant, entry: EntryKey)
+        -> Option<Segment>
+    {
+        match self.current {
+            State::Established | State::CloseWait => self.select_send_segment(available, time, entry),
+            // When we have already sent our FIN, never send *new* data.
+            State::FinWait | State::Closing | State::LastAck => {
+                available.total = available.total.min(self.send.next - self.send.unacked);
+                self.select_send_segment(available, time, entry)
+            },
+            State::Closed | State::Listen | State::TimeWait => None,
+            State::SynSent | State::SynReceived => unimplemented!("need to retransmit SYN on timeout"),
+        }
+    }
+
+    fn select_send_segment(&mut self, available: AvailableBytes, time: Instant, entry: EntryKey)
         -> Option<Segment>
     {
         // Convert the input to `u32`, our window can never be that large anyways.
@@ -834,13 +850,14 @@ impl Connection {
             return unimplemented!();
         }
 
+        // That's funny. Even if we have sent a FIN, the other side could decrease their window
+        // size to the point where we could not send the sequence number of the FIN again.
         let window = self.send.window();
+            // TODO: congestion flow control
             // .min(self.flow_control.congestion_window);
         let sent = self.send.in_flight();
         let max_sent = window.min(byte_window);
 
-        // TODO: may want to buffer. But that could be done in the upper `SendBuf` as well.
-        // Probably even the better place as its more immediately accessible to the user.
         if sent < max_sent {
             // Send one new segment of new data.
             let end = sent.saturating_add(self.sender_maximum_segment_size.into()).min(max_sent);
@@ -852,15 +869,25 @@ impl Connection {
             let range = sent..end;
             assert!(range.len() > 0);
 
+            let is_fin = available.fin && end as usize == available.total;
+
+            if is_fin {
+                match self.current {
+                    State::Established => self.change_state(State::FinWait),
+                    State::CloseWait => self.change_state(State::LastAck),
+                    _ => (),
+                }
+            }
+
             let seq_number = self.send.next;
-            self.send.next = self.send.next + range.len();
+            self.send.next = self.send.next + range.len() + usize::from(is_fin);
 
             return Some(Segment {
                 repr: InnerRepr {
                     seq_number,
                     flags: {
                         let mut flags = TcpFlags::default();
-                        flags.set_fin(available.fin && end as usize == available.total);
+                        flags.set_fin(is_fin);
                         flags
                     },
                     ack_number: Some(self.ack_all()),
@@ -919,12 +946,13 @@ impl Connection {
             return;
         }
 
-        if meta.fin {
-            match self.current {
-                State::CloseWait | State::Closing | State::LastAck | State::TimeWait => (),
-                State::Established | State::SynReceived => self.change_state(State::CloseWait),
-                _ => unimplemented!(),
-            }
+        let acks_all = self.recv.next == end;
+
+        match (self.current, meta.fin, acks_all) {
+            (State::Established, true, _) | (State::SynReceived, true, _) => self.change_state(State::CloseWait),
+            (State::FinWait, true, true) | (State::Closing, _, true) => self.change_state(State::TimeWait),
+            (State::FinWait, true, false) => self.change_state(State::Closing),
+            _ => (),
         }
 
         self.recv.next = end;
