@@ -246,7 +246,7 @@ pub struct Signals {
     pub reset: bool,
 
     /// There is valid data in the packet to receive.
-    pub receive: bool,
+    pub receive: Option<ReceivedSegment>,
 
     /// Whether the Operator could send data.
     pub may_send: bool,
@@ -257,6 +257,28 @@ pub struct Signals {
     /// *not* to actually send the packet. In particular you could probably advance the internal
     /// state without acquiring packets to send out. This, however, sounds like a very bad idea.
     pub answer: Option<TcpRepr>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ReceivedSegment {
+    /// If the segment has a syn.
+    ///
+    /// SYN occupies one sequence space before the actual data.
+    pub syn: bool,
+
+    /// If the segment has a fin.
+    ///
+    /// FIN occupies one sequence space after the data.
+    pub fin: bool,
+
+    /// The length of the actual data.
+    pub data_len: usize,
+
+    /// The sequence number at the start of this packet.
+    pub begin: TcpSeqNumber,
+
+    /// Timestamp for acking this segment.
+    pub timestamp: Instant,
 }
 
 /// An ingoing communication.
@@ -615,7 +637,7 @@ impl Connection {
 
     fn arrives_established(&mut self, incoming: &InPacket, entry: EntryKey) -> Signals {
         // TODO: time for RTT estimation, ...
-        let InPacket { segment, from, time: _, } = incoming;
+        let InPacket { segment, from, time, } = incoming;
 
         let acceptable = self.ingress_acceptable(segment);
 
@@ -685,6 +707,14 @@ impl Connection {
 
         // URG lol
 
+        let segment_ack = ReceivedSegment {
+            syn: segment.flags.syn(),
+            fin: segment.flags.fin(),
+            data_len: usize::from(segment.payload_len),
+            begin: segment.seq_number,
+            timestamp: *time,
+        };
+
         // Actually accept the segment data. Note that we do not control the receive buffer
         // ourselves but rather only know the precise buffer lengths at this point. Also, the
         // window we indicated to the remote may not reflect exactly what we can actually accept.
@@ -693,7 +723,7 @@ impl Connection {
         // such as RFC1122. Thus, we merely signal the precence of available data to the operator
         // above.
         let mut signals = Signals::default();
-        signals.receive = true;
+        signals.receive = Some(segment_ack);
         signals
     }
 
@@ -868,13 +898,18 @@ impl Connection {
         }
     }
 
-    pub fn set_recv_ack(&mut self, ack: TcpSeqNumber, now: Instant) {
-        if !(self.recv.next < ack) {
+    /// Acknowledge that a received segment has reached the reader.
+    ///
+    /// This method trusts the content of the `ReceivedSegment`. In particular, its FIN bit should
+    /// be accurate.
+    pub fn set_recv_ack(&mut self, meta: ReceivedSegment) {
+        let end = meta.sequence_end();
+        if !(self.recv.next < end) {
             return;
         }
 
-        self.recv.next = ack;
-        let new_timer = Expiration::When(now + self.ack_timeout);
+        self.recv.next = end;
+        let new_timer = Expiration::When(meta.timestamp + self.ack_timeout);
         self.ack_timer = self.ack_timer.min(new_timer);
     }
 
@@ -958,6 +993,44 @@ impl Send {
     fn in_flight(&self) -> u32 {
         assert!(self.unacked <= self.next);
         (self.next - self.unacked) as u32
+    }
+}
+
+impl ReceivedSegment {
+    pub fn sequence_len(&self) -> usize {
+        self.data_len
+            + usize::from(self.syn)
+            + usize::from(self.fin)
+    }
+
+    /// Only ack part of the segment until some sequence point.
+    ///
+    /// Takes care of removing the FIN flag if the acked part does not cover every data byte until
+    /// that point.
+    pub fn acked_until(&self, ack: TcpSeqNumber) -> Self {
+        ReceivedSegment {
+            syn: self.syn,
+            fin: self.fin && ack + 1 >= self.sequence_end(),
+            begin: self.begin,
+            data_len: self.data_len,
+            timestamp: self.timestamp,
+        }
+    }
+
+    pub fn data_begin(&self) -> TcpSeqNumber {
+        self.begin + usize::from(self.syn)
+    }
+
+    pub fn data_end(&self) -> TcpSeqNumber {
+        self.begin + usize::from(self.syn) + self.data_len
+    }
+
+    pub fn contains_in_window(&self, seq: TcpSeqNumber) -> bool {
+        self.begin.contains_in_window(seq, self.sequence_len())
+    }
+
+    pub fn sequence_end(&self) -> TcpSeqNumber {
+        self.begin + self.sequence_len()
     }
 }
 

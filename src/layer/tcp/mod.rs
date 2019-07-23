@@ -83,6 +83,9 @@ mod socket;
 
 mod siphash;
 
+pub use connection::{
+    ReceivedSegment};
+
 pub use endpoint::{
     Slot,
     SlotKey,

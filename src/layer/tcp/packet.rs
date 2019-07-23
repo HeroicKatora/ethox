@@ -3,7 +3,7 @@ use crate::wire::{Payload, PayloadMut};
 use crate::wire::{IpAddress, Ipv4Subnet, Ipv6Subnet, IpSubnet, IpProtocol};
 use crate::wire::{TcpPacket, TcpRepr, TcpSeqNumber};
 
-use super::connection::{Endpoint, InPacket, Operator, Segment, Signals};
+use super::connection::{Endpoint, InPacket, Operator, ReceivedSegment, Segment, Signals};
 use super::endpoint::{FourTuple, SlotKey};
 
 /// An incoming tcp packet.
@@ -59,7 +59,7 @@ pub trait RecvBuf {
     ///
     /// Report back the new unreceived byte. This allows the receive buffer to choose the strategy
     /// for partially acknowledged data.
-    fn receive(&mut self, buf: &[u8], begin: TcpSeqNumber);
+    fn receive(&mut self, buf: &[u8], segment: ReceivedSegment);
 
     /// Get the highest completed sequence number.
     fn ack(&mut self) -> TcpSeqNumber;
@@ -136,6 +136,12 @@ pub struct Stray<'a, P: PayloadMut> {
 enum OpenPacket<'a, P: PayloadMut> {
     /// There is an incoming packet and data to be read.
     In {
+        tcp: TcpPacket<ip::IpPacket<'a, P>>,
+        segment: ReceivedSegment,
+    },
+
+    /// An incoming packet without data.
+    Control {
         tcp: TcpPacket<ip::IpPacket<'a, P>>,
     },
 
@@ -237,7 +243,11 @@ impl<'a, P: PayloadMut> In<'a, P> {
                     ip: ip_control,
                     operator,
                     signals,
-                    packet: OpenPacket::In { tcp },
+                    // Determine if this is with or without data.
+                    packet: match signals.receive {
+                        Some(segment) => OpenPacket::In { tcp, segment },
+                        None => OpenPacket::Control { tcp },
+                    },
                 }));
             },
         };
@@ -284,12 +294,10 @@ impl<'a, P: PayloadMut> Open<'a, P> {
         let connection = self.operator.connection_mut();
         connection.recv.update_window(with.window());
 
-        if let OpenPacket::In { tcp } = &self.packet {
-            let time = self.ip.info().timestamp();
-            let payload = tcp.payload_slice();
-
-            with.receive(payload, tcp.seq_number() + tcp.flags().sequence_len());
-            connection.set_recv_ack(with.ack(), time);
+        if let OpenPacket::In { tcp, segment } = &self.packet {
+            with.receive(tcp.payload_slice(), *segment);
+            let progress = segment.acked_until(with.ack());
+            connection.set_recv_ack(progress);
         }
     }
 
@@ -302,7 +310,8 @@ impl<'a, P: PayloadMut> Open<'a, P> {
     pub fn write(self, with: &mut impl SendBuf) -> Result<Sending<'a>, crate::layer::Error> {
         let Open { ip, mut operator, signals: _, packet, } = self;
         let payload: &'a mut P = match packet {
-            OpenPacket::In { tcp } => tcp.into_inner().into_inner().into_inner(),
+            OpenPacket::In { tcp, .. } | OpenPacket::Control { tcp }
+                => tcp.into_inner().into_inner().into_inner(),
             OpenPacket::Out { raw } => raw,
         };
 

@@ -3,7 +3,7 @@
 //! This is not quite a compatibility layer with socket APIs but parts of it may be reasonably
 //! close to enabling it.
 use crate::wire::TcpSeqNumber;
-use super::{RecvBuf, SendBuf};
+use super::{ReceivedSegment, RecvBuf, SendBuf};
 
 /// A sender with no data.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -66,12 +66,11 @@ impl SendBuf for Empty {
 }
 
 impl RecvBuf for Sink {
-    fn receive(&mut self, buf: &[u8], begin: TcpSeqNumber) {
-        dbg!(begin, buf.len(), self.highest);
-        let highest = *self.highest.get_or_insert(begin);
+    fn receive(&mut self, buf: &[u8], segment: ReceivedSegment) {
+        let highest = *self.highest.get_or_insert(segment.begin);
 
-        if begin.contains_in_window(highest, buf.len()) {
-            self.highest = Some(begin + buf.len());
+        if segment.contains_in_window(highest) {
+            self.highest = Some(segment.sequence_end());
         }
     }
 
