@@ -466,12 +466,7 @@ impl Connection {
 
         if let Some(ack_number) = segment.ack_number {
             signals.answer = Some(InnerRepr {
-                flags: {
-                    let mut flags = TcpFlags::default();
-                    flags.set_ack(true);
-                    flags.set_rst(true);
-                    flags
-                },
+                flags: TcpFlags::RST,
                 seq_number: ack_number,
                 ack_number: None,
                 window_len: 0,
@@ -483,11 +478,7 @@ impl Connection {
             }.send_back(segment));
         } else {
             signals.answer = Some(InnerRepr {
-                flags: {
-                    let mut flags = TcpFlags::default();
-                    flags.set_rst(true);
-                    flags
-                },
+                flags: TcpFlags::RST,
                 seq_number: TcpSeqNumber(0),
                 ack_number: Some(segment.seq_number + segment.sequence_len()),
                 window_len: 0,
@@ -522,12 +513,7 @@ impl Connection {
 
         if let Some(ack_number) = segment.ack_number { // What are you acking? A previous connection.
             signals.answer = Some(InnerRepr {
-                flags: {
-                    let mut flags = TcpFlags::default();
-                    flags.set_ack(true);
-                    flags.set_rst(true);
-                    flags
-                },
+                flags: TcpFlags::RST,
                 seq_number: ack_number,
                 ack_number: None,
                 window_len: 0,
@@ -560,12 +546,7 @@ impl Connection {
         self.send.initial_seq = isn;
 
         signals.answer = Some(InnerRepr {
-            flags: {
-                let mut flags = TcpFlags::default();
-                flags.set_ack(true);
-                flags.set_rst(true);
-                flags
-            },
+            flags: TcpFlags::RST,
             seq_number: isn,
             ack_number: Some(self.ack_all()),
             window_len: self.recv.window,
@@ -593,11 +574,7 @@ impl Connection {
                 // Packet out of window. Send a RST with fitting sequence number.
                 let mut signals = Signals::default();
                 signals.answer = Some(InnerRepr {
-                    flags: {
-                        let mut flags = TcpFlags::default();
-                        flags.set_rst(true);
-                        flags
-                    },
+                    flags: TcpFlags::RST,
                     seq_number: ack,
                     ack_number: None,
                     window_len: 0,
@@ -646,11 +623,7 @@ impl Connection {
 
             let mut signals = Signals::default();
             signals.answer = Some(InnerRepr {
-                flags: {
-                    let mut flags = TcpFlags::default();
-                    flags.set_syn(true);
-                    flags
-                },
+                flags: TcpFlags::SYN,
                 seq_number: self.send.initial_seq,
                 ack_number: Some(self.ack_all()),
                 window_len: self.recv.window,
@@ -797,11 +770,7 @@ impl Connection {
         signals.reset = true;
         signals.delete = true;
         signals.answer = Some(InnerRepr {
-            flags: {
-                let mut flags = TcpFlags::default();
-                flags.set_rst(true);
-                flags
-            },
+            flags: TcpFlags::RST,
             seq_number: self.send.next,
             ack_number: Some(self.ack_all()),
             window_len: 0,
@@ -816,11 +785,7 @@ impl Connection {
 
     fn send_open(&mut self, to: FourTuple) -> TcpRepr {
         InnerRepr {
-            flags: {
-                let mut flags = TcpFlags::default();
-                flags.set_syn(true);
-                flags
-            },
+            flags: TcpFlags::SYN,
             seq_number: self.send.initial_seq,
             ack_number: None,
             window_len: 0,
@@ -922,11 +887,7 @@ impl Connection {
             return Some(Segment {
                 repr: InnerRepr {
                     seq_number,
-                    flags: {
-                        let mut flags = TcpFlags::default();
-                        flags.set_fin(is_fin);
-                        flags
-                    },
+                    flags: TcpFlags::FIN,
                     ack_number: Some(self.ack_all()),
                     window_len: self.recv.window,
                     window_scale: None,

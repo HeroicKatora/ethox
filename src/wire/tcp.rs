@@ -102,16 +102,6 @@ mod field {
         URGENT.end..(length as usize)
     }
 
-    pub const FLG_FIN: u16 = 0x001;
-    pub const FLG_SYN: u16 = 0x002;
-    pub const FLG_RST: u16 = 0x004;
-    pub const FLG_PSH: u16 = 0x008;
-    pub const FLG_ACK: u16 = 0x010;
-    pub const FLG_URG: u16 = 0x020;
-    pub const FLG_ECE: u16 = 0x040;
-    pub const FLG_CWR: u16 = 0x080;
-    pub const FLG_NS:  u16 = 0x100;
-
     pub const OPT_END: u8 = 0x00;
     pub const OPT_NOP: u8 = 0x01;
     pub const OPT_MSS: u8 = 0x02;
@@ -440,138 +430,162 @@ impl<T: PayloadMut> Packet<T> {
 }
 
 impl Flags {
+    pub const NONE: Self = Flags(0x0);
+    pub const FIN: Self = Flags(0x001);
+    pub const SYN: Self = Flags(0x002);
+    pub const RST: Self = Flags(0x004);
+    pub const PSH: Self = Flags(0x008);
+    pub const ACK: Self = Flags(0x010);
+    pub const URG: Self = Flags(0x020);
+    pub const ECE: Self = Flags(0x040);
+    pub const CWR: Self = Flags(0x080);
+    pub const NS:  Self = Flags(0x100);
+
     /// Return the FIN flag.
     #[inline]
-    pub fn fin(&self) -> bool {
-        self.0 & field::FLG_FIN != 0
+    pub fn fin(self) -> bool {
+        self.0 & Self::FIN.0 != 0
     }
 
     /// Return the SYN flag.
     #[inline]
-    pub fn syn(&self) -> bool {
-        self.0 & field::FLG_SYN != 0
+    pub fn syn(self) -> bool {
+        self.0 & Self::SYN.0 != 0
     }
 
     /// Return the RST flag.
     #[inline]
-    pub fn rst(&self) -> bool {
-        self.0 & field::FLG_RST != 0
+    pub fn rst(self) -> bool {
+        self.0 & Self::RST.0 != 0
     }
 
     /// Return the PSH flag.
     #[inline]
-    pub fn psh(&self) -> bool {
-        self.0 & field::FLG_PSH != 0
+    pub fn psh(self) -> bool {
+        self.0 & Self::PSH.0 != 0
     }
 
     /// Return the ACK flag.
     #[inline]
-    pub fn ack(&self) -> bool {
-        self.0 & field::FLG_ACK != 0
+    pub fn ack(self) -> bool {
+        self.0 & Self::ACK.0 != 0
     }
 
     /// Return the URG flag.
     #[inline]
-    pub fn urg(&self) -> bool {
-        self.0 & field::FLG_URG != 0
+    pub fn urg(self) -> bool {
+        self.0 & Self::URG.0 != 0
     }
 
     /// Return the ECE flag.
     #[inline]
-    pub fn ece(&self) -> bool {
-        self.0 & field::FLG_ECE != 0
+    pub fn ece(self) -> bool {
+        self.0 & Self::ECE.0 != 0
     }
 
     /// Return the CWR flag.
     #[inline]
-    pub fn cwr(&self) -> bool {
-        self.0 & field::FLG_CWR != 0
+    pub fn cwr(self) -> bool {
+        self.0 & Self::CWR.0 != 0
     }
 
     /// Return the NS flag.
     #[inline]
-    pub fn ns(&self) -> bool {
-        self.0 & field::FLG_NS != 0
+    pub fn ns(self) -> bool {
+        self.0 & Self::NS.0 != 0
     }
 
     /// Set the FIN flag.
     #[inline]
     pub fn set_fin(&mut self, value: bool) {
-        let flag = if value { field::FLG_FIN } else { 0 };
-        let without = self.0 & !field::FLG_FIN;
+        let flag = if value { Self::FIN.0 } else { 0 };
+        let without = self.0 & !Self::FIN.0;
         self.0 = without | flag;
     }
 
     /// Set the SYN flag.
     #[inline]
     pub fn set_syn(&mut self, value: bool) {
-        let flag = if value { field::FLG_SYN } else { 0 };
-        let without = self.0 & !field::FLG_SYN;
+        let flag = if value { Self::SYN.0 } else { 0 };
+        let without = self.0 & !Self::SYN.0;
         self.0 = without | flag;
     }
 
     /// Set the RST flag.
     #[inline]
     pub fn set_rst(&mut self, value: bool) {
-        let flag = if value { field::FLG_RST } else { 0 };
-        let without = self.0 & !field::FLG_RST;
+        let flag = if value { Self::RST.0 } else { 0 };
+        let without = self.0 & !Self::RST.0;
         self.0 = without | flag;
     }
 
     /// Set the PSH flag.
     #[inline]
     pub fn set_psh(&mut self, value: bool) {
-        let flag = if value { field::FLG_PSH } else { 0 };
-        let without = self.0 & !field::FLG_PSH;
+        let flag = if value { Self::PSH.0 } else { 0 };
+        let without = self.0 & !Self::PSH.0;
         self.0 = without | flag;
     }
 
     /// Set the ACK flag.
     #[inline]
     pub fn set_ack(&mut self, value: bool) {
-        let flag = if value { field::FLG_ACK } else { 0 };
-        let without = self.0 & !field::FLG_ACK;
+        let flag = if value { Self::ACK.0 } else { 0 };
+        let without = self.0 & !Self::ACK.0;
         self.0 = without | flag;
     }
 
     /// Set the URG flag.
     #[inline]
     pub fn set_urg(&mut self, value: bool) {
-        let flag = if value { field::FLG_URG } else { 0 };
-        let without = self.0 & !field::FLG_URG;
+        let flag = if value { Self::URG.0 } else { 0 };
+        let without = self.0 & !Self::URG.0;
         self.0 = without | flag;
     }
 
     /// Set the ECE flag.
     #[inline]
     pub fn set_ece(&mut self, value: bool) {
-        let flag = if value { field::FLG_ECE } else { 0 };
-        let without = self.0 & !field::FLG_ECE;
+        let flag = if value { Self::ECE.0 } else { 0 };
+        let without = self.0 & !Self::ECE.0;
         self.0 = without | flag;
     }
 
     /// Set the CWR flag.
     #[inline]
     pub fn set_cwr(&mut self, value: bool) {
-        let flag = if value { field::FLG_CWR } else { 0 };
-        let without = self.0 & !field::FLG_CWR;
+        let flag = if value { Self::CWR.0 } else { 0 };
+        let without = self.0 & !Self::CWR.0;
         self.0 = without | flag;
     }
 
     /// Set the NS flag.
     #[inline]
     pub fn set_ns(&mut self, value: bool) {
-        let flag = if value { field::FLG_NS } else { 0 };
-        let without = self.0 & !field::FLG_NS;
+        let flag = if value { Self::NS.0 } else { 0 };
+        let without = self.0 & !Self::NS.0;
         self.0 = without | flag;
     }
 
     /// Return the length of a control flag, in terms of sequence space.
     pub fn sequence_len(self) -> usize {
         // Syn + Fin is actually weird.
-        // FIXME: find out correct sequence length of this.
-        (if self.syn() { 1 } else { 0 })
-        + (if self.fin() { 1 }  else { 0 })
+        usize::from(self.syn()) + usize::from(self.fin())
+    }
+
+    /// Like `BitOr` but const.
+    ///
+    /// Will be deprecated swiftly once `const impl` is on a path to stable.
+    pub const fn const_or(self, other: Self) -> Self {
+        Flags(self.0 | other.0)
+    }
+}
+
+impl ops::BitOr<Self> for Flags {
+    type Output = Self;
+
+    fn bitor(self, other: Self) -> Self {
+        Flags(self.0 | other.0)
     }
 }
 
@@ -595,7 +609,7 @@ pub enum TcpOption<'a> {
 
 impl<'a> TcpOption<'a> {
     pub fn parse(buffer: &'a [u8]) -> Result<(&'a [u8], TcpOption<'a>)> {
-        let (length, option);
+        let (length, option): (usize, TcpOption);
         match *buffer.get(0).ok_or(Error::Truncated)? {
             field::OPT_END => {
                 length = 1;
@@ -606,7 +620,7 @@ impl<'a> TcpOption<'a> {
                 option = TcpOption::NoOperation;
             }
             kind => {
-                length = *buffer.get(1).ok_or(Error::Truncated)? as usize;
+                length = buffer.get(1).copied().ok_or(Error::Truncated)?.into();
                 let data = buffer.get(2..length).ok_or(Error::Truncated)?;
                 match (kind, length) {
                     (field::OPT_END, _) |
@@ -701,7 +715,7 @@ impl<'a> TcpOption<'a> {
                 match *self {
                     TcpOption::EndOfList |
                     TcpOption::NoOperation =>
-                        unimplemented!("W/e"),
+                        unreachable!("Covered by cases above"),
                     TcpOption::MaxSegmentSize(value) => {
                         buffer[0] = field::OPT_MSS;
                         NetworkEndian::write_u16(&mut buffer[2..], value)
@@ -950,17 +964,9 @@ impl<'a, T: Payload + ?Sized> fmt::Display for Packet<&'a T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         // Cannot use Repr::parse because we don't have the IP addresses.
         // FIXME: this is STUPID
-        write!(f, "TCP src={} dst={}",
-               self.src_port(), self.dst_port())?;
+        write!(f, "TCP src={} dst={}", self.src_port(), self.dst_port())?;
         let flags = self.flags();
-        // FIXME: this should be the display of `Flags` type.
-        if flags.syn() { write!(f, " syn")? }
-        if flags.fin() { write!(f, " fin")? }
-        if flags.rst() { write!(f, " rst")? }
-        if flags.psh() { write!(f, " psh")? }
-        if flags.ece() { write!(f, " ece")? }
-        if flags.cwr() { write!(f, " cwr")? }
-        if flags.ns()  { write!(f, " ns" )? }
+        write!(f, " flags={}", flags)?;
         write!(f, " seq={}", self.seq_number())?;
         if flags.ack() {
             write!(f, " ack={}", self.ack_number())?;
@@ -972,7 +978,7 @@ impl<'a, T: Payload + ?Sized> fmt::Display for Packet<&'a T> {
         write!(f, " len={}", self.payload_slice().len())?;
 
         let mut options = self.options();
-        while options.len() > 0 {
+        while !options.is_empty() {
             let (next_options, option) =
                 match TcpOption::parse(options) {
                     Ok(res) => res,
@@ -1000,16 +1006,8 @@ impl<'a, T: Payload + ?Sized> fmt::Display for Packet<&'a T> {
 
 impl fmt::Display for Repr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "TCP src={} dst={}",
-               self.src_port, self.dst_port)?;
-        match self.flags {
-            Flags(field::FLG_SYN) => write!(f, " syn")?,
-            Flags(field::FLG_FIN) => write!(f, " fin")?,
-            Flags(field::FLG_RST) => write!(f, " rst")?,
-            Flags(field::FLG_PSH) => write!(f, " psh")?,
-            Flags(0) => (),
-            Flags(other) => write!(f, " {:x}", other)?,
-        }
+        write!(f, "TCP src={} dst={}", self.src_port, self.dst_port)?;
+        write!(f, " flags={}", self.flags)?;
         write!(f, " seq={}", self.seq_number)?;
         if let Some(ack_number) = self.ack_number {
             write!(f, " ack={}", ack_number)?;
@@ -1019,6 +1017,34 @@ impl fmt::Display for Repr {
         if let Some(max_seg_size) = self.max_seg_size {
             write!(f, " mss={}", max_seg_size)?;
         }
+        Ok(())
+    }
+}
+
+impl fmt::Display for Flags {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        const SYN_ACK: Flags = Flags::SYN.const_or(Flags::ACK);
+        const FIN_ACK: Flags = Flags::FIN.const_or(Flags::ACK);
+        const RST_ACK: Flags = Flags::RST.const_or(Flags::ACK);
+        const PSH_ACK: Flags = Flags::PSH.const_or(Flags::ACK);
+        const PSH_FIN_ACK: Flags = Flags::PSH.const_or(Flags::FIN).const_or(Flags::ACK);
+
+        match *self {
+            // Common combinations you would expect to see.
+            Flags::SYN => write!(f, "syn")?,
+            Flags::FIN => write!(f, "fin")?,
+            Flags::RST => write!(f, "rst")?,
+            Flags::PSH => write!(f, "psh")?,
+            SYN_ACK => write!(f, "syn+ack")?,
+            FIN_ACK => write!(f, "fin+ack")?,
+            RST_ACK => write!(f, "rst+ack")?,
+            PSH_ACK => write!(f, "psh+ack")?,
+            PSH_FIN_ACK => write!(f, "psh+fin+ack")?,
+            Flags::NONE => write!(f, "none")?,
+            // All uncommon or even illegal ones (e.g. PSH without ACK).
+            Flags(other) => write!(f, "{:#x}", other)?,
+        }
+
         Ok(())
     }
 }
