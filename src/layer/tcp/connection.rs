@@ -304,13 +304,28 @@ pub struct InPacket {
     pub time: Instant,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Segment {
     /// Representation for the packet.
     pub repr: TcpRepr,
 
     /// Range of the data within the (re-)transmit buffer.
     pub range: Range<usize>,
+}
+
+/// Output signals of the model.
+///
+/// Private representation since they also influence handling of the state itself.
+#[derive(Clone, Default, Debug)]
+#[must_use = "Doesn't do anything on its own, make sure any answer is actually sent."]
+pub struct OutSignals {
+    pub delete: bool,
+
+    /// A packet was selected to be generated.
+    ///
+    /// Some packets (ACKs or during connection closing) are only generated after the data of an
+    /// incoming segment has been read.
+    pub segment: Option<Segment>,
 }
 
 /// An internal, lifetime erased trait for controlling connections of an `Endpoint`.
@@ -488,6 +503,14 @@ impl Connection {
     fn arrives_listen(&mut self, incoming: &InPacket, mut entry: EntryKey)
         -> Signals
     {
+        // TODO: SYN cookies. Ideally, we could extend the original mechanism to support timestamp,
+        // sack, and window scale as well. Note that ts and sack require only a single flag bit in
+        // the cookie; the state for timestamp can be restored from the ts-option in the Ack answer
+        // to our Syn+Ack and we require only a flag to check if we had received a ts-option in the
+        // Syn initially; while sack also only requires a flag to indicate its negotation state.
+        //
+        // The harder part seems to be that syn cookies require a new operation within Signals.
+
         let InPacket { segment, from, time, } = incoming;
         let mut signals = Signals::default();
 
@@ -813,17 +836,29 @@ impl Connection {
     /// May choose to send an empty range for cases where there is no data to send but a delayed
     /// ACK is expected.
     pub fn next_send_segment(&mut self, mut available: AvailableBytes, time: Instant, entry: EntryKey)
-        -> Option<Segment>
+        -> OutSignals
     {
         match self.current {
-            State::Established | State::CloseWait => self.select_send_segment(available, time, entry),
+            State::Established | State::CloseWait => {
+                self.select_send_segment(available, time, entry)
+                    .map(OutSignals::segment)
+                    .unwrap_or_else(OutSignals::none)
+            },
             // When we have already sent our FIN, never send *new* data.
             State::FinWait | State::Closing | State::LastAck => {
                 available.total = available.total.min(self.send.next - self.send.unacked);
                 self.select_send_segment(available, time, entry)
+                    .map(OutSignals::segment)
+                    .unwrap_or_else(OutSignals::none)
             },
-            State::Closed | State::Listen | State::TimeWait => None,
-            State::SynSent | State::SynReceived => unimplemented!("need to retransmit SYN on timeout"),
+            State::Closed => {
+                self.ensure_closed_ack(entry.four_tuple())
+                    .map(OutSignals::segment)
+                    .unwrap_or_else(OutSignals::none)
+            },
+            State::TimeWait => self.ensure_time_wait(time, entry),
+            State::SynSent | State::SynReceived => OutSignals::none(), // unimplemented!("need to retransmit SYN on timeout"),
+            State::Listen => OutSignals::none(),
         }
     }
 
@@ -923,6 +958,43 @@ impl Connection {
         None
     }
 
+    fn ensure_closed_ack(&mut self, tuple: FourTuple) -> Option<Segment> {
+        if self.recv.acked == self.recv.next {
+            return None;
+        }
+
+        Some(Segment {
+            repr: InnerRepr {
+                seq_number: self.send.next,
+                flags: {
+                    let mut flags = TcpFlags::default();
+                    flags
+                },
+                ack_number: Some(self.ack_all()),
+                window_len: self.recv.window,
+                window_scale: None,
+                max_seg_size: None,
+                sack_permitted: false,
+                sack_ranges: [None; 3],
+                payload_len: 0,
+            }.send_to(tuple),
+            range: 0..0,
+        })
+    }
+
+    fn ensure_time_wait(&mut self, time: Instant, entry: EntryKey) -> OutSignals {
+        match self.ensure_closed_ack(entry.four_tuple()) {
+            Some(segment) => OutSignals {
+                segment: Some(segment),
+                delete: false,
+            },
+            None => OutSignals {
+                delete: time >= self.retransmission_timer,
+                segment: None,
+            },
+        }
+    }
+
     fn window_update(&mut self, segment: &TcpRepr, new_bytes: u32) {
         let flow = &mut self.flow_control;
         if self.duplicate_ack > 0 {
@@ -946,7 +1018,12 @@ impl Connection {
 
         match (self.current, meta.fin, acked_all) {
             (State::Established, true, _) | (State::SynReceived, true, _) => self.change_state(State::CloseWait),
-            (State::FinWait, true, true) | (State::Closing, _, true) => self.change_state(State::TimeWait),
+            (State::FinWait, true, true) | (State::Closing, _, true) => {
+                self.change_state(State::TimeWait);
+                // We could have a segment lifetime estimation here, but use the retransmission
+                // timeout instead. Works as well, I guess.
+                self.retransmission_timer = meta.timestamp + 2*self.retransmission_timeout;
+            },
             (State::FinWait, true, false) => self.change_state(State::Closing),
             _ => (),
         }
@@ -1078,6 +1155,21 @@ impl ReceivedSegment {
     }
 }
 
+impl OutSignals {
+    /// No segment and keep the tcb.
+    pub fn none() -> Self {
+        OutSignals::default()
+    }
+
+    /// Send a segment but do not delete.
+    pub fn segment(segment: Segment) -> Self {
+        OutSignals {
+            segment: Some(segment),
+            delete: false,
+        }
+    }
+}
+
 impl Operator<'_> {
     pub fn key(&self) -> SlotKey {
         self.connection_key
@@ -1129,7 +1221,7 @@ impl<'a> Operator<'a> {
     }
 
     pub fn next_send_segment(&mut self, available: AvailableBytes, time: Instant)
-        -> Option<Segment>
+        -> OutSignals
     {
         let (entry_key, connection) = self.entry().into_key_value();
         connection.next_send_segment(available, time, entry_key)

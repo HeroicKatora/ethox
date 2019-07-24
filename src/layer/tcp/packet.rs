@@ -94,6 +94,7 @@ enum Unhandled<'a, P: Payload> {
 /// data to be sent onto the packet. There are flags to test for this.
 pub struct Sending<'a> {
     operator: Operator<'a>,
+    // FIXME: this should utilize its own 'Signals' that only contain those to the user.
     signals: Signals,
 }
 
@@ -307,7 +308,7 @@ impl<'a, P: PayloadMut> Open<'a, P> {
     /// handle to the connection again (this struct).
     ///
     /// Any data that is currently held as an incoming packet will be lost, even if this method fails.
-    pub fn write(self, with: &mut impl SendBuf) -> Result<Sending<'a>, crate::layer::Error> {
+    pub fn write(self, with: &mut impl SendBuf) -> Result<Result<Sending<'a>, Closing<'a>>, crate::layer::Error> {
         let Open { ip, mut operator, signals: _, packet, } = self;
         let payload: &'a mut P = match packet {
             OpenPacket::In { tcp, .. } | OpenPacket::Control { tcp }
@@ -320,27 +321,37 @@ impl<'a, P: PayloadMut> Open<'a, P> {
         let available = with.available();
         let time = ip.info().timestamp();
 
-        let Segment { repr, range } = match operator.next_send_segment(available, time) {
-            Some(segment) => segment,
-            None => return Err(crate::layer::Error::Illegal),
-        };
+        let signals = operator.next_send_segment(available, time);
 
-        let raw_ip = ip::RawPacket {
-            handle: ip,
-            payload,
-        };
+        if let Some(Segment { repr, range }) = signals.segment {
+            let raw_ip = ip::RawPacket {
+                handle: ip,
+                payload,
+            };
 
-        let mut out_ip = prepare(raw_ip, &mut operator, repr)?;
-        let ip_repr = out_ip.repr();
-        let mut tcp = TcpPacket::new_unchecked(out_ip.payload_mut_slice(), repr);
-        with.fill(tcp.payload_mut_slice(), tcp_seq + range.start);
-        tcp.fill_checksum(ip_repr.src_addr(), ip_repr.dst_addr());
+            let mut out_ip = prepare(raw_ip, &mut operator, repr)?;
 
-        out_ip.send()?;
+            let ip_repr = out_ip.repr();
+            let mut tcp = TcpPacket::new_unchecked(out_ip.payload_mut_slice(), repr);
+            with.fill(tcp.payload_mut_slice(), tcp_seq + range.start);
+            tcp.fill_checksum(ip_repr.src_addr(), ip_repr.dst_addr());
 
-        Ok(Sending {
-            operator,
-            signals: Signals::default(),
+            out_ip.send()?;
+        }
+
+        Ok(if signals.delete {
+            let previous = operator.key();
+            let endpoint = operator.delete();
+            Err(Closing {
+                endpoint,
+                previous,
+                signals: Signals::default(),
+            })
+        } else {
+            Ok(Sending {
+                operator,
+                signals: Signals::default(),
+            })
         })
     }
 }
