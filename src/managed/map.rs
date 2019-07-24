@@ -124,6 +124,15 @@ impl<'map, 'a, K: Ord, V> Entry<'map, 'a, K, V> {
             _ => None,
         }
     }
+
+    /// Remove the entry if it is occupied.
+    ///
+    /// This is just shorthand for matching on an occupied entry and calling remove on it.
+    pub fn remove(self) {
+        if let Some(occupied) = self.occupied() {
+            occupied.remove()
+        }
+    }
 }
 
 impl<'map, K: Ord, V> OccupiedEntry<'map, '_, K, V> {

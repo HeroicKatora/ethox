@@ -107,7 +107,7 @@ where
                     Ok(open) => {
                         let _ = open.write(&mut self.send);
                     },
-                    Err(_) => (),
+                    Err(_) => self.state = ClientState::Finished,
                 }
             },
             ClientState::Finished => (),

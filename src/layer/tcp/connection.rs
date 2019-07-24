@@ -341,6 +341,8 @@ pub trait Endpoint {
 
     fn entry(&mut self, index: SlotKey) -> Option<Entry>;
 
+    fn remove(&mut self, index: SlotKey);
+
     fn find_tuple(&mut self, tuple: FourTuple) -> Option<Entry>;
 
     fn source_port(&mut self, addr: IpAddress) -> Option<u16>;
@@ -966,10 +968,7 @@ impl Connection {
         Some(Segment {
             repr: InnerRepr {
                 seq_number: self.send.next,
-                flags: {
-                    let mut flags = TcpFlags::default();
-                    flags
-                },
+                flags: TcpFlags::default(),
                 ack_number: Some(self.ack_all()),
                 window_len: self.recv.window,
                 window_scale: None,
@@ -1057,7 +1056,7 @@ impl Connection {
         self.recv.acked < self.recv.next
     }
 
-    fn change_state(&mut self, new: State) {
+    pub(crate) fn change_state(&mut self, new: State) {
         self.previous = self.current;
         self.current = new;
         eprintln!("Changed state: {:?} -> {:?}", self.previous, self.current);
@@ -1234,8 +1233,8 @@ impl<'a> Operator<'a> {
     }
 
     /// Remove the connection and close the operator.
-    pub(crate) fn delete(mut self) -> &'a mut Endpoint {
-        self.entry().remove();
+    pub(crate) fn delete(self) -> &'a mut Endpoint {
+        self.endpoint.remove(self.connection_key);
         self.endpoint
     }
 

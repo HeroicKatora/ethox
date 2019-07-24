@@ -99,6 +99,7 @@ struct Borrow<'a, 'e> {
 /// to that connection, to modify the connection itself, and to access the initial sequence number
 /// generator.
 pub struct Entry<'a> {
+    // TODO: add remapping to the `Entry` based api of the map if required for performance.
     key: SlotKey,
     ports: &'a mut PortMap,
     isn: &'a IsnGenerator,
@@ -154,6 +155,19 @@ impl Endpoint<'_> {
         -> Option<&Slot>
     {
         self.states.get(index.key)
+    }
+
+    pub fn remove(&mut self, index: SlotKey) {
+        let addr = match self.get_mut(index) {
+            Some(connection) => {
+                connection.connection.change_state(State::Closed);
+                connection.addr
+            },
+            None => return,
+        };
+
+        self.ports.entry(addr).remove();
+        let _ = self.states.remove(index.key);
     }
 
     /// Opens a new port for listening.
@@ -316,10 +330,6 @@ impl<'a> Entry<'a> {
     pub fn connection(&mut self) -> &mut Connection {
         &mut self.slot.connection
     }
-
-    pub fn remove(self) {
-        unimplemented!()
-    }
 }
 
 impl EntryKey<'_> {
@@ -357,6 +367,10 @@ impl super::connection::Endpoint for Endpoint<'_> {
 
     fn get_mut(&mut self, index: SlotKey) -> Option<&mut Slot> {
         Endpoint::get_mut(self, index)
+    }
+
+    fn remove(&mut self, index: SlotKey) {
+        Endpoint::remove(self, index)
     }
 
     fn entry(&mut self, index: SlotKey) -> Option<Entry> {
