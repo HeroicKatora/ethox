@@ -110,6 +110,14 @@ pub trait PayloadMutExt: PayloadMut {
 
         Ok(())
     }
+
+    fn memset(&mut self, offset: usize, length: usize, value: u8) {
+        let slice = self.payload_mut().as_mut_slice();
+
+        for i in &mut slice[offset..offset + length] {
+            *i = value;
+        }
+    }
 }
 
 impl<T: PayloadMut> PayloadMutExt for T { }
