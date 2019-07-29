@@ -704,10 +704,17 @@ impl Connection {
             },
             AckUpdate::Duplicate => {
                 self.duplicate_ack = self.duplicate_ack.saturating_add(1);
+                self.flow_control.ssthresh = unimplemented!();
+                self.flow_control.congestion_window = unimplemented!();
             },
             // This is a reordered packet, potentially an attack. Do nothing.
             AckUpdate::TooLow => (),
             AckUpdate::Updated { new_bytes } => {
+                // No longer in fast retransmit.
+                if self.duplicate_ack > 0 {
+                    self.flow_control.congestion_window = self.flow_control.ssthresh;
+                    self.duplicate_ack = 0;
+                }
                 self.send.window = segment.window_len;
                 self.window_update(segment, new_bytes);
             },
@@ -845,11 +852,13 @@ impl Connection {
             // Fast retransmit?
             //
             // this would be a return path but just don't do anything atm.
+            return self.fast_retransmit(time, entry);
         }
 
         if self.retransmission_timer > time {
-            // Choose segments to retransmit:
-            return unimplemented!();
+            // Choose segments to retransmit, in contrast to `fast_retransmit` this may influence
+            // multiple next packets.
+            return self.start_timeout_retransmit(time, entry);
         }
 
         // That's funny. Even if we have sent a FIN, the other side could decrease their window
@@ -919,6 +928,33 @@ impl Connection {
         }
 
         None
+    }
+
+    fn fast_retransmit(&mut self, time: Instant, entry: EntryKey)
+        -> Option<Segment>
+    {
+        // See: https://tools.ietf.org/html/rfc5681#section-3.2
+        // Retransmit the first unacknowledged segment.
+        Some(Segment {
+            repr: InnerRepr {
+                seq_number: self.send.unacked,
+                flags: TcpFlags::default(),
+                ack_number: Some(self.ack_all()),
+                window_len: self.recv.window,
+                window_scale: None,
+                max_seg_size: None,
+                sack_permitted: false,
+                sack_ranges: [None; 3],
+                payload_len: 0,
+            }.send_to(entry.four_tuple()),
+            range: unimplemented!(),
+        })
+    }
+
+    fn start_timeout_retransmit(&mut self, time: Instant, entry: EntryKey)
+        -> Option<Segment>
+    {
+        unimplemented!()
     }
 
     fn ensure_closed_ack(&mut self, tuple: FourTuple) -> Option<Segment> {
