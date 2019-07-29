@@ -1164,7 +1164,7 @@ mod test {
             ack_number:   None,
             window_len:   0x0123,
             window_scale: None,
-            flags:        Flags(field::FLG_SYN),
+            flags:        Flags::SYN,
             max_seg_size: None,
             sack_permitted: false,
             sack_ranges:  [None, None, None],
