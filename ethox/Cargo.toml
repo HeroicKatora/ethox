@@ -17,9 +17,6 @@ default = ["std"]
 std = ["libc"]
 log = []
 
-[profile.release]
-lto = true
-
 [dev-dependencies]
 structopt = { version = "0.2", default-features = false }
 

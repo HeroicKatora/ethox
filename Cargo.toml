@@ -3,3 +3,6 @@ members = [
 	"ethox",
 	"ethox-iperf3",
 ]
+
+[profile.release]
+lto = true
