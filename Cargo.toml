@@ -30,3 +30,7 @@ required-features = ["std"]
 [[example]]
 name = "ping_tap"
 required-features = ["std"]
+
+[[example]]
+name = "tcp_hello"
+required-features = ["std"]
