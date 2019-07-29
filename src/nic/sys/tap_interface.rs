@@ -4,7 +4,7 @@
 // in large parts from `smoltcp` originally distributed under 0-clause BSD
 use std::io;
 use std::os::unix::io::{RawFd, AsRawFd};
-use std::time::Instant;
+use std::time::SystemTime;
 
 use libc;
 use super::{FdResult, IoLenResult, ifreq, test_result};
@@ -174,7 +174,7 @@ impl<C: PayloadMut> TapInterface<C> {
 
     fn current_info() -> PacketInfo {
         PacketInfo {
-            timestamp: Instant::now().into(),
+            timestamp: SystemTime::now().into(),
             capabilities: Capabilities::no_support(),
         }
     }
@@ -210,9 +210,10 @@ impl<C: PayloadMut> Device for TapInterface<C> {
 
         if handle.was_sent() {
             self.send()?;
+            Ok(1)
+        } else {
+            Ok(0)
         }
-
-        Ok(1)
     }
 
     fn rx(&mut self, _: usize, mut receptor: impl nic::Recv<Self::Handle, Self::Payload>)

@@ -25,8 +25,13 @@ pub enum Map<'a, K: Ord, V> {
 ///
 /// Can be inspected, filled, or removed depending on its state variant.
 pub enum Entry<'map, 'a, K: Ord, V> {
+    /// An entry that already has a mapping for the key.
     Occupied(OccupiedEntry<'map, 'a, K, V>),
+
+    /// The key does not have a mapping and one can be created.
     Vacant(VacantEntry<'map, 'a, K, V>),
+
+    /// The map is full and the key was not found.
     Full,
 }
 
@@ -99,7 +104,45 @@ impl<'a, K: Ord, V> Map<'a, K, V> {
     }
 }
 
+impl<'map, 'a, K: Ord, V> Entry<'map, 'a, K, V> {
+    /// Transform into an optional occupied entry.
+    ///
+    /// Both `Vacant` and `Full` are mapped to `None`.
+    pub fn occupied(self) -> Option<OccupiedEntry<'map, 'a, K, V>> {
+        match self {
+            Entry::Occupied(occ) => Some(occ),
+            _ => None,
+        }
+    }
+
+    /// Transform into an optional vacant entry.
+    ///
+    /// Both `Occupied` and `Full` are mapped to `None`.
+    pub fn vacant(self) -> Option<VacantEntry<'map, 'a, K, V>> {
+        match self {
+            Entry::Vacant(vac) => Some(vac),
+            _ => None,
+        }
+    }
+
+    /// Remove the entry if it is occupied.
+    ///
+    /// This is just shorthand for matching on an occupied entry and calling remove on it.
+    pub fn remove(self) {
+        if let Some(occupied) = self.occupied() {
+            occupied.remove()
+        }
+    }
+}
+
 impl<'map, K: Ord, V> OccupiedEntry<'map, '_, K, V> {
+    pub fn get(&self) -> &V {
+        match &self.inner {
+            Occupied::Pairs { list, index, .. } => &list[*index].1,
+            Occupied::Btree(btree) => btree.get(),
+        }
+    }
+
     pub fn get_mut(&mut self) -> &mut V {
         match &mut self.inner {
             Occupied::Pairs { list, index, .. } => &mut list[*index].1,

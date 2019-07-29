@@ -367,6 +367,8 @@ mod tests {
             Slice::Borrowed(&mut slots[..]));
         let key = map.insert(0xde).unwrap();
         map.remove(key).unwrap();
+        assert_eq!(map.get(key), None);
+
         let new_key = map.insert(0xad).unwrap();
 
         assert_eq!(map.get(key), None);

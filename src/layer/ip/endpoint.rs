@@ -1,7 +1,7 @@
 use crate::layer::{eth, FnHandler};
 use crate::managed::Slice;
 use crate::wire::{EthernetProtocol, Payload, PayloadMut};
-use crate::wire::{IpAddress, IpCidr, Ipv4Packet, Ipv6Packet};
+use crate::wire::{IpAddress, IpCidr, IpSubnet, Ipv4Packet, Ipv6Packet};
 use crate::time::Instant;
 
 use super::{Recv, Send};
@@ -129,6 +129,15 @@ impl<'a> Endpoint<'a> {
 }
 
 impl packet::Endpoint for IpEndpoint<'_, '_> {
+    fn local_ip(&self, subnet: IpSubnet) -> Option<IpAddress> {
+        self.inner.addr
+            .iter()
+            .cloned()
+            .map(|cidr| cidr.address())
+            .filter(|&addr| subnet.contains(addr))
+            .nth(0)
+    }
+
     fn route(&self, dst_addr: IpAddress, time: Instant) -> Option<Route> {
         self.inner.route(dst_addr, time)
     }

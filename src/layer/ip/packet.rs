@@ -31,7 +31,7 @@ pub struct Raw<'a, P: Payload> {
 
 pub struct Handle<'a> {
     eth: eth::Handle<'a>,
-    endpoint: &'a mut (Endpoint + 'a),
+    endpoint: &'a mut dyn Endpoint,
 }
 
 pub type V4Packet<'a, P> = Ipv4Packet<EthernetFrame<&'a mut P>>;
@@ -80,13 +80,15 @@ struct EthRoute {
 
 /// The interface to the endpoint.
 pub(crate) trait Endpoint{
+    fn local_ip(&self, subnet: IpSubnet) -> Option<IpAddress>;
+
     fn route(&self, dst_addr: IpAddress, time: Instant) -> Option<Route>;
 }
 
 impl<'a> Handle<'a> {
     pub(crate) fn new(
         handle: eth::Handle<'a>,
-        endpoint: &'a mut (Endpoint + 'a),
+        endpoint: &'a mut dyn Endpoint,
     ) -> Self {
         Handle {
             eth: handle,
@@ -105,6 +107,10 @@ impl<'a> Handle<'a> {
             eth: self.eth.borrow_mut(),
             endpoint: self.endpoint,
         }
+    }
+
+    pub fn local_ip(&self, subnet: IpSubnet) -> Option<IpAddress> {
+        self.endpoint.local_ip(subnet)
     }
 
     fn route_to(&mut self, dst_addr: IpAddress) -> Result<EthRoute> {
@@ -174,6 +180,13 @@ impl<'a, P: Payload> Out<'a, P> {
         let Out { handle, packet } = self;
         In { handle, packet }
     }
+
+    /// Retrieve the representation of the prepared packet.
+    ///
+    /// May be useful to check on the result of the ip layer logic before sending a packet.
+    pub fn repr(&self) -> IpRepr {
+        self.packet.repr()
+    }
 }
 
 impl<'a, P: PayloadMut> Out<'a, P> {
@@ -209,6 +222,10 @@ impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
             handle,
             payload,
         }
+    }
+
+    pub fn handle(&self) -> &Handle<'a> {
+        &self.handle
     }
 
     /// Initialize to a valid ip packet.

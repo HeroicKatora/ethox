@@ -21,13 +21,13 @@ pub use core::time::Duration;
 /// * A value of `0` is inherently arbitrary.
 /// * A value less than `0` indicates a time before the starting
 ///   point.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Instant {
     pub millis: i64,
 }
 
 /// An expiration time, inversion of `Option`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Expiration {
     When(Instant),
     Never,
@@ -79,6 +79,8 @@ impl Instant {
 #[cfg(feature = "std")]
 impl From<::std::time::Instant> for Instant {
     fn from(other: ::std::time::Instant) -> Instant {
+        // FIXME:
+        unimplemented!("This is broken. Elapsed is relative to creation of the Instant, not some fixed point.");
         let elapsed = other.elapsed();
         Instant::from_millis((elapsed.as_secs() * 1_000) as i64 + (elapsed.subsec_nanos() / 1_000_000) as i64)
     }

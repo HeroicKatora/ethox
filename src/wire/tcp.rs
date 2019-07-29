@@ -1,14 +1,15 @@
 use core::{i32, ops, cmp, fmt};
 use byteorder::{ByteOrder, NetworkEndian};
 
-use super::{Checksum, Error, IpProtocol, IpAddress, Result};
+use super::{Error, IpProtocol, IpAddress, Result};
+use super::{Payload, PayloadMut};
 use super::ip::checksum;
 
 /// A TCP sequence number.
 ///
 /// A sequence number is a monotonically advancing integer modulo 2<sup>32</sup>.
 /// Sequence numbers do not have a discontiguity when compared pairwise across a signed overflow.
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Hash)]
 pub struct SeqNumber(pub i32);
 
 impl fmt::Display for SeqNumber {
@@ -63,10 +64,24 @@ impl cmp::PartialOrd for SeqNumber {
     }
 }
 
+impl SeqNumber {
+    /// Check if the window contains the other sequence number.
+    ///
+    /// The length of the window must be at most `i32::MAX`.
+    pub fn contains_in_window(self, other: SeqNumber, len: usize) -> bool {
+        self <= other && other < (self + len)
+    }
+}
+
+/// A set of tcp flags.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Flags(pub u16);
+
 /// A read/write wrapper around a Transmission Control Protocol packet buffer.
 #[derive(Debug, PartialEq, Clone)]
-pub struct Packet<T: AsRef<[u8]>> {
-    buffer: T
+pub struct Packet<T> {
+    buffer: T,
+    repr: Repr,
 }
 
 mod field {
@@ -87,16 +102,6 @@ mod field {
         URGENT.end..(length as usize)
     }
 
-    pub const FLG_FIN: u16 = 0x001;
-    pub const FLG_SYN: u16 = 0x002;
-    pub const FLG_RST: u16 = 0x004;
-    pub const FLG_PSH: u16 = 0x008;
-    pub const FLG_ACK: u16 = 0x010;
-    pub const FLG_URG: u16 = 0x020;
-    pub const FLG_ECE: u16 = 0x040;
-    pub const FLG_CWR: u16 = 0x080;
-    pub const FLG_NS:  u16 = 0x100;
-
     pub const OPT_END: u8 = 0x00;
     pub const OPT_NOP: u8 = 0x01;
     pub const OPT_MSS: u8 = 0x02;
@@ -105,23 +110,22 @@ mod field {
     pub const OPT_SACKRNG:  u8 = 0x05;
 }
 
-impl<T: AsRef<[u8]>> Packet<T> {
+impl<T: Payload> Packet<T> {
     /// Imbue a raw octet buffer with TCP packet structure.
-    pub fn new_unchecked(buffer: T) -> Packet<T> {
-        Packet { buffer }
+    pub fn new_unchecked(buffer: T, repr: Repr) -> Packet<T> {
+        Packet { buffer, repr, }
     }
 
     /// Shorthand for a combination of [new_unchecked] and [check_len].
     ///
     /// [new_unchecked]: #method.new_unchecked
     /// [check_len]: #method.check_len
-    pub fn new_checked(buffer: T) -> Result<Packet<T>> {
-        let packet = Self::new_unchecked(buffer);
-        packet.check_len()?;
-        Ok(packet)
+    pub fn new_checked(buffer: T, checksum: Checksum) -> Result<Packet<T>> {
+        let repr = Repr::parse(&buffer, checksum)?;
+        Ok(Packet { buffer, repr })
     }
 
-    /// Ensure that no accessor method will panic if called.
+    /// Ensure that no header accessor method will panic if called.
     /// Returns `Err(Error::Truncated)` if the buffer is too short.
     /// Returns `Err(Error::Malformed)` if the header length field has a value smaller
     /// than the minimal header length.
@@ -130,7 +134,7 @@ impl<T: AsRef<[u8]>> Packet<T> {
     ///
     /// [set_header_len]: #method.set_header_len
     pub fn check_len(&self) -> Result<()> {
-        let len = self.buffer.as_ref().len();
+        let len = self.buffer.payload().as_bytes().len();
         if len < field::URGENT.end {
             Err(Error::Truncated)
         } else {
@@ -145,115 +149,58 @@ impl<T: AsRef<[u8]>> Packet<T> {
         }
     }
 
+    pub fn inner(&self) -> &T {
+        &self.buffer
+    }
+
     /// Consume the packet, returning the underlying buffer.
     pub fn into_inner(self) -> T {
         self.buffer
     }
 
+    /// Retrieve the packet representation.
+    pub fn repr(&self) -> Repr {
+        self.repr
+    }
+
     /// Return the source port field.
     #[inline]
     pub fn src_port(&self) -> u16 {
-        let data = self.buffer.as_ref();
+        let data = self.buffer.payload().as_bytes();
         NetworkEndian::read_u16(&data[field::SRC_PORT])
     }
 
     /// Return the destination port field.
     #[inline]
     pub fn dst_port(&self) -> u16 {
-        let data = self.buffer.as_ref();
+        let data = self.buffer.payload().as_bytes();
         NetworkEndian::read_u16(&data[field::DST_PORT])
     }
 
     /// Return the sequence number field.
     #[inline]
     pub fn seq_number(&self) -> SeqNumber {
-        let data = self.buffer.as_ref();
+        let data = self.buffer.payload().as_bytes();
         SeqNumber(NetworkEndian::read_i32(&data[field::SEQ_NUM]))
     }
 
     /// Return the acknowledgement number field.
     #[inline]
     pub fn ack_number(&self) -> SeqNumber {
-        let data = self.buffer.as_ref();
+        let data = self.buffer.payload().as_bytes();
         SeqNumber(NetworkEndian::read_i32(&data[field::ACK_NUM]))
     }
 
-    /// Return the FIN flag.
-    #[inline]
-    pub fn fin(&self) -> bool {
-        let data = self.buffer.as_ref();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        raw & field::FLG_FIN != 0
-    }
-
-    /// Return the SYN flag.
-    #[inline]
-    pub fn syn(&self) -> bool {
-        let data = self.buffer.as_ref();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        raw & field::FLG_SYN != 0
-    }
-
-    /// Return the RST flag.
-    #[inline]
-    pub fn rst(&self) -> bool {
-        let data = self.buffer.as_ref();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        raw & field::FLG_RST != 0
-    }
-
-    /// Return the PSH flag.
-    #[inline]
-    pub fn psh(&self) -> bool {
-        let data = self.buffer.as_ref();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        raw & field::FLG_PSH != 0
-    }
-
-    /// Return the ACK flag.
-    #[inline]
-    pub fn ack(&self) -> bool {
-        let data = self.buffer.as_ref();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        raw & field::FLG_ACK != 0
-    }
-
-    /// Return the URG flag.
-    #[inline]
-    pub fn urg(&self) -> bool {
-        let data = self.buffer.as_ref();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        raw & field::FLG_URG != 0
-    }
-
-    /// Return the ECE flag.
-    #[inline]
-    pub fn ece(&self) -> bool {
-        let data = self.buffer.as_ref();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        raw & field::FLG_ECE != 0
-    }
-
-    /// Return the CWR flag.
-    #[inline]
-    pub fn cwr(&self) -> bool {
-        let data = self.buffer.as_ref();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        raw & field::FLG_CWR != 0
-    }
-
-    /// Return the NS flag.
-    #[inline]
-    pub fn ns(&self) -> bool {
-        let data = self.buffer.as_ref();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        raw & field::FLG_NS != 0
+    /// Read all flags at once.
+    pub fn flags(&self) -> Flags {
+        let data = self.buffer.payload().as_bytes();
+        Flags(NetworkEndian::read_u16(&data[field::FLAGS]) & 0x1ff)
     }
 
     /// Return the header length, in octets.
     #[inline]
     pub fn header_len(&self) -> u8 {
-        let data = self.buffer.as_ref();
+        let data = self.buffer.payload().as_bytes();
         let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
         ((raw >> 12) * 4) as u8
     }
@@ -261,36 +208,35 @@ impl<T: AsRef<[u8]>> Packet<T> {
     /// Return the window size field.
     #[inline]
     pub fn window_len(&self) -> u16 {
-        let data = self.buffer.as_ref();
+        let data = self.buffer.payload().as_bytes();
         NetworkEndian::read_u16(&data[field::WIN_SIZE])
     }
 
     /// Return the checksum field.
     #[inline]
     pub fn checksum(&self) -> u16 {
-        let data = self.buffer.as_ref();
+        let data = self.buffer.payload().as_bytes();
         NetworkEndian::read_u16(&data[field::CHECKSUM])
     }
 
     /// Return the urgent pointer field.
     #[inline]
     pub fn urgent_at(&self) -> u16 {
-        let data = self.buffer.as_ref();
+        let data = self.buffer.payload().as_bytes();
         NetworkEndian::read_u16(&data[field::URGENT])
     }
 
     /// Return the length of the segment, in terms of sequence space.
-    pub fn segment_len(&self) -> usize {
-        let data = self.buffer.as_ref();
-        let mut length = data.len() - self.header_len() as usize;
-        if self.syn() { length += 1 }
-        if self.fin() { length += 1 }
-        length
+    pub fn sequence_len(&self) -> usize {
+        let data = self.buffer.payload().as_bytes();
+        data.len()
+            - self.header_len() as usize
+            + self.flags().sequence_len()
     }
 
     /// Returns whether the selective acknowledgement SYN flag is set or not.
     pub fn selective_ack_permitted(&self) -> Result<bool> {
-        let data = self.buffer.as_ref();
+        let data = self.buffer.payload().as_bytes();
         let mut options = &data[field::OPTIONS(self.header_len())];
         while options.len() > 0 {
             let (next_options, option) = TcpOption::parse(options)?;
@@ -311,7 +257,7 @@ impl<T: AsRef<[u8]>> Packet<T> {
     pub fn selective_ack_ranges<'s>(
         &'s self
     ) -> Result<[Option<(u32, u32)>; 3]> {
-        let data = self.buffer.as_ref();
+        let data = self.buffer.payload().as_bytes();
         let mut options = &data[field::OPTIONS(self.header_len())];
         while options.len() > 0 {
             let (next_options, option) = TcpOption::parse(options)?;
@@ -334,159 +280,94 @@ impl<T: AsRef<[u8]>> Packet<T> {
     ///
     /// # Fuzzing
     /// This function always returns `true` when fuzzing.
-    pub fn verify_checksum(&self, src_addr: &IpAddress, dst_addr: &IpAddress) -> bool {
+    pub fn verify_checksum(&self, src_addr: IpAddress, dst_addr: IpAddress) -> bool {
         if cfg!(fuzzing) { return true }
 
-        let data = self.buffer.as_ref();
+        let data = self.buffer.payload().as_bytes();
         checksum::combine(&[
-            checksum::pseudo_header(src_addr, dst_addr, IpProtocol::Tcp,
+            checksum::pseudo_header(&src_addr, &dst_addr, IpProtocol::Tcp,
                                     data.len() as u32),
             checksum::data(data)
         ]) == !0
     }
-}
-
-impl<'a, T: AsRef<[u8]> + ?Sized> Packet<&'a T> {
-    /// Return a pointer to the options.
-    #[inline]
-    pub fn options(&self) -> &'a [u8] {
-        let header_len = self.header_len();
-        let data = self.buffer.as_ref();
-        &data[field::OPTIONS(header_len)]
-    }
 
     /// Return a pointer to the payload.
     #[inline]
-    pub fn payload(&self) -> &'a [u8] {
+    pub fn payload_slice(&self) -> &[u8] {
         let header_len = self.header_len() as usize;
-        let data = self.buffer.as_ref();
+        let data = self.buffer.payload().as_bytes();
         &data[header_len..]
     }
 }
 
-impl<T: AsRef<[u8]> + AsMut<[u8]>> Packet<T> {
+impl<'a, T: Payload + ?Sized> Packet<&'a T> {
+    /// Return a pointer to the options.
+    #[inline]
+    pub fn options(&self) -> &'a [u8] {
+        let header_len = self.header_len();
+        let data = self.buffer.payload().as_bytes();
+        &data[field::OPTIONS(header_len)]
+    }
+
+    /// Turn into a reference to the payload.
+    #[inline]
+    pub fn into_payload_slice(&self) -> &'a [u8] {
+        let header_len = self.header_len() as usize;
+        let data = self.buffer.payload().as_bytes();
+        &data[header_len..]
+    }
+}
+
+impl<T: PayloadMut> Packet<T> {
     /// Set the source port field.
     #[inline]
     pub fn set_src_port(&mut self, value: u16) {
-        let data = self.buffer.as_mut();
+        let data = self.buffer.payload_mut().as_bytes_mut();
         NetworkEndian::write_u16(&mut data[field::SRC_PORT], value)
     }
 
     /// Set the destination port field.
     #[inline]
     pub fn set_dst_port(&mut self, value: u16) {
-        let data = self.buffer.as_mut();
+        let data = self.buffer.payload_mut().as_bytes_mut();
         NetworkEndian::write_u16(&mut data[field::DST_PORT], value)
     }
 
     /// Set the sequence number field.
     #[inline]
     pub fn set_seq_number(&mut self, value: SeqNumber) {
-        let data = self.buffer.as_mut();
+        let data = self.buffer.payload_mut().as_bytes_mut();
         NetworkEndian::write_i32(&mut data[field::SEQ_NUM], value.0)
     }
 
     /// Set the acknowledgement number field.
     #[inline]
     pub fn set_ack_number(&mut self, value: SeqNumber) {
-        let data = self.buffer.as_mut();
+        let data = self.buffer.payload_mut().as_bytes_mut();
         NetworkEndian::write_i32(&mut data[field::ACK_NUM], value.0)
     }
 
     /// Clear the entire flags field.
     #[inline]
     pub fn clear_flags(&mut self) {
-        let data = self.buffer.as_mut();
+        let data = self.buffer.payload_mut().as_bytes_mut();
         let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
         let raw = raw & !0x0fff;
         NetworkEndian::write_u16(&mut data[field::FLAGS], raw)
     }
 
-    /// Set the FIN flag.
+    /// Set a combination of flags.
     #[inline]
-    pub fn set_fin(&mut self, value: bool) {
-        let data = self.buffer.as_mut();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        let raw = if value { raw | field::FLG_FIN } else { raw & !field::FLG_FIN };
-        NetworkEndian::write_u16(&mut data[field::FLAGS], raw)
-    }
-
-    /// Set the SYN flag.
-    #[inline]
-    pub fn set_syn(&mut self, value: bool) {
-        let data = self.buffer.as_mut();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        let raw = if value { raw | field::FLG_SYN } else { raw & !field::FLG_SYN };
-        NetworkEndian::write_u16(&mut data[field::FLAGS], raw)
-    }
-
-    /// Set the RST flag.
-    #[inline]
-    pub fn set_rst(&mut self, value: bool) {
-        let data = self.buffer.as_mut();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        let raw = if value { raw | field::FLG_RST } else { raw & !field::FLG_RST };
-        NetworkEndian::write_u16(&mut data[field::FLAGS], raw)
-    }
-
-    /// Set the PSH flag.
-    #[inline]
-    pub fn set_psh(&mut self, value: bool) {
-        let data = self.buffer.as_mut();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        let raw = if value { raw | field::FLG_PSH } else { raw & !field::FLG_PSH };
-        NetworkEndian::write_u16(&mut data[field::FLAGS], raw)
-    }
-
-    /// Set the ACK flag.
-    #[inline]
-    pub fn set_ack(&mut self, value: bool) {
-        let data = self.buffer.as_mut();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        let raw = if value { raw | field::FLG_ACK } else { raw & !field::FLG_ACK };
-        NetworkEndian::write_u16(&mut data[field::FLAGS], raw)
-    }
-
-    /// Set the URG flag.
-    #[inline]
-    pub fn set_urg(&mut self, value: bool) {
-        let data = self.buffer.as_mut();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        let raw = if value { raw | field::FLG_URG } else { raw & !field::FLG_URG };
-        NetworkEndian::write_u16(&mut data[field::FLAGS], raw)
-    }
-
-    /// Set the ECE flag.
-    #[inline]
-    pub fn set_ece(&mut self, value: bool) {
-        let data = self.buffer.as_mut();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        let raw = if value { raw | field::FLG_ECE } else { raw & !field::FLG_ECE };
-        NetworkEndian::write_u16(&mut data[field::FLAGS], raw)
-    }
-
-    /// Set the CWR flag.
-    #[inline]
-    pub fn set_cwr(&mut self, value: bool) {
-        let data = self.buffer.as_mut();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        let raw = if value { raw | field::FLG_CWR } else { raw & !field::FLG_CWR };
-        NetworkEndian::write_u16(&mut data[field::FLAGS], raw)
-    }
-
-    /// Set the NS flag.
-    #[inline]
-    pub fn set_ns(&mut self, value: bool) {
-        let data = self.buffer.as_mut();
-        let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
-        let raw = if value { raw | field::FLG_NS } else { raw & !field::FLG_NS };
-        NetworkEndian::write_u16(&mut data[field::FLAGS], raw)
+    pub fn set_flags(&mut self, Flags(flags): Flags) {
+        let data = self.buffer.payload_mut().as_bytes_mut();
+        let field = NetworkEndian::read_u16(&mut data[field::FLAGS]) & !0xfff;
+        NetworkEndian::write_u16(&mut data[field::FLAGS], field | (flags & 0x1ff))
     }
 
     /// Set the header length, in octets.
     #[inline]
     pub fn set_header_len(&mut self, value: u8) {
-        let data = self.buffer.as_mut();
+        let data = self.buffer.payload_mut().as_bytes_mut();
         let raw = NetworkEndian::read_u16(&data[field::FLAGS]);
         let raw = (raw & !0xf000) | ((value as u16) / 4) << 12;
         NetworkEndian::write_u16(&mut data[field::FLAGS], raw)
@@ -495,21 +376,21 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> Packet<T> {
     /// Return the window size field.
     #[inline]
     pub fn set_window_len(&mut self, value: u16) {
-        let data = self.buffer.as_mut();
+        let data = self.buffer.payload_mut().as_bytes_mut();
         NetworkEndian::write_u16(&mut data[field::WIN_SIZE], value)
     }
 
     /// Set the checksum field.
     #[inline]
     pub fn set_checksum(&mut self, value: u16) {
-        let data = self.buffer.as_mut();
+        let data = self.buffer.payload_mut().as_bytes_mut();
         NetworkEndian::write_u16(&mut data[field::CHECKSUM], value)
     }
 
     /// Set the urgent pointer field.
     #[inline]
     pub fn set_urgent_at(&mut self, value: u16) {
-        let data = self.buffer.as_mut();
+        let data = self.buffer.payload_mut().as_bytes_mut();
         NetworkEndian::write_u16(&mut data[field::URGENT], value)
     }
 
@@ -518,12 +399,12 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> Packet<T> {
     /// # Panics
     /// This function panics unless `src_addr` and `dst_addr` belong to the same family,
     /// and that family is IPv4 or IPv6.
-    pub fn fill_checksum(&mut self, src_addr: &IpAddress, dst_addr: &IpAddress) {
+    pub fn fill_checksum(&mut self, src_addr: IpAddress, dst_addr: IpAddress) {
         self.set_checksum(0);
         let checksum = {
-            let data = self.buffer.as_ref();
+            let data = self.buffer.payload_mut().as_bytes_mut();
             !checksum::combine(&[
-                checksum::pseudo_header(src_addr, dst_addr, IpProtocol::Tcp,
+                checksum::pseudo_header(&src_addr, &dst_addr, IpProtocol::Tcp,
                                         data.len() as u32),
                 checksum::data(data)
             ])
@@ -535,22 +416,182 @@ impl<T: AsRef<[u8]> + AsMut<[u8]>> Packet<T> {
     #[inline]
     pub fn options_mut(&mut self) -> &mut [u8] {
         let header_len = self.header_len();
-        let data = self.buffer.as_mut();
+        let data = self.buffer.payload_mut().as_bytes_mut();
         &mut data[field::OPTIONS(header_len)]
     }
 
     /// Return a mutable pointer to the payload data.
     #[inline]
-    pub fn payload_mut(&mut self) -> &mut [u8] {
+    pub fn payload_mut_slice(&mut self) -> &mut [u8] {
         let header_len = self.header_len() as usize;
-        let data = self.buffer.as_mut();
+        let data = self.buffer.payload_mut().as_bytes_mut();
         &mut data[header_len..]
     }
 }
 
-impl<T: AsRef<[u8]>> AsRef<[u8]> for Packet<T> {
+impl Flags {
+    pub const NONE: Self = Flags(0x0);
+    pub const FIN: Self = Flags(0x001);
+    pub const SYN: Self = Flags(0x002);
+    pub const RST: Self = Flags(0x004);
+    pub const PSH: Self = Flags(0x008);
+    pub const ACK: Self = Flags(0x010);
+    pub const URG: Self = Flags(0x020);
+    pub const ECE: Self = Flags(0x040);
+    pub const CWR: Self = Flags(0x080);
+    pub const NS:  Self = Flags(0x100);
+
+    /// Return the FIN flag.
+    #[inline]
+    pub fn fin(self) -> bool {
+        self.0 & Self::FIN.0 != 0
+    }
+
+    /// Return the SYN flag.
+    #[inline]
+    pub fn syn(self) -> bool {
+        self.0 & Self::SYN.0 != 0
+    }
+
+    /// Return the RST flag.
+    #[inline]
+    pub fn rst(self) -> bool {
+        self.0 & Self::RST.0 != 0
+    }
+
+    /// Return the PSH flag.
+    #[inline]
+    pub fn psh(self) -> bool {
+        self.0 & Self::PSH.0 != 0
+    }
+
+    /// Return the ACK flag.
+    #[inline]
+    pub fn ack(self) -> bool {
+        self.0 & Self::ACK.0 != 0
+    }
+
+    /// Return the URG flag.
+    #[inline]
+    pub fn urg(self) -> bool {
+        self.0 & Self::URG.0 != 0
+    }
+
+    /// Return the ECE flag.
+    #[inline]
+    pub fn ece(self) -> bool {
+        self.0 & Self::ECE.0 != 0
+    }
+
+    /// Return the CWR flag.
+    #[inline]
+    pub fn cwr(self) -> bool {
+        self.0 & Self::CWR.0 != 0
+    }
+
+    /// Return the NS flag.
+    #[inline]
+    pub fn ns(self) -> bool {
+        self.0 & Self::NS.0 != 0
+    }
+
+    /// Set the FIN flag.
+    #[inline]
+    pub fn set_fin(&mut self, value: bool) {
+        let flag = if value { Self::FIN.0 } else { 0 };
+        let without = self.0 & !Self::FIN.0;
+        self.0 = without | flag;
+    }
+
+    /// Set the SYN flag.
+    #[inline]
+    pub fn set_syn(&mut self, value: bool) {
+        let flag = if value { Self::SYN.0 } else { 0 };
+        let without = self.0 & !Self::SYN.0;
+        self.0 = without | flag;
+    }
+
+    /// Set the RST flag.
+    #[inline]
+    pub fn set_rst(&mut self, value: bool) {
+        let flag = if value { Self::RST.0 } else { 0 };
+        let without = self.0 & !Self::RST.0;
+        self.0 = without | flag;
+    }
+
+    /// Set the PSH flag.
+    #[inline]
+    pub fn set_psh(&mut self, value: bool) {
+        let flag = if value { Self::PSH.0 } else { 0 };
+        let without = self.0 & !Self::PSH.0;
+        self.0 = without | flag;
+    }
+
+    /// Set the ACK flag.
+    #[inline]
+    pub fn set_ack(&mut self, value: bool) {
+        let flag = if value { Self::ACK.0 } else { 0 };
+        let without = self.0 & !Self::ACK.0;
+        self.0 = without | flag;
+    }
+
+    /// Set the URG flag.
+    #[inline]
+    pub fn set_urg(&mut self, value: bool) {
+        let flag = if value { Self::URG.0 } else { 0 };
+        let without = self.0 & !Self::URG.0;
+        self.0 = without | flag;
+    }
+
+    /// Set the ECE flag.
+    #[inline]
+    pub fn set_ece(&mut self, value: bool) {
+        let flag = if value { Self::ECE.0 } else { 0 };
+        let without = self.0 & !Self::ECE.0;
+        self.0 = without | flag;
+    }
+
+    /// Set the CWR flag.
+    #[inline]
+    pub fn set_cwr(&mut self, value: bool) {
+        let flag = if value { Self::CWR.0 } else { 0 };
+        let without = self.0 & !Self::CWR.0;
+        self.0 = without | flag;
+    }
+
+    /// Set the NS flag.
+    #[inline]
+    pub fn set_ns(&mut self, value: bool) {
+        let flag = if value { Self::NS.0 } else { 0 };
+        let without = self.0 & !Self::NS.0;
+        self.0 = without | flag;
+    }
+
+    /// Return the length of a control flag, in terms of sequence space.
+    pub fn sequence_len(self) -> usize {
+        // Syn + Fin is actually weird.
+        usize::from(self.syn()) + usize::from(self.fin())
+    }
+
+    /// Like `BitOr` but const.
+    ///
+    /// Will be deprecated swiftly once `const impl` is on a path to stable.
+    pub const fn const_or(self, other: Self) -> Self {
+        Flags(self.0 | other.0)
+    }
+}
+
+impl ops::BitOr<Self> for Flags {
+    type Output = Self;
+
+    fn bitor(self, other: Self) -> Self {
+        Flags(self.0 | other.0)
+    }
+}
+
+impl<T: Payload> AsRef<[u8]> for Packet<T> {
     fn as_ref(&self) -> &[u8] {
-        self.buffer.as_ref()
+        self.buffer.payload().as_bytes()
     }
 }
 
@@ -568,7 +609,7 @@ pub enum TcpOption<'a> {
 
 impl<'a> TcpOption<'a> {
     pub fn parse(buffer: &'a [u8]) -> Result<(&'a [u8], TcpOption<'a>)> {
-        let (length, option);
+        let (length, option): (usize, TcpOption);
         match *buffer.get(0).ok_or(Error::Truncated)? {
             field::OPT_END => {
                 length = 1;
@@ -579,7 +620,7 @@ impl<'a> TcpOption<'a> {
                 option = TcpOption::NoOperation;
             }
             kind => {
-                length = *buffer.get(1).ok_or(Error::Truncated)? as usize;
+                length = buffer.get(1).copied().ok_or(Error::Truncated)?.into();
                 let data = buffer.get(2..length).ok_or(Error::Truncated)?;
                 match (kind, length) {
                     (field::OPT_END, _) |
@@ -657,36 +698,36 @@ impl<'a> TcpOption<'a> {
     pub fn emit<'b>(&self, buffer: &'b mut [u8]) -> &'b mut [u8] {
         let length;
         match self {
-            &TcpOption::EndOfList => {
+            TcpOption::EndOfList => {
                 length    = 1;
                 // There may be padding space which also should be initialized.
                 for p in buffer.iter_mut() {
                     *p = field::OPT_END;
                 }
             }
-            &TcpOption::NoOperation => {
+            TcpOption::NoOperation => {
                 length    = 1;
                 buffer[0] = field::OPT_NOP;
             }
             _ => {
                 length    = self.buffer_len();
                 buffer[1] = length as u8;
-                match self {
-                    &TcpOption::EndOfList |
-                    &TcpOption::NoOperation =>
-                        unreachable!(),
-                    &TcpOption::MaxSegmentSize(value) => {
+                match *self {
+                    TcpOption::EndOfList |
+                    TcpOption::NoOperation =>
+                        unreachable!("Covered by cases above"),
+                    TcpOption::MaxSegmentSize(value) => {
                         buffer[0] = field::OPT_MSS;
                         NetworkEndian::write_u16(&mut buffer[2..], value)
                     }
-                    &TcpOption::WindowScale(value) => {
+                    TcpOption::WindowScale(value) => {
                         buffer[0] = field::OPT_WS;
                         buffer[2] = value;
                     }
-                    &TcpOption::SackPermitted => {
+                    TcpOption::SackPermitted => {
                         buffer[0] = field::OPT_SACKPERM;
                     }
-                    &TcpOption::SackRange(slice) => {
+                    TcpOption::SackRange(slice) => {
                         buffer[0] = field::OPT_SACKRNG;
                         slice.iter().filter(|s| s.is_some()).enumerate().for_each(|(i, s)| {
                             let (first, second) = *s.as_ref().unwrap();
@@ -695,7 +736,7 @@ impl<'a> TcpOption<'a> {
                             NetworkEndian::write_u32(&mut buffer[pos+4..], second);
                         });
                     }
-                    &TcpOption::Unknown { kind, data: provided } => {
+                    TcpOption::Unknown { kind, data: provided } => {
                         buffer[0] = kind;
                         buffer[2..].copy_from_slice(provided)
                     }
@@ -706,40 +747,12 @@ impl<'a> TcpOption<'a> {
     }
 }
 
-/// The possible control flags of a Transmission Control Protocol packet.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum Control {
-    None,
-    Psh,
-    Syn,
-    Fin,
-    Rst
-}
-
-impl Control {
-    /// Return the length of a control flag, in terms of sequence space.
-    pub fn len(self) -> usize {
-        match self {
-            Control::Syn | Control::Fin  => 1,
-            _ => 0
-        }
-    }
-
-    /// Turn the PSH flag into no flag, and keep the rest as-is.
-    pub fn quash_psh(self) -> Control {
-        match self {
-            Control::Psh => Control::None,
-            _ => self
-        }
-    }
-}
-
 /// A high-level representation of a Transmission Control Protocol packet.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct Repr<'a> {
+pub struct Repr {
     pub src_port:     u16,
     pub dst_port:     u16,
-    pub control:      Control,
+    pub flags:        Flags,
     pub seq_number:   SeqNumber,
     pub ack_number:   Option<SeqNumber>,
     pub window_len:   u16,
@@ -747,36 +760,66 @@ pub struct Repr<'a> {
     pub max_seg_size: Option<u16>,
     pub sack_permitted: bool,
     pub sack_ranges:  [Option<(u32, u32)>; 3],
-    pub payload:      &'a [u8]
+    pub payload_len:  u16,
 }
 
-impl<'a> Repr<'a> {
+/// Abstraction for checksum behaviour.
+///
+/// The checksum requires calculating a pseudo header for the upper layer protocol consisting of
+/// src and dst address.
+pub enum Checksum {
+    /// Always fill the checksum and check if it exists.
+    Manual {
+        src_addr: IpAddress,
+        dst_addr: IpAddress,
+    },
+
+    /// Never inspect the checksum.
+    ///
+    /// This assumes that some layer below has already performed the necessary checks.
+    Ignored,
+}
+
+impl Repr {
     /// Parse a Transmission Control Protocol packet and return a high-level representation.
-    pub fn parse<T>(packet: &Packet<&'a T>, src_addr: &IpAddress, dst_addr: &IpAddress,
-                    checksum: Checksum) -> Result<Repr<'a>>
-            where T: AsRef<[u8]> + ?Sized {
+    pub fn parse(
+        packet: &impl Payload,
+        checksum: Checksum,
+    ) -> Result<Repr> {
+        // FIXME: this is hacky because we know the packet doesn't inspect the repr for the
+        // accessor functions below. Before we change it to do we need to introduce the separation
+        // into a bytewrapper that the other packet structure enjoy.
+        let packet = Packet::new_unchecked(packet, Repr {
+            src_port: 0,
+            dst_port: 0,
+            flags: Flags(0),
+            seq_number: SeqNumber(0),
+            ack_number: None,
+            window_len: 0,
+            window_scale: None,
+            max_seg_size: None,
+            sack_permitted: false,
+            sack_ranges: [None; 3],
+            payload_len: 0,
+        });
+        packet.check_len()?;
         // Source and destination ports must be present.
         if packet.src_port() == 0 { return Err(Error::Malformed) }
         if packet.dst_port() == 0 { return Err(Error::Malformed) }
-        // Valid checksum is expected.
-        if checksum.manual() && !packet.verify_checksum(src_addr, dst_addr) {
-            return Err(Error::WrongChecksum)
+
+        // Valid checksum may be expected.
+        if let Checksum::Manual { src_addr, dst_addr } = checksum {
+            if !packet.verify_checksum(src_addr, dst_addr) {
+                return Err(Error::WrongChecksum)
+            }
         }
 
-        let control =
-            match (packet.syn(), packet.fin(), packet.rst(), packet.psh()) {
-                (false, false, false, false) => Control::None,
-                (false, false, false, true)  => Control::Psh,
-                (true,  false, false, _)     => Control::Syn,
-                (false, true,  false, _)     => Control::Fin,
-                (false, false, true , _)     => Control::Rst,
-                _ => return Err(Error::Malformed)
-            };
-        let ack_number =
-            match packet.ack() {
-                true  => Some(packet.ack_number()),
-                false => None
-            };
+        let flags = packet.flags();
+        let ack_number = if flags.ack() {
+            Some(packet.ack_number())
+        } else {
+            None
+        };
         // The PSH flag is ignored.
         // The URG flag and the urgent field is ignored. This behavior is standards-compliant,
         // however, most deployed systems (e.g. Linux) are *not* standards-compliant, and would
@@ -800,7 +843,7 @@ impl<'a> Repr<'a> {
                     // value exceeding 14, the TCP should log the error but use 14 instead of the
                     // specified value.
                     window_scale = if value > 14 {
-                        net_debug!("{}:{}:{}:{}: parsed window scaling factor >14, setting to 14", src_addr, packet.src_port(), dst_addr, packet.dst_port());
+                        net_debug!("{}: parsed window scaling factor >14, setting to 14");
                         Some(14)
                     } else {
                         Some(value)
@@ -818,7 +861,7 @@ impl<'a> Repr<'a> {
         Ok(Repr {
             src_port:     packet.src_port(),
             dst_port:     packet.dst_port(),
-            control:      control,
+            flags:        flags,
             seq_number:   packet.seq_number(),
             ack_number:   ack_number,
             window_len:   packet.window_len(),
@@ -826,7 +869,7 @@ impl<'a> Repr<'a> {
             max_seg_size: max_seg_size,
             sack_permitted: sack_permitted,
             sack_ranges:   sack_ranges,
-            payload:      packet.payload()
+            payload_len:  packet.payload_slice().len() as u16,
         })
     }
 
@@ -867,28 +910,22 @@ impl<'a> Repr<'a> {
 
     /// Return the length of a packet that will be emitted from this high-level representation.
     pub fn buffer_len(&self) -> usize {
-        self.header_len() + self.payload.len()
+        usize::from(self.header_len()) + usize::from(self.payload_len)
     }
 
     /// Emit a high-level representation into a Transmission Control Protocol packet.
-    pub fn emit<T>(&self, packet: &mut Packet<&mut T>, src_addr: &IpAddress, dst_addr: &IpAddress,
-                   checksum: Checksum)
-            where T: AsRef<[u8]> + AsMut<[u8]> + ?Sized {
+    pub fn emit<T>(&self, mut packet: Packet<&mut T>)
+            where T: PayloadMut + ?Sized
+    {
         packet.set_src_port(self.src_port);
         packet.set_dst_port(self.dst_port);
         packet.set_seq_number(self.seq_number);
         packet.set_ack_number(self.ack_number.unwrap_or(SeqNumber(0)));
         packet.set_window_len(self.window_len);
         packet.set_header_len(self.header_len() as u8);
-        packet.clear_flags();
-        match self.control {
-            Control::None => (),
-            Control::Psh  => packet.set_psh(true),
-            Control::Syn  => packet.set_syn(true),
-            Control::Fin  => packet.set_fin(true),
-            Control::Rst  => packet.set_rst(true)
-        }
-        packet.set_ack(self.ack_number.is_some());
+        let mut flags = self.flags;
+        flags.set_ack(self.ack_number.is_some());
+        packet.set_flags(flags);
         {
             let mut options = packet.options_mut();
             if let Some(value) = self.window_scale {
@@ -908,56 +945,40 @@ impl<'a> Repr<'a> {
             }
         }
         packet.set_urgent_at(0);
-        packet.payload_mut()[..self.payload.len()].copy_from_slice(self.payload);
-
-        if checksum.manual() {
-            packet.fill_checksum(src_addr, dst_addr)
-        } else {
-            // make sure we get a consistently zeroed checksum,
-            // since implementations might rely on it
-            packet.set_checksum(0);
-        }
     }
 
     /// Return the length of the segment, in terms of sequence space.
-    pub fn segment_len(&self) -> usize {
-        self.payload.len() + self.control.len()
+    pub fn sequence_len(&self) -> usize {
+        usize::from(self.payload_len) + self.flags.sequence_len()
     }
 
     /// Return whether the segment has no flags set (except PSH) and no data.
     pub fn is_empty(&self) -> bool {
-        match self.control {
-            _ if self.payload.len() != 0 => false,
-            Control::Syn  | Control::Fin | Control::Rst => false,
-            Control::None | Control::Psh => true
+        self.payload_len != 0 || {
+            (self.flags.syn() | self.flags.fin() | self.flags.rst())
         }
     }
 }
 
-impl<'a, T: AsRef<[u8]> + ?Sized> fmt::Display for Packet<&'a T> {
+impl<'a, T: Payload + ?Sized> fmt::Display for Packet<&'a T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         // Cannot use Repr::parse because we don't have the IP addresses.
-        write!(f, "TCP src={} dst={}",
-               self.src_port(), self.dst_port())?;
-        if self.syn() { write!(f, " syn")? }
-        if self.fin() { write!(f, " fin")? }
-        if self.rst() { write!(f, " rst")? }
-        if self.psh() { write!(f, " psh")? }
-        if self.ece() { write!(f, " ece")? }
-        if self.cwr() { write!(f, " cwr")? }
-        if self.ns()  { write!(f, " ns" )? }
+        // FIXME: this is STUPID
+        write!(f, "TCP src={} dst={}", self.src_port(), self.dst_port())?;
+        let flags = self.flags();
+        write!(f, " flags={}", flags)?;
         write!(f, " seq={}", self.seq_number())?;
-        if self.ack() {
+        if flags.ack() {
             write!(f, " ack={}", self.ack_number())?;
         }
         write!(f, " win={}", self.window_len())?;
-        if self.urg() {
+        if flags.urg() {
             write!(f, " urg={}", self.urgent_at())?;
         }
-        write!(f, " len={}", self.payload().len())?;
+        write!(f, " len={}", self.payload_slice().len())?;
 
         let mut options = self.options();
-        while options.len() > 0 {
+        while !options.is_empty() {
             let (next_options, option) =
                 match TcpOption::parse(options) {
                     Ok(res) => res,
@@ -983,23 +1004,16 @@ impl<'a, T: AsRef<[u8]> + ?Sized> fmt::Display for Packet<&'a T> {
     }
 }
 
-impl<'a> fmt::Display for Repr<'a> {
+impl fmt::Display for Repr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "TCP src={} dst={}",
-               self.src_port, self.dst_port)?;
-        match self.control {
-            Control::Syn => write!(f, " syn")?,
-            Control::Fin => write!(f, " fin")?,
-            Control::Rst => write!(f, " rst")?,
-            Control::Psh => write!(f, " psh")?,
-            Control::None => ()
-        }
+        write!(f, "TCP src={} dst={}", self.src_port, self.dst_port)?;
+        write!(f, " flags={}", self.flags)?;
         write!(f, " seq={}", self.seq_number)?;
         if let Some(ack_number) = self.ack_number {
             write!(f, " ack={}", ack_number)?;
         }
         write!(f, " win={}", self.window_len)?;
-        write!(f, " len={}", self.payload.len())?;
+        write!(f, " len={}", self.payload_len)?;
         if let Some(max_seg_size) = self.max_seg_size {
             write!(f, " mss={}", max_seg_size)?;
         }
@@ -1007,12 +1021,40 @@ impl<'a> fmt::Display for Repr<'a> {
     }
 }
 
+impl fmt::Display for Flags {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        const SYN_ACK: Flags = Flags::SYN.const_or(Flags::ACK);
+        const FIN_ACK: Flags = Flags::FIN.const_or(Flags::ACK);
+        const RST_ACK: Flags = Flags::RST.const_or(Flags::ACK);
+        const PSH_ACK: Flags = Flags::PSH.const_or(Flags::ACK);
+        const PSH_FIN_ACK: Flags = Flags::PSH.const_or(Flags::FIN).const_or(Flags::ACK);
+
+        match *self {
+            // Common combinations you would expect to see.
+            Flags::SYN => write!(f, "syn")?,
+            Flags::FIN => write!(f, "fin")?,
+            Flags::RST => write!(f, "rst")?,
+            Flags::PSH => write!(f, "psh")?,
+            SYN_ACK => write!(f, "syn+ack")?,
+            FIN_ACK => write!(f, "fin+ack")?,
+            RST_ACK => write!(f, "rst+ack")?,
+            PSH_ACK => write!(f, "psh+ack")?,
+            PSH_FIN_ACK => write!(f, "psh+fin+ack")?,
+            Flags::NONE => write!(f, "none")?,
+            // All uncommon or even illegal ones (e.g. PSH without ACK).
+            Flags(other) => write!(f, "{:#x}", other)?,
+        }
+
+        Ok(())
+    }
+}
+
 use super::pretty_print::{PrettyPrint, PrettyIndent};
 
-impl<T: AsRef<[u8]>> PrettyPrint for Packet<T> {
+impl<T: Payload> PrettyPrint for Packet<T> {
     fn pretty_print(buffer: &[u8], f: &mut fmt::Formatter,
                     indent: &mut PrettyIndent) -> fmt::Result {
-        match Packet::new_checked(buffer) {
+        match Packet::new_checked(buffer, Checksum::Ignored) {
             Err(err)   => write!(f, "{}({})", indent, err),
             Ok(packet) => write!(f, "{}{}", indent, packet)
         }
@@ -1044,61 +1086,64 @@ mod test {
 
     #[test]
     fn test_deconstruct() {
-        let packet = Packet::new_unchecked(&PACKET_BYTES[..]);
+        let packet = Packet::new_checked(&PACKET_BYTES[..], Checksum::Ignored).unwrap();
         assert_eq!(packet.src_port(), 48896);
         assert_eq!(packet.dst_port(), 80);
         assert_eq!(packet.seq_number(), SeqNumber(0x01234567));
         assert_eq!(packet.ack_number(), SeqNumber(0x89abcdefu32 as i32));
         assert_eq!(packet.header_len(), 24);
-        assert_eq!(packet.fin(), true);
-        assert_eq!(packet.syn(), false);
-        assert_eq!(packet.rst(), true);
-        assert_eq!(packet.psh(), false);
-        assert_eq!(packet.ack(), true);
-        assert_eq!(packet.urg(), true);
+        assert_eq!(packet.flags().fin(), true);
+        assert_eq!(packet.flags().syn(), false);
+        assert_eq!(packet.flags().rst(), true);
+        assert_eq!(packet.flags().psh(), false);
+        assert_eq!(packet.flags().ack(), true);
+        assert_eq!(packet.flags().urg(), true);
         assert_eq!(packet.window_len(), 0x0123);
         assert_eq!(packet.urgent_at(), 0x0201);
         assert_eq!(packet.checksum(), 0x01b6);
         assert_eq!(packet.options(), &OPTION_BYTES[..]);
-        assert_eq!(packet.payload(), &PAYLOAD_BYTES[..]);
-        assert_eq!(packet.verify_checksum(&SRC_ADDR.into(), &DST_ADDR.into()), true);
+        assert_eq!(packet.payload_slice(), &PAYLOAD_BYTES[..]);
+        assert_eq!(packet.verify_checksum(SRC_ADDR.into(), DST_ADDR.into()), true);
     }
 
     #[test]
     fn test_construct() {
         let mut bytes = vec![0xa5; PACKET_BYTES.len()];
-        let mut packet = Packet::new_unchecked(&mut bytes);
+        // FIXME: Crafts the packet with a fake repr before overwriting everything. This doesn't
+        // change the results but we shouldn't need to do this.
+        let mut packet = Packet::new_unchecked(&mut bytes, packet_repr());
         packet.set_src_port(48896);
         packet.set_dst_port(80);
         packet.set_seq_number(SeqNumber(0x01234567));
         packet.set_ack_number(SeqNumber(0x89abcdefu32 as i32));
         packet.set_header_len(24);
-        packet.clear_flags();
-        packet.set_fin(true);
-        packet.set_syn(false);
-        packet.set_rst(true);
-        packet.set_psh(false);
-        packet.set_ack(true);
-        packet.set_urg(true);
+        let mut flags = Flags::default();
+        flags.set_fin(true);
+        flags.set_syn(false);
+        flags.set_rst(true);
+        flags.set_psh(false);
+        flags.set_ack(true);
+        flags.set_urg(true);
+        packet.set_flags(flags);
         packet.set_window_len(0x0123);
         packet.set_urgent_at(0x0201);
         packet.set_checksum(0xEEEE);
         packet.options_mut().copy_from_slice(&OPTION_BYTES[..]);
-        packet.payload_mut().copy_from_slice(&PAYLOAD_BYTES[..]);
-        packet.fill_checksum(&SRC_ADDR.into(), &DST_ADDR.into());
+        packet.payload_mut_slice().copy_from_slice(&PAYLOAD_BYTES[..]);
+        packet.fill_checksum(SRC_ADDR.into(), DST_ADDR.into());
         assert_eq!(&packet.into_inner()[..], &PACKET_BYTES[..]);
     }
 
     #[test]
     fn test_truncated() {
-        let packet = Packet::new_unchecked(&PACKET_BYTES[..23]);
-        assert_eq!(packet.check_len(), Err(Error::Truncated));
+        let packet = Packet::new_checked(&PACKET_BYTES[..23], Checksum::Ignored);
+        assert_eq!(packet, Err(Error::Truncated));
     }
 
     #[test]
     fn test_impossible_len() {
         let mut bytes = vec![0; 20];
-        let mut packet = Packet::new_unchecked(&mut bytes);
+        let mut packet = Packet::new_unchecked(&mut bytes, packet_repr());
         packet.set_header_len(10);
         assert_eq!(packet.check_len(), Err(Error::Malformed));
     }
@@ -1111,7 +1156,7 @@ mod test {
          0x7a, 0x8d, 0x00, 0x00,
          0xaa, 0x00, 0x00, 0xff];
 
-    fn packet_repr() -> Repr<'static> {
+    fn packet_repr() -> Repr {
         Repr {
             src_port:     48896,
             dst_port:     80,
@@ -1119,27 +1164,32 @@ mod test {
             ack_number:   None,
             window_len:   0x0123,
             window_scale: None,
-            control:      Control::Syn,
+            flags:        Flags::SYN,
             max_seg_size: None,
             sack_permitted: false,
             sack_ranges:  [None, None, None],
-            payload:      &PAYLOAD_BYTES
+            payload_len:  PAYLOAD_BYTES.len() as _,
         }
     }
 
     #[test]
     fn test_parse() {
-        let packet = Packet::new_unchecked(&SYN_PACKET_BYTES[..]);
-        let repr = Repr::parse(&packet, &SRC_ADDR.into(), &DST_ADDR.into(), Checksum::Manual).unwrap();
-        assert_eq!(repr, packet_repr());
+        let packet = Packet::new_checked(
+            &SYN_PACKET_BYTES[..],
+            Checksum::Manual { src_addr: SRC_ADDR.into(), dst_addr: DST_ADDR.into(), })
+        .unwrap();
+        assert_eq!(packet.repr(), packet_repr());
+        assert_eq!(packet.payload_slice(), &PAYLOAD_BYTES[..]);
     }
 
     #[test]
     fn test_emit() {
         let repr = packet_repr();
         let mut bytes = vec![0xa5; repr.buffer_len()];
-        let mut packet = Packet::new_unchecked(&mut bytes);
-        repr.emit(&mut packet, &SRC_ADDR.into(), &DST_ADDR.into(), Checksum::Manual);
+        repr.emit(Packet::new_unchecked(&mut bytes, repr));
+        let mut packet = Packet::new_unchecked(&mut bytes, repr);
+        packet.payload_mut_slice().copy_from_slice(&PAYLOAD_BYTES);
+        packet.fill_checksum(SRC_ADDR.into(), DST_ADDR.into());
         assert_eq!(&packet.into_inner()[..], &SYN_PACKET_BYTES[..]);
     }
 

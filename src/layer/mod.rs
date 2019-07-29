@@ -86,6 +86,7 @@ pub mod eth;
 pub mod icmp;
 pub mod ip;
 pub mod udp;
+pub mod tcp;
 
 pub type Result<T> = core::result::Result<T, Error>;
 

@@ -851,7 +851,7 @@ use super::pretty_print::PrettyIndent;
 
 pub fn pretty_print_ip_payload<T: Into<Repr>>(f: &mut fmt::Formatter, indent: &mut PrettyIndent,
                                               ip_repr: T, payload: &[u8]) -> fmt::Result {
-    use crate::wire::{TcpPacket, TcpRepr, UdpChecksum, UdpRepr, udp_packet};
+    use crate::wire::{TcpChecksum, TcpPacket, UdpChecksum, UdpRepr, udp_packet};
     use crate::wire::ip::checksum::format_checksum;
 
     let repr = ip_repr.into();
@@ -881,19 +881,13 @@ pub fn pretty_print_ip_payload<T: Into<Repr>>(f: &mut fmt::Formatter, indent: &m
         }
         Protocol::Tcp => {
             indent.increase(f)?;
-            match TcpPacket::<&[u8]>::new_checked(payload.as_ref()) {
+            match TcpPacket::<&[u8]>::new_checked(payload.as_ref(), TcpChecksum::Ignored) {
                 Err(err) => write!(f, "{}({})", indent, err),
                 Ok(tcp_packet) => {
-                    match TcpRepr::parse(&tcp_packet, &repr.src_addr(),
-                                         &repr.dst_addr(), Checksum::Ignored) {
-                        Err(err) => write!(f, "{}{} ({})", indent, tcp_packet, err),
-                        Ok(tcp_repr) => {
-                            write!(f, "{}{}", indent, tcp_repr)?;
-                            let valid = tcp_packet.verify_checksum(&repr.src_addr(),
-                                                                   &repr.dst_addr());
-                            format_checksum(f, valid)
-                        }
-                    }
+                    write!(f, "{}{}", indent, tcp_packet)?;
+                    let valid = tcp_packet.verify_checksum(
+                        repr.src_addr(), repr.dst_addr());
+                    format_checksum(f, valid)
                 }
             }
         }
