@@ -1020,7 +1020,6 @@ impl Connection {
     pub(crate) fn change_state(&mut self, new: State) {
         self.previous = self.current;
         self.current = new;
-        eprintln!("Changed state: {:?} -> {:?}", self.previous, self.current);
     }
 
     fn release_retransmit(&mut self, now: Instant) {

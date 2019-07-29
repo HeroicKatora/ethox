@@ -105,6 +105,10 @@ pub struct OccupiedEntry<'a, K, V> {
 }
 
 impl<K, V> OccupiedEntry<'_, K, V> {
+    pub fn get(&self) -> &V {
+        match self.void { }
+    }
+
     pub fn get_mut(&mut self) -> &mut V {
         match self.void { }
     }

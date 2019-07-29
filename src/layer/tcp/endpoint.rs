@@ -442,14 +442,14 @@ where
         let packet = match TcpPacket::new_checked(packet, checksum) {
             Ok(packet) => packet,
             // TODO: error logging.
-            Err(_) => return eprintln!("Oh not a tcp"),
+            Err(_) => return (),
         };
 
         let arrived = match In::from_arriving(self.endpoint.inner, handle.borrow_mut(), packet) {
             Ok(arrived) => arrived,
 
             // TODO: error logging.
-            Err(_) => return eprintln!("not really for us"),
+            Err(_) => return (),
         };
 
         self.handler.receive(arrived)
