@@ -102,7 +102,7 @@ pub struct Sending<'a> {
 ///
 /// Same as `Sending`, the packet has already been prepared and queue.
 pub struct Closing<'a> {
-    endpoint: &'a mut Endpoint,
+    endpoint: &'a mut dyn Endpoint,
     previous: SlotKey,
     signals: Signals,
 }
@@ -112,7 +112,7 @@ pub struct Closing<'a> {
 /// Similar to a `Stray` packet but we retain which connection was closed.
 pub struct Closed<'a, P: PayloadMut> {
     ip: ip::Handle<'a>,
-    endpoint: &'a mut Endpoint,
+    endpoint: &'a mut dyn Endpoint,
     previous: SlotKey,
     tcp: TcpPacket<ip::IpPacket<'a, P>>,
 }
@@ -130,7 +130,7 @@ pub struct Open<'a, P: PayloadMut> {
 /// A valid tcp packet not belonging to a connection.
 pub struct Stray<'a, P: PayloadMut> {
     ip: ip::Handle<'a>,
-    endpoint: &'a mut Endpoint,
+    endpoint: &'a mut dyn Endpoint,
     tcp: TcpPacket<ip::IpPacket<'a, P>>,
 }
 
@@ -155,12 +155,12 @@ enum OpenPacket<'a, P: PayloadMut> {
 /// A raw opportunity to create a packet.
 pub struct Raw<'a, P: PayloadMut> {
     pub(super) ip: ip::RawPacket<'a, P>,
-    pub(super) endpoint: &'a mut Endpoint,
+    pub(super) endpoint: &'a mut dyn Endpoint,
 }
 
 impl<'a, P: PayloadMut> Unhandled<'a, P> {
     pub fn try_open(
-        endpoint: &'a mut Endpoint,
+        endpoint: &'a mut dyn Endpoint,
         tcp: TcpPacket<ip::IpPacket<'a, P>>,
     ) -> Self {
         let tcp_repr = tcp.repr();
@@ -188,7 +188,7 @@ impl<'a, P: PayloadMut> Unhandled<'a, P> {
 
 impl<'a, P: PayloadMut> In<'a, P> {
     pub fn from_arriving(
-        endpoint: &'a mut Endpoint,
+        endpoint: &'a mut dyn Endpoint,
         ip_control: ip::Handle<'a>,
         tcp: TcpPacket<ip::IpPacket<'a, P>>,
     ) -> Result<Self, crate::layer::Error> {

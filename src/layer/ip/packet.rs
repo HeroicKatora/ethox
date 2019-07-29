@@ -31,7 +31,7 @@ pub struct Raw<'a, P: Payload> {
 
 pub struct Handle<'a> {
     eth: eth::Handle<'a>,
-    endpoint: &'a mut (Endpoint + 'a),
+    endpoint: &'a mut dyn Endpoint,
 }
 
 pub type V4Packet<'a, P> = Ipv4Packet<EthernetFrame<&'a mut P>>;
@@ -88,7 +88,7 @@ pub(crate) trait Endpoint{
 impl<'a> Handle<'a> {
     pub(crate) fn new(
         handle: eth::Handle<'a>,
-        endpoint: &'a mut (Endpoint + 'a),
+        endpoint: &'a mut dyn Endpoint,
     ) -> Self {
         Handle {
             eth: handle,

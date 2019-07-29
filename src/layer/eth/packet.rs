@@ -35,7 +35,7 @@ pub struct Raw<'a, P: Payload> {
 /// struct to fulfill their task.
 pub struct Handle<'a> {
     pub(crate) nic_handle: &'a mut nic::Handle,
-    pub(crate) endpoint: &'a mut (Endpoint + 'a),
+    pub(crate) endpoint: &'a mut dyn Endpoint,
 }
 
 /// Initializer for a packet.
@@ -55,8 +55,8 @@ pub(crate) trait Endpoint{
 impl<'a> Handle<'a> {
     pub (crate) fn new(
         nic_handle: &'a mut nic::Handle,
-        endpoint: &'a mut (Endpoint + 'a))
-    -> Self {
+        endpoint: &'a mut dyn Endpoint,
+    ) -> Self {
         Handle { nic_handle, endpoint, }
     }
 
