@@ -149,8 +149,8 @@ impl<'a> Cache<'a> {
             /* net_trace!("replaced {} => {} (was {})",
                 protocol_addr,
                 hardware_addr,
-                old_neighbor.hardware_addr);
-            return Ok(()) */
+                old_neighbor.hardware_addr);*/
+            return Ok(());
         }
 
         // Not mapped, need to free an entry.
@@ -301,6 +301,8 @@ mod test {
         cache.fill(MOCK_IP_ADDR_1, HADDR_B, Some(Instant::from_millis(0)))
             .unwrap();
         assert_eq!(cache.lookup_pure(&MOCK_IP_ADDR_1, Instant::from_millis(0)), Some(HADDR_B));
+
+        assert_eq!(cache.len(), 1);
     }
 
     #[test]
