@@ -2,74 +2,46 @@
 //!
 //! Connects to a given remote tcp host and sends a single provided message. Any incoming data is
 //! silently discarded without having been copied into a buffer (but no FIN sent).
-use std::io::{stdout, Write};
-use std::net;
-use structopt::StructOpt;
+mod config;
+mod iperf;
 
-use ethox::managed::{List, Map, SlotMap, Slice};
+use std::io::{stdout, Write};
+
+use ethox::managed::{List, Slice};
 use ethox::nic::{Device, TapInterface};
-use ethox::layer::{eth, ip, tcp};
-use ethox::wire::{Ipv4Address, Ipv4Cidr, EthernetAddress};
+use ethox::layer::{eth, ip};
 
 fn main() {
-    let Config {
-        name,
-        host,
-        hostmac,
-        gateway,
-        gatemac,
-        server,
-        server_port,
-        message,
-    } = Config::from_args();
-
-    let mut eth = eth::Endpoint::new(hostmac);
-
-    let mut neighbors = [eth::Neighbor::default(); 1];
-    let neighbors = {
-        let mut eth_cache = eth::NeighborCache::new(&mut neighbors[..]);
-        eth_cache.fill(gateway.address().into(), gatemac, None).unwrap();
-        eth_cache
-    };
-    let mut ip = [ip::Route::new_ipv4_gateway(gateway.address()); 1];
-    let routes = ip::Routes::import(List::new_full(ip.as_mut().into()));
-    let mut ip = ip::Endpoint::new(Slice::One(host.into()), routes, neighbors);
-
-    let mut tcp = tcp::Endpoint::new(
-        Map::Pairs(List::new(Slice::One(Default::default()))),
-        SlotMap::new(Slice::One(Default::default()), Slice::One(Default::default())),
-        tcp::IsnGenerator::from_std_hash(),
-    );
-    let mut tcp_client = tcp::Client::new(
-        Ipv4Address::from(server).into(), server_port,
-        tcp::io::Sink::new(), tcp::io::SendFrom::new(message));
-
-    let mut interface = TapInterface::new(&name, vec![0; 1 << 14])
-        .expect("Couldn't initialize interface");
+    let config = config::Config::from_args();
 
     let out = stdout();
     let mut out = out.lock();
 
-    out.write_all(b"Started tcp endpoint\n").unwrap();
+    let mut interface = TapInterface::new(&config.tap, vec![0; 1 << 14])
+        .expect("Couldn't initialize interface");
 
-    loop {
-        let rx = interface.rx(10, eth.recv(ip.recv(tcp.recv(&mut tcp_client)))).unwrap();
-        let tx = interface.tx(10, eth.send(ip.send(tcp.send(&mut tcp_client)))).unwrap();
+    let mut eth = eth::Endpoint::new(config.hostmac);
 
-        if tcp_client.is_closed() {
-            break;
+    let mut neighbors = [eth::Neighbor::default(); 1];
+    let mut routes = [ip::Route::new_ipv4_gateway(config.gateway.address()); 1];
+    let mut ip = ip::Endpoint::new(
+        Slice::One(config.host.into()),
+        ip::Routes::import(List::new_full(routes.as_mut().into())),
+        eth::NeighborCache::new(&mut neighbors[..]));
+
+    let mut iperf = iperf::Iperf3::new(&config.iperf3);
+
+    out.write_all(b"[+] Configured layers, communicating").unwrap();
+
+    let result = loop {
+        interface.rx(10, eth.recv(ip.recv(&mut iperf))).unwrap();
+        interface.tx(10, eth.send(ip.send(&mut iperf))).unwrap();
+
+        if let Some(result) = iperf.result() {
+            break result;
         }
-    }
-}
+    };
 
-#[derive(StructOpt)]
-struct Config {
-    name: String,
-    host: Ipv4Cidr,
-    hostmac: EthernetAddress,
-    gateway: Ipv4Cidr,
-    gatemac: EthernetAddress,
-    server: net::Ipv4Addr,
-    server_port: u16,
-    message: Vec<u8>,
+    out.write_all(b"[+] Done").unwrap();
+    write!(out, "{}", result).unwrap();
 }
