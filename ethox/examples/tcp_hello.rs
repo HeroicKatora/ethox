@@ -7,7 +7,7 @@ use std::net;
 use structopt::StructOpt;
 
 use ethox::managed::{List, Map, SlotMap, Slice};
-use ethox::nic::{Device, TapInterface};
+use ethox::nic::{Device, RawSocket, TapInterface};
 use ethox::layer::{eth, ip, tcp};
 use ethox::wire::{Ipv4Address, Ipv4Cidr, EthernetAddress};
 
@@ -43,7 +43,7 @@ fn main() {
         Ipv4Address::from(server).into(), server_port,
         tcp::io::Sink::new(), tcp::io::SendOnce::new(message));
 
-    let mut interface = TapInterface::new(&name, vec![0; 1 << 14])
+    let mut interface = RawSocket::new(&name, vec![0; 1 << 14])
         .expect("Couldn't initialize interface");
 
     let out = stdout();

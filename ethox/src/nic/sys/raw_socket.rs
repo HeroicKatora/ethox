@@ -4,7 +4,7 @@
 // in large parts from `smoltcp` originally distributed under 0-clause BSD
 use std::{mem, io};
 use std::os::unix::io::{RawFd, AsRawFd};
-use std::time::Instant;
+use std::time::SystemTime;
 
 use libc;
 use super::{ifreq, linux, test_result, FdResult, IoLenResult};
@@ -178,7 +178,7 @@ impl<C: PayloadMut> RawSocket<C> {
 
     fn current_info() -> PacketInfo {
         PacketInfo {
-            timestamp: Instant::now().into(),
+            timestamp: SystemTime::now().into(),
             capabilities: Capabilities::no_support(),
         }
     }
