@@ -121,7 +121,6 @@ impl assembly {
     }
 
     fn add_contig_at(&mut self, at: usize) -> &mut Contig {
-        debug_assert!(!self.contigs[at].is_empty());
         assert!(self.back().is_empty());
 
         self.contigs[at..].rotate_right(1);
@@ -131,7 +130,22 @@ impl assembly {
     }
 
     /// Remove any leading bytes.
-    /// Useful for debugging as they should not be present in a freshly constructed instance.
+    ///
+    /// Can be used to remove leftover bytes after a bounded operation (`bounded_add`) removed only
+    /// parts of a fully assembled initial sequence.
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// # use ethox::storage::assembler::{Contig, Assembler};
+    /// let mut memory: [Contig; 2] = [Contig::default(); 2];
+    /// let mut asm = Assembler::new(&mut memory[..]);
+    ///
+    /// // Add four bytes without removing any start bytes.
+    /// assert_eq!(asm.bounded_add(0, 4, 0), Ok(0));
+    /// // Pop the 4 bytes in a separate operation.
+    /// assert_eq!(asm.reduce_front(), 4);
+    /// ```
     pub fn reduce_front(&mut self) -> u32 {
         self.add(0, 0).unwrap()
     }
@@ -140,9 +154,47 @@ impl assembly {
     ///
     /// Returns the number of bytes that became assembled from the range.
     ///
-    /// # Panics
-    /// This method panics when `start >= end`.
+    /// ## Example
+    ///
+    /// ```
+    /// # use ethox::storage::assembler::{Contig, Assembler};
+    /// let mut memory: [Contig; 2] = [Contig::default(); 2];
+    /// let mut asm = Assembler::new(&mut memory[..]);
+    ///
+    /// // Add four bytes not at the start.
+    /// assert_eq!(asm.add(4, 4), Ok(0));
+    /// // Add missing four bytes at the start, which assembles the chunk.
+    /// assert_eq!(asm.add(0, 4), Ok(8));
+    /// ```
     pub fn add(&mut self, start: u32, size: u32) -> Result<u32, ()> {
+        self.add_impl(start, size, u32::max_value())
+    }
+
+    /// Add a new contiguous range and then pop at most `max` assembled bytes.
+    ///
+    /// Returns the number of bytes that were assembled in front, or `Err(())` if it was not
+    /// possible to store the range. If this operation returns an error then it did not modify the
+    /// `Assembler` at all.
+    ///
+    /// ## Example
+    ///
+    /// ```
+    /// # use ethox::storage::assembler::{Contig, Assembler};
+    /// let mut memory: [Contig; 2] = [Contig::default(); 2];
+    /// let mut asm = Assembler::new(&mut memory[..]);
+    ///
+    /// // Add four bytes not at the start.
+    /// assert_eq!(asm.add(4, 4), Ok(0));
+    /// // Add the four bytes at the start but do not return them all yet.
+    /// assert_eq!(asm.bounded_add(0, 4, 4), Ok(4));
+    /// // Now pop the 4 remaining bytes.
+    /// assert_eq!(asm.reduce_front(), 4);
+    /// ```
+    pub fn bounded_add(&mut self, start: u32, size: u32, max: u32) -> Result<u32, ()> {
+        self.add_impl(start, size, max)
+    }
+
+    fn add_impl(&mut self, start: u32, size: u32, max: u32) -> Result<u32, ()> {
         /// A state into which we can absorb existing `Contig` ranges.
         struct Absorber {
             /// End byte relative to start.
@@ -163,6 +215,10 @@ impl assembly {
             /// Returns `true` if the range was fully absorbed or `false` if only its leading empty
             /// part was modified.
             fn absorb(&mut self, rhs: &mut Contig) -> bool {
+                if rhs.is_empty() {
+                    return false;
+                }
+
                 if self.rel_end < rhs.hole_size {
                     if self.absorbed == 0 && !self.available {
                         return false;
@@ -197,12 +253,7 @@ impl assembly {
             }
 
             if self.contigs[idx].is_empty() {
-                if start == 0 {
-                    return Ok(size);
-                } else {
-                    self.contigs[idx] = Contig::hole_and_data(relative, size);
-                    return Ok(0);
-                }
+                break;
             }
 
             if idx + 1 == self.contigs.len() {
@@ -226,25 +277,51 @@ impl assembly {
                 break;
             }
         }
-        let absorber = absorber; // No longer mut.
 
+        let removed_bytes;
         if start == 0 {
-            debug_assert!(relative == 0);
-            // Delete absorbed ranges
-            self.remove_contigs(0, absorber.absorbed);
-            Ok(absorber.len)
-        } else if absorber.absorbed == 0 {
+            if absorber.len <= max {
+                debug_assert!(relative == 0);
+                // Delete absorbed ranges
+                self.remove_contigs(0, absorber.absorbed);
+                return Ok(absorber.len);
+            }
+
+            // Had more than `max` bytes`. Here we deviate from the options below to provide a
+            // forward progress guarantee. Adding bytes at the beginning should *always* succeed
+            // with at least the allowed `max` bytes. However, the handling below might require us
+            // to reserve a `contig` in case we overflow into a hole at the start of the assembler.
+            // This operation may fail (`!absorber.available`). We rather drop *some* data than
+            // risk not making any progress when a hole larger than the maximum segment size is
+            // introduced.
+            //
+            // TODO: it may be valuable to *instead* drop one Contig from the end.
+            if absorber.absorbed == 0 && !absorber.available {
+                self.contigs[0].hole_size -= max;
+                return Ok(max)
+            }
+
+            // We can treat this as a successful merge but deduct the popped bytes.
+
+            removed_bytes = max;
+            absorber.len -= max;
+        } else {
+            removed_bytes = 0;
+        }
+        
+        if absorber.absorbed == 0 {
             if !absorber.available {
+                debug_assert_eq!(removed_bytes, 0);
                 return Err(())
             }
 
             let contig = self.add_contig_at(idx);
-            *contig = Contig::hole_and_data(absorber.start, size);
-            Ok(0)
+            *contig = Contig::hole_and_data(absorber.start, absorber.len);
+            Ok(removed_bytes)
         } else {
             self.remove_contigs(idx + 1, absorber.absorbed - 1);
             self.contigs[idx] = Contig::hole_and_data(absorber.start, absorber.len);
-            Ok(0)
+            Ok(removed_bytes)
         }
     }
 
@@ -441,6 +518,16 @@ mod test {
     }
 
     #[test]
+    fn test_forward_progress() {
+        const CONTIG_COUNT: usize = 20;
+        let mut assr = Assembler::new(vec![Contig::default(); CONTIG_COUNT]);
+        for c in 0..CONTIG_COUNT {
+          assert_eq!(assr.add(2 + c as u32*10, 3), Ok(0));
+        }
+        assert_eq!(assr.add(0, 1), Ok(1));
+    }
+
+    #[test]
     fn test_empty_remove_front() {
         let mut assr = contigs![(12, 0)];
         assert_eq!(assr.reduce_front(), 0);
@@ -515,5 +602,51 @@ mod test {
         let assr = contigs![(2, 6), (2, 1), (2, 2), (1, 0)];
         let segments: Vec<_> = assr.iter_data().collect();
         assert_eq!(segments, vec![(2, 8), (10, 11), (13, 15)]);
+    }
+
+    #[test]
+    fn stored_partial_progress() {
+        let mut assr = contigs![(0, 0)];
+        // Progress even when no space at all.
+        assert_eq!(assr.bounded_add(0, 2, 1), Ok(1));
+        assert_eq!(assr, contigs![(0, 1)]);
+    }
+
+    #[test]
+    fn record_forgotten_partial_progress() {
+        let mut assr = contigs![(3, 5)];
+        // Progress is reflected in change.
+        assert_eq!(assr.bounded_add(0, 2, 1), Ok(1));
+        assert_eq!(assr, contigs![(2, 5)]);
+    }
+
+    #[test]
+    fn always_initial_progress() {
+        let mut assr = contigs![(4, 0)];
+        assert_eq!(assr.bounded_add(0, 2, 1), Ok(1));
+    }
+
+    #[test]
+    fn advancing_partial_progress() {
+        let mut assr = contigs![(4, 1), (2, 1)];
+        assert_eq!(assr.bounded_add(0, 6, 2), Ok(2));
+        assert_eq!(assr, contigs![(0, 4), (1, 1)]);
+    }
+
+    #[test]
+    fn overlapping_partial_progress() {
+        let mut assr = contigs![(4, 8), (4, 4)];
+        assert_eq!(assr.bounded_add(0, 16, 2), Ok(2));
+        assert_eq!(assr, contigs![(0, 18), (0, 0)]);
+    }
+
+    #[test]
+    fn max_forward_progress() {
+        const CONTIG_COUNT: usize = 20;
+        let mut assr = Assembler::new(vec![Contig::default(); CONTIG_COUNT]);
+        for c in 0..CONTIG_COUNT {
+          assert_eq!(assr.add(5 + c as u32*10, 3), Ok(0));
+        }
+        assert_eq!(assr.bounded_add(0, 2, 1), Ok(1));
     }
 }
