@@ -2,6 +2,8 @@
 //!
 //! The loss layer is a simple wrapper around another layer which simulates a lossy connection.
 //! This works by dropping ingress packets or canceling the sending of egress packets.
+use crate::nic;
+use crate::wire::{Payload, PayloadMut};
 
 /// Simple pseudo-random loss.
 ///
@@ -24,6 +26,22 @@ pub struct PrngLoss {
     pub prng: Xoroshiro256,
 }
 
+pub struct Lossy<I>(pub I, pub PrngLoss);
+
+/// A handle wrapper that sometimes doesn't queue packets.
+///
+/// This pretends to be static but internally wraps a reference to the underlying handle. This is
+/// of course unsafe but `Device` requires us to specify a *single* associated type as the handle
+/// so that it can not include a lifetime parameter.
+///
+/// However, the implementation ensures that the `LossyHandle` is itself only visible behind a
+/// mutable reference with the lifetime of the wrapped handle. It further does not allow to be
+/// copied or cloned. This ensures that no reference with larger lifetime can be created.
+pub struct LossyHandle<H: ?Sized> {
+    prng: *mut PrngLoss,
+    handle: *mut H,
+}
+
 #[derive(Clone, Debug, Hash)]
 pub struct Xoroshiro256 {
     state: [u64; 4],
@@ -40,6 +58,11 @@ impl PrngLoss {
             lossrate: rate,
             prng: Xoroshiro256::new(seed),
         }
+    }
+
+    /// Wrap a layer to make it lossy.
+    pub fn lossy<I>(&self, layer: I) -> Lossy<I> {
+        Lossy(layer, self.clone())
     }
 
     /// Simulate burst losses as pulses.
@@ -102,6 +125,85 @@ impl Xoroshiro256 {
 		s[3] = s[3].rotate_left(45);
 
 		result_starstar
+    }
+}
+
+impl<H: ?Sized> LossyHandle<H> {
+    /// Instantiate behind a reference with short enough lifetime to ensure it doesn't escape.
+    fn new<'a>(
+        uninit: &'a mut core::mem::MaybeUninit<Self>,
+        prng: &'a mut PrngLoss,
+        handle: &'a mut H,
+    ) -> &'a mut Self {
+        unsafe {
+            (*uninit.as_mut_ptr()).prng = prng;
+            (*uninit.as_mut_ptr()).handle = handle;
+            // Initialized all fields
+            &mut *uninit.as_mut_ptr()
+        }
+    }
+}
+
+impl<H, P, I> nic::Recv<H, P> for Lossy<I>
+where
+    H: nic::Handle + ?Sized,
+    P: Payload + ?Sized,
+    I: nic::Recv<LossyHandle<H>, P>,
+{
+    fn receive(&mut self, packet: nic::Packet<H, P>) {
+        if !self.1.next() {
+            return;
+        }
+
+        let nic::Packet { handle, payload } = packet;
+        let mut handle_mem = core::mem::MaybeUninit::uninit();
+        let handle = LossyHandle::new(
+            &mut handle_mem,
+            &mut self.1,
+            handle);
+
+        let packet = nic::Packet {
+            handle,
+            payload,
+        };
+
+        self.0.receive(packet)
+    }
+}
+
+impl<H, P, I> nic::Send<H, P> for Lossy<I>
+where
+    H: nic::Handle + ?Sized,
+    P: Payload + ?Sized,
+    I: nic::Send<LossyHandle<H>, P>,
+{
+    fn send(&mut self, packet: nic::Packet<H, P>) {
+        let nic::Packet { handle, payload } = packet;
+
+        let mut handle_mem = core::mem::MaybeUninit::uninit();
+        let handle = LossyHandle::new(
+            &mut handle_mem,
+            &mut self.1,
+            handle);
+
+        self.0.send(nic::Packet {
+            handle: &mut *handle,
+            payload: &mut *payload,
+        });
+    }
+}
+
+impl<H: nic::Handle + ?Sized> nic::Handle for LossyHandle<H> {
+    fn queue(&mut self) -> crate::layer::Result<()> {
+        if unsafe { &mut *self.prng }.next() {
+            unsafe { &mut *self.handle }.queue()
+        } else {
+            Ok(())
+        }
+    }
+
+    fn info(&self) -> &dyn nic::Info {
+        unsafe { &*self.handle }.info()
     }
 }
 

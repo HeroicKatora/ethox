@@ -34,7 +34,7 @@ pub struct Raw<'a, P: Payload> {
 /// `RawPacket`. Some of the methods offered there will access the non-public members of this
 /// struct to fulfill their task.
 pub struct Handle<'a> {
-    pub(crate) nic_handle: &'a mut nic::Handle,
+    pub(crate) nic_handle: &'a mut dyn nic::Handle,
     pub(crate) endpoint: &'a mut dyn Endpoint,
 }
 
