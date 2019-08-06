@@ -777,6 +777,7 @@ impl Connection {
         return signals;
     }
 
+    /// Construct a segment acking all data but nothing else.
     fn segment_ack_all(&mut self, remote: FourTuple) -> Segment {
         Segment {
             repr: self.repr_ack_all(remote),
@@ -828,6 +829,7 @@ impl Connection {
             // When we have already sent our FIN, never send *new* data.
             State::FinWait | State::Closing | State::LastAck => {
                 available.total = available.total.min(self.send.next - self.send.unacked);
+                // FIXME: ensure fin bit is set for retranmissions of last segment.
                 self.select_send_segment(available, time, entry)
                     .map(OutSignals::segment)
                     .unwrap_or_else(OutSignals::none)
@@ -838,7 +840,7 @@ impl Connection {
                     .unwrap_or_else(OutSignals::none)
             },
             State::TimeWait => self.ensure_time_wait(time, entry),
-            State::SynSent | State::SynReceived => OutSignals::none(), // unimplemented!("need to retransmit SYN on timeout"),
+            State::SynSent | State::SynReceived => unimplemented!("need to retransmit SYN on timeout"),
             State::Listen => OutSignals::none(),
         }
     }
@@ -980,14 +982,18 @@ impl Connection {
         let acked_all = self.send.next == self.send.unacked;
 
         match (self.current, meta.fin, acked_all) {
-            (State::Established, true, _) | (State::SynReceived, true, _) => self.change_state(State::CloseWait),
+            (State::Established, true, _) | (State::SynReceived, true, _) => {
+                self.change_state(State::CloseWait);
+            },
             (State::FinWait, true, true) | (State::Closing, _, true) => {
                 self.change_state(State::TimeWait);
                 // We could have a segment lifetime estimation here, but use the retransmission
                 // timeout instead. Works as well, I guess.
                 self.retransmission_timer = meta.timestamp + 2*self.retransmission_timeout;
             },
-            (State::FinWait, true, false) => self.change_state(State::Closing),
+            (State::FinWait, true, false) => {
+                self.change_state(State::Closing);
+            },
             _ => (),
         }
 
@@ -1046,7 +1052,7 @@ impl Receive {
             .unwrap_or_else(|_| u32::max_value())
             .min(max);
         let scaled_down = (capped >> self.window_scale)
-            + if capped % (1 << self.window_scale) == 0 { 0 }  else { 1 };
+            + u32::from(capped % (1 << self.window_scale) != 0);
         self.window = u16::try_from(scaled_down).unwrap();
     }
 }

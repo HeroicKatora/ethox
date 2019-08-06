@@ -234,12 +234,6 @@ impl<'a, P: PayloadMut> In<'a, P> {
         let answer = match signals.answer.take() {
             Some(answer) => answer,
             None => {
-                // We can not be forced to drop this.
-                /*
-                debug_assert_eq!(signals.may_send, true);
-                debug_assert_eq!(signals.reset, false);
-                debug_assert_eq!(signals.delete, false);
-                */
                 return Ok(In::Open(Open {
                     ip: ip_control,
                     operator,
@@ -254,7 +248,6 @@ impl<'a, P: PayloadMut> In<'a, P> {
         };
 
         // Prepare the answer packet itself.
-
         control_answer(tcp, answer, ip_control)?;
 
         // We need to close the connection. The sent packet should be an RST.
