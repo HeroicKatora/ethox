@@ -87,7 +87,7 @@ impl EndpointRef<'_> {
                 _ => unreachable!(),
             };
 
-        packet.handle.inner.endpoint.update(source_hardware_addr, IpAddress::Ipv4(source_protocol_addr))?;
+        packet.handle.inner.endpoint.update(source_hardware_addr, IpAddress::Ipv4(source_protocol_addr), packet.handle.info().timestamp())?;
 
         // verify that target protocol address is not a multicast address
         if ip.inner.accepts(IpAddress::Ipv4(target_protocol_addr)) && !IpAddress::Ipv4(target_protocol_addr).is_multicast() {

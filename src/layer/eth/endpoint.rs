@@ -99,11 +99,11 @@ impl packet::Endpoint for EthEndpoint<'_, '_> {
         */
     }
 
-    fn update(&mut self, hw_addr: EthernetAddress, prot_addr: IpAddress) -> Result<()> {
+    fn update(&mut self, hw_addr: EthernetAddress, prot_addr: IpAddress, time: Instant) -> Result<()> {
         // TODO: return correct Error here
 
         if let Some(_) = self.inner.neighbors.lookup_pure(&prot_addr, Instant::from_millis(0)) {
-            return self.inner.neighbors.fill(prot_addr, hw_addr, Some(Instant::from_millis(0))).or(Err(Error::Unreachable))
+            return self.inner.neighbors.fill(prot_addr, hw_addr, Some(time)).or(Err(Error::Unreachable))
         }
 
         Ok(())
