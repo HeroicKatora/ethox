@@ -3,7 +3,7 @@ use crate::wire::{Payload, PayloadMut};
 use crate::wire::{IpAddress, Ipv4Subnet, Ipv6Subnet, IpSubnet, IpProtocol};
 use crate::wire::{TcpPacket, TcpRepr, TcpSeqNumber};
 
-use super::connection::{AvailableBytes, Endpoint, InPacket, Operator, ReceivedSegment, Segment, Signals};
+use super::connection::{AvailableBytes, Endpoint, InPacket, Operator, OutSignals, ReceivedSegment, Segment, Signals};
 use super::endpoint::{FourTuple, SlotKey};
 
 /// An incoming tcp packet.
@@ -71,6 +71,32 @@ pub trait RecvBuf {
     fn window(&self) -> usize;
 }
 
+/// Informational signals to the user.
+///
+/// These are intended to be asynchronous 'signals' to the user space process in the original tcp
+/// specification but are simple boolean flags here. A socket interface may queue proper messages
+/// to its listener of course.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct UserSignals {
+    /// An unexpected connection reset occurred.
+    pub reset: bool,
+
+    /// The tcp data stream was closed by the remote end.
+    ///
+    /// The actual connection may still be half-open until our side closes the connection as well.
+    ///
+    /// WIP: this is not implemented yet and always `false`.
+    pub half_closed: bool,
+
+    /// There is new data to be read.
+    pub data: bool,
+
+    /// A listening socket returned to its listen state.
+    ///
+    /// WIP: this is not implemented yet and always `false`.
+    pub relisten: bool,
+}
+
 /// Packet representation *after* it has been applied to its connection.
 ///
 /// This is purely internal to transition to the handled `In` state.
@@ -95,7 +121,7 @@ enum Unhandled<'a, P: Payload> {
 pub struct Sending<'a> {
     operator: Operator<'a>,
     // FIXME: this should utilize its own 'Signals' that only contain those to the user.
-    signals: Signals,
+    signals: UserSignals,
 }
 
 /// A closing message from us.
@@ -104,7 +130,7 @@ pub struct Sending<'a> {
 pub struct Closing<'a> {
     endpoint: &'a mut dyn Endpoint,
     previous: SlotKey,
-    signals: Signals,
+    signals: UserSignals,
 }
 
 /// A connection was closed by a remote packet.
@@ -123,7 +149,7 @@ pub struct Closed<'a, P: PayloadMut> {
 pub struct Open<'a, P: PayloadMut> {
     ip: ip::Handle<'a>,
     operator: Operator<'a>,
-    signals: Signals,
+    signals: UserSignals,
     packet: OpenPacket<'a, P>,
 }
 
@@ -159,7 +185,7 @@ pub struct Raw<'a, P: PayloadMut> {
 }
 
 impl<'a, P: PayloadMut> Unhandled<'a, P> {
-    pub fn try_open(
+    fn try_open(
         endpoint: &'a mut dyn Endpoint,
         tcp: TcpPacket<ip::IpPacket<'a, P>>,
     ) -> Self {
@@ -212,16 +238,12 @@ impl<'a, P: PayloadMut> In<'a, P> {
         };
 
         let mut signals = operator.arrives(&in_packet);
+        let user = UserSignals::new(&signals);
 
         // Deleting the connection nothing to be sent.
         if signals.delete && signals.answer.is_none() {
-            /*
-            debug_assert_eq!(signals.receive, false);
-            debug_assert_eq!(signals.may_send, false);
-            */
             let previous = operator.connection_key;
             let endpoint = operator.delete();
-            // TODO: Propagate `reset` bit
             return Ok(In::Closed(Closed {
                 ip: ip_control,
                 endpoint,
@@ -237,7 +259,7 @@ impl<'a, P: PayloadMut> In<'a, P> {
                 return Ok(In::Open(Open {
                     ip: ip_control,
                     operator,
-                    signals,
+                    signals: user,
                     // Determine if this is with or without data.
                     packet: match signals.receive {
                         Some(segment) => OpenPacket::In { tcp, segment },
@@ -257,17 +279,18 @@ impl<'a, P: PayloadMut> In<'a, P> {
             return Ok(In::Closing(Closing {
                 endpoint,
                 previous,
-                signals,
+                signals: user,
             }));
         }
 
         debug_assert_eq!(signals.reset, false);
         Ok(In::Sending(Sending {
             operator,
-            signals,
+            signals: user,
         }))
     }
 
+    /// Get the key of the connection associated with the packet.
     pub fn key(&self) -> Option<SlotKey> {
         match self {
             In::Sending(sending) => Some(sending.key()),
@@ -275,6 +298,17 @@ impl<'a, P: PayloadMut> In<'a, P> {
             In::Closing(closing) => Some(closing.key()),
             In::Closed(closed) => Some(closed.key()),
             In::Stray(_) => None,
+        }
+    }
+
+    /// Get a descriptor for state changes that would usually send a signal to the user.
+    pub fn user_signals(&self) -> UserSignals {
+        match self {
+            In::Sending(sending) => sending.signals,
+            In::Open(open) => open.signals,
+            In::Closing(closing) => closing.signals,
+            In::Closed(_) => UserSignals::default(),
+            In::Stray(_) => UserSignals::default(),
         }
     }
 }
@@ -302,7 +336,7 @@ impl<'a, P: PayloadMut> Open<'a, P> {
     ///
     /// Any data that is currently held as an incoming packet will be lost, even if this method fails.
     pub fn write(self, with: &mut impl SendBuf) -> Result<Result<Sending<'a>, Closing<'a>>, crate::layer::Error> {
-        let Open { ip, mut operator, signals: _, packet, } = self;
+        let Open { ip, mut operator, signals: mut user, packet, } = self;
         let payload: &'a mut P = match packet {
             OpenPacket::In { tcp, .. } | OpenPacket::Control { tcp }
                 => tcp.into_inner().into_inner().into_inner(),
@@ -315,6 +349,7 @@ impl<'a, P: PayloadMut> Open<'a, P> {
         let time = ip.info().timestamp();
 
         let signals = operator.next_send_segment(available, time);
+        user.update(&signals);
 
         if let Some(Segment { repr, range }) = signals.segment {
             let raw_ip = ip::RawPacket {
@@ -338,12 +373,12 @@ impl<'a, P: PayloadMut> Open<'a, P> {
             Err(Closing {
                 endpoint,
                 previous,
-                signals: Signals::default(),
+                signals: user,
             })
         } else {
             Ok(Sending {
                 operator,
-                signals: Signals::default(),
+                signals: user,
             })
         })
     }
@@ -377,7 +412,7 @@ impl<'a, P: PayloadMut> Raw<'a, P> {
 
         Ok(Sending {
             operator,
-            signals: Signals::default(),
+            signals: UserSignals::default(),
         })
     }
 
@@ -398,7 +433,7 @@ impl<'a, P: PayloadMut> Raw<'a, P> {
 
         Ok(Open {
             operator,
-            signals: Signals::default(),
+            signals: UserSignals::default(),
             ip,
             packet: OpenPacket::Out { raw },
         })
@@ -458,6 +493,21 @@ impl<'a, P: PayloadMut> Stray<'a, P> {
             ip: raw_ip,
             endpoint: self.endpoint,
         }
+    }
+}
+
+impl UserSignals {
+    fn new(signals: &Signals) -> Self {
+        UserSignals {
+            reset: signals.reset,
+            data: signals.receive.is_some(),
+            half_closed: false,
+            relisten: false,
+        }
+    }
+
+    fn update(&mut self, _signals: &OutSignals) {
+        // TODO: anything to set?
     }
 }
 
