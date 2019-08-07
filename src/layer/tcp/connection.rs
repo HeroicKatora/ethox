@@ -563,7 +563,7 @@ impl Connection {
     fn arrives_syn_sent(&mut self, incoming: &InPacket, entry: EntryKey)
         -> Signals
     {
-        let InPacket { segment, from, time, } = incoming;
+        let InPacket { segment, from: _, time, } = incoming;
 
         if let Some(ack) = segment.ack_number {
             if ack <= self.send.initial_seq || ack > self.send.next {
@@ -645,7 +645,7 @@ impl Connection {
 
     fn arrives_established(&mut self, incoming: &InPacket, entry: EntryKey) -> Signals {
         // TODO: time for RTT estimation, ...
-        let InPacket { segment, from, time, } = incoming;
+        let InPacket { segment, from: _, time, } = incoming;
 
         let acceptable = self.ingress_acceptable(segment);
 
@@ -750,7 +750,7 @@ impl Connection {
     /// Close due to invalid incoming packet.
     ///
     /// As opposed to `remote_reset_connection` this one is proactive and we send the RST.
-    fn signal_reset_connection(&mut self, segment: &TcpRepr, entry: EntryKey) -> Signals {
+    fn signal_reset_connection(&mut self, _segment: &TcpRepr, entry: EntryKey) -> Signals {
         self.change_state(State::Closed);
 
         let mut signals = Signals::default();
@@ -922,7 +922,7 @@ impl Connection {
         None
     }
 
-    fn fast_retransmit(&mut self, time: Instant, entry: EntryKey)
+    fn fast_retransmit(&mut self, _time: Instant, entry: EntryKey)
         -> Option<Segment>
     {
         // See: https://tools.ietf.org/html/rfc5681#section-3.2
@@ -933,7 +933,7 @@ impl Connection {
         })
     }
 
-    fn start_timeout_retransmit(&mut self, time: Instant, entry: EntryKey)
+    fn start_timeout_retransmit(&mut self, _time: Instant, _entry: EntryKey)
         -> Option<Segment>
     {
         unimplemented!()
@@ -960,7 +960,7 @@ impl Connection {
         }
     }
 
-    fn window_update(&mut self, segment: &TcpRepr, new_bytes: u32) {
+    fn window_update(&mut self, _segment: &TcpRepr, new_bytes: u32) {
         let flow = &mut self.flow_control;
         if self.duplicate_ack > 0 {
             flow.congestion_window = flow.ssthresh;
@@ -1029,10 +1029,6 @@ impl Connection {
     pub(crate) fn change_state(&mut self, new: State) {
         self.previous = self.current;
         self.current = new;
-    }
-
-    fn release_retransmit(&mut self, now: Instant) {
-        self.retransmission_timer = now + self.retransmission_timeout;
     }
 
     /// RFC5681 restart window.

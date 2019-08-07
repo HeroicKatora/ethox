@@ -100,10 +100,6 @@ impl assembly {
         unsafe { &mut *(contigs as *mut [Contig]  as *mut assembly) }
     }
 
-    fn front(&self) -> Contig {
-        self.contigs[0]
-    }
-
     fn back(&self) -> Contig {
         self.contigs[self.contigs.len() - 1]
     }
@@ -220,7 +216,8 @@ impl assembly {
                 }
 
                 if self.rel_end < rhs.hole_size {
-                    if self.absorbed == 0 && !self.available {
+                    if self.would_overflow() {
+                        // We must not modify the contig if we can't insert the absorbed bytes.
                         return false;
                     }
                     rhs.hole_size -= self.rel_end;
@@ -241,6 +238,12 @@ impl assembly {
                     self.absorbed += 1;
                     true
                 }
+            }
+
+            fn would_overflow(&self) -> bool {
+                // We would overflow if we have not absorbed any existing contig and no empty is
+                // available at the end of the assembly.
+                self.absorbed == 0 && !self.available
             }
         }
 
@@ -296,13 +299,14 @@ impl assembly {
             // introduced.
             //
             // TODO: it may be valuable to *instead* drop one Contig from the end.
-            if absorber.absorbed == 0 && !absorber.available {
+            if absorber.would_overflow() {
+                // Can't insert all bytes that were added but we can return the start of what would
+                // have been inserted instead.
                 self.contigs[0].hole_size -= max;
                 return Ok(max)
             }
 
             // We can treat this as a successful merge but deduct the popped bytes.
-
             removed_bytes = max;
             absorber.len -= max;
         } else {
