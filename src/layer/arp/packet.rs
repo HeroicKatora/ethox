@@ -75,13 +75,13 @@ impl<'a, P: PayloadMut> In<'a, P> {
     pub fn answer(mut self) -> Result<Out<'a, P>> {
         let answer = match self.packet.repr() {
             ArpRepr::EthernetIpv4 {
-                operation,
+                operation: _,
                 source_hardware_addr,
                 source_protocol_addr,
                 target_hardware_addr: _,
                 target_protocol_addr,
             } => ArpRepr::EthernetIpv4 {
-                operation,
+                operation: ArpOperation::Reply,
                 source_hardware_addr: self.handle.inner.src_addr(),
                 source_protocol_addr: target_protocol_addr,
                 target_hardware_addr: source_hardware_addr,
