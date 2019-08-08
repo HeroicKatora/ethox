@@ -37,10 +37,9 @@ def simpleTest():
     # There are some weird ' > > > >' in the answer if this is not on the same
     # shell line.  I wish mininet had better job control and output retrieval,
     # like real python instead of a direct **terminal** fd0/fd1 interaction.
-    simple_get = "$'GET / HTTP/1.0\\r\\n\\r\\n'"
     # FIXME: subnet specifiers should not be hardcoded
-    ethox_tcp = '../target/debug/examples/tcp_hello ethoxtap %s/8 %s %s/8 %s %s %s %s' % (
-        ethox.IP(), ethox.MAC(), host.IP(), host.MAC(), host.IP(), 8000, simple_get)
+    ethox_tcp = '../target/debug/examples/curl ethoxtap %s/8 %s %s/8 %s %s %s' % (
+        ethox.IP(), ethox.MAC(), host.IP(), host.MAC(), host.IP(), 8000)
     # The connection lingers in tcp TimeWait for 6 more seconds (2 full default rtts)
     answer = ethox.cmd('timeout 8s ' + ethox_tcp)
     print '\n'.join(filter(

@@ -1,7 +1,7 @@
-//! A tcp client example
+//! A simplified curl.
 //!
-//! Connects to a given remote tcp host and sends a single provided message. Any incoming data is
-//! silently discarded without having been copied into a buffer (but no FIN sent).
+//! Connects to a given remote tcp/http host and requests the root page, then prints the response
+//! without headers. Can handle up to 1MB of response data.
 use std::io::{stdout, Write};
 use std::net;
 use structopt::StructOpt;
@@ -20,7 +20,6 @@ fn main() {
         gatemac,
         server,
         server_port,
-        message,
     } = Config::from_args();
 
     let mut eth = [eth::Neighbor::default(); 1];
@@ -39,9 +38,11 @@ fn main() {
         SlotMap::new(Slice::One(Default::default()), Slice::One(Default::default())),
         tcp::IsnGenerator::from_std_hash(),
     );
+
+    let message = "GET / HTTP/1.0\r\n\r\n".to_owned();
     let mut tcp_client = tcp::Client::new(
         Ipv4Address::from(server).into(), server_port,
-        tcp::io::RecvInto::new(vec![0; 1 << 10]),
+        tcp::io::RecvInto::new(vec![0; 1 << 20]),
         tcp::io::SendOnce::new(message));
 
     let mut interface = RawSocket::new(&name, vec![0; 1 << 14])
@@ -77,5 +78,4 @@ struct Config {
     gatemac: EthernetAddress,
     server: net::Ipv4Addr,
     server_port: u16,
-    message: String,
 }
