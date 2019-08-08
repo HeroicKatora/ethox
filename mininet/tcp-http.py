@@ -24,17 +24,20 @@ def simpleTest():
 
     host = net.get('host')
     host.cmd('python3 -m http.server --bind %s 8000 &' % (host.IP()))
-    # host.cmd('wireshark &')
-    # host.cmd('xterm') # as a pause mechanism
 
     ethox = net.get('ethox')
     expected = ethox.cmd('curl %s:8000' % (host.IP()))
+
+    # Remove the ip addr to disable host ip+tcp response. Can't bring the whole link down.
+    # Then wait for a short time to allow the server to boot and other effects to take place.
+    ethox.cmd('ip addr flush dev ethoxtap')
+    ethox.cmd('sleep 1')
 
     simple_get = '"GET / HTTP/1.0\r\n\r\n"'
     # FIXME: subnet specifiers should not be hardcoded
     ethox_tcp = './target/debug/examples/tcp_hello ethoxtap %s/8 %s %s/8 %s %s %s %s' % (
         ethox.IP(), ethox.MAC(), host.IP(), host.MAC(), host.IP(), 8000, simple_get)
-    print ethox.cmd('cd .. && ' + ethox_tcp)
+    print ethox.cmd('cd .. && timeout 2s ' + ethox_tcp)
 
     host.cmd('kill %python3')
     net.stop()
