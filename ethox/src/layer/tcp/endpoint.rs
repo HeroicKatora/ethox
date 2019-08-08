@@ -11,7 +11,7 @@
 //!     OS comparison in particular
 use crate::layer::ip;
 use crate::managed::{Map, SlotMap, slotmap::Key};
-use crate::wire::{IpAddress, TcpChecksum, TcpPacket, TcpSeqNumber};
+use crate::wire::{IpAddress, TcpPacket, TcpSeqNumber};
 use crate::wire::PayloadMut;
 use crate::time::{Duration, Expiration, Instant};
 
@@ -432,12 +432,10 @@ where
 {
     fn receive(&mut self, ip_packet: ip::InPacket<P>) {
         let ip::InPacket { mut handle, packet } = ip_packet;
-        let repr = packet.repr();
 
-        let checksum = TcpChecksum::Manual {
-            src_addr: repr.src_addr(),
-            dst_addr: repr.dst_addr(),
-        };
+        let repr = packet.repr();
+        let capabilities = handle.info().capabilities();
+        let checksum = capabilities.tcp().rx_checksum(repr);
 
         let packet = match TcpPacket::new_checked(packet, checksum) {
             Ok(packet) => packet,
