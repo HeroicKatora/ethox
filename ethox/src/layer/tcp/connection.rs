@@ -679,8 +679,10 @@ impl Connection {
             },
             AckUpdate::Duplicate => {
                 self.duplicate_ack = self.duplicate_ack.saturating_add(1);
+                /*
                 self.flow_control.ssthresh = unimplemented!();
                 self.flow_control.congestion_window = unimplemented!();
+                */
             },
             // This is a reordered packet, potentially an attack. Do nothing.
             AckUpdate::TooLow => (),

@@ -44,6 +44,38 @@ where
             send,
         }
     }
+}
+
+impl<R, S> Client<R, S> {
+    /// Get a reference to the receive buffer.
+    pub fn recv(&self) -> &R {
+        &self.recv
+    }
+
+    /// Get a mutable reference to the receive buffer.
+    ///
+    /// You should probably only use this to retrieve data from the acknowledged portion of the
+    /// buffer.
+    pub fn recv_mut(&mut self) -> &mut R {
+        &mut self.recv
+    }
+
+    /// Get a reference to the send buffer.
+    pub fn send(&self) -> &S {
+        &self.send
+    }
+
+    /// Get a mutable reference to the send buffer.
+    ///
+    /// You should only use this to append additional data or remove acknowledged data, and not to
+    /// modify data that has already been sent but is still in the retranmission window.
+    ///
+    /// (Admitteldy, you could use this to probe other network stacks on their handling of
+    /// conflicting retransmitted segments. That would be annoying but, and this should not be read
+    /// as an endorsement of blackhat hacking, somewhat cool).
+    pub fn send_mut(&mut self) -> &mut S {
+        &mut self.send
+    }
 
     /// Check if the connection was closed.
     pub fn is_closed(&self) -> bool {

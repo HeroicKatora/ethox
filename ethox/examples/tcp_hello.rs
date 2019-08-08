@@ -41,7 +41,8 @@ fn main() {
     );
     let mut tcp_client = tcp::Client::new(
         Ipv4Address::from(server).into(), server_port,
-        tcp::io::Sink::new(), tcp::io::SendOnce::new(message));
+        tcp::io::RecvInto::new(vec![0; 1 << 10]),
+        tcp::io::SendOnce::new(message));
 
     let mut interface = RawSocket::new(&name, vec![0; 1 << 14])
         .expect(&format!("Couldn't initialize interface {}", name));
@@ -49,8 +50,6 @@ fn main() {
 
     let out = stdout();
     let mut out = out.lock();
-
-    out.write_all(b"Started tcp endpoint\n").unwrap();
 
     loop {
         let rx = interface.rx(10, eth.recv(ip.recv(tcp.recv(&mut tcp_client)))).unwrap();
@@ -60,6 +59,13 @@ fn main() {
             break;
         }
     }
+
+    let received = tcp_client.recv().received();
+    let http = String::from_utf8_lossy(received);
+    let header_end = http.find("\r\n\r\n")
+        .expect("Expected http header end");
+    write!(out, "{}", &http[header_end+4..])
+        .unwrap();
 }
 
 #[derive(StructOpt)]
