@@ -5,6 +5,8 @@ use super::Payload;
 use super::{Error, Result};
 
 pub use super::EthernetProtocol as Protocol;
+pub use super::EthernetAddress as Address;
+pub use super::Ipv4Address as IpAddress;
 
 enum_with_unknown! {
     /// ARP hardware type.
@@ -154,23 +156,23 @@ impl arp {
     }
 
     /// Return the source hardware address field.
-    pub fn source_hardware_addr(&self) -> &[u8] {
-        &self.0[field::SHA(self.hardware_len(), self.protocol_len())]
+    pub fn source_hardware_addr(&self) -> Address {
+        Address::from_bytes(&self.0[field::SHA(self.hardware_len(), self.protocol_len())])
     }
 
     /// Return the source protocol address field.
-    pub fn source_protocol_addr(&self) -> &[u8] {
-        &self.0[field::SPA(self.hardware_len(), self.protocol_len())]
+    pub fn source_protocol_addr(&self) -> IpAddress {
+        IpAddress::from_bytes(&self.0[field::SPA(self.hardware_len(), self.protocol_len())])
     }
 
     /// Return the target hardware address field.
-    pub fn target_hardware_addr(&self) -> &[u8] {
-        &self.0[field::THA(self.hardware_len(), self.protocol_len())]
+    pub fn target_hardware_addr(&self) -> Address {
+        Address::from_bytes(&self.0[field::THA(self.hardware_len(), self.protocol_len())])
     }
 
     /// Return the target protocol address field.
-    pub fn target_protocol_addr(&self) -> &[u8] {
-        &self.0[field::TPA(self.hardware_len(), self.protocol_len())]
+    pub fn target_protocol_addr(&self) -> IpAddress {
+        IpAddress::from_bytes(&self.0[field::TPA(self.hardware_len(), self.protocol_len())])
     }
 
     /// Set the hardware type field.
@@ -339,14 +341,10 @@ impl Repr {
             (Hardware::Ethernet, Protocol::Ipv4, 6, 4, Operation::Request) => {
                 Ok(Repr::EthernetIpv4 {
                     operation: packet.operation(),
-                    source_hardware_addr: EthernetAddress::from_bytes(
-                        packet.source_hardware_addr(),
-                    ),
-                    source_protocol_addr: Ipv4Address::from_bytes(packet.source_protocol_addr()),
-                    target_hardware_addr: EthernetAddress::from_bytes(
-                        packet.target_hardware_addr(),
-                    ),
-                    target_protocol_addr: Ipv4Address::from_bytes(packet.target_protocol_addr()),
+                    source_hardware_addr: packet.source_hardware_addr(),
+                    source_protocol_addr: packet.source_protocol_addr(),
+                    target_hardware_addr: packet.target_hardware_addr(),
+                    target_protocol_addr: packet.target_protocol_addr(),
                 })
             },
             _ => Err(Error::Unrecognized),
@@ -480,14 +478,14 @@ mod test {
         assert_eq!(packet.operation(), Operation::Request);
         assert_eq!(
             packet.source_hardware_addr(),
-            &[0x11, 0x12, 0x13, 0x14, 0x15, 0x16]
+            EthernetAddress::from_bytes(&[0x11, 0x12, 0x13, 0x14, 0x15, 0x16])
         );
-        assert_eq!(packet.source_protocol_addr(), &[0x21, 0x22, 0x23, 0x24]);
+        assert_eq!(packet.source_protocol_addr(),  Ipv4Address::from_bytes(&[0x21, 0x22, 0x23, 0x24]));
         assert_eq!(
             packet.target_hardware_addr(),
-            &[0x31, 0x32, 0x33, 0x34, 0x35, 0x36]
+            EthernetAddress::from_bytes(&[0x31, 0x32, 0x33, 0x34, 0x35, 0x36])
         );
-        assert_eq!(packet.target_protocol_addr(), &[0x41, 0x42, 0x43, 0x44]);
+        assert_eq!(packet.target_protocol_addr(),  Ipv4Address::from_bytes(&[0x41, 0x42, 0x43, 0x44]));
     }
 
     #[test]

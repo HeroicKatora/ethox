@@ -2,7 +2,7 @@ use super::*;
 use crate::managed::Slice;
 use crate::nic::{external::External, Device};
 use crate::layer::{eth, ip, arp};
-use crate::wire::{EthernetAddress, Ipv4Address, IpCidr, Payload, PayloadMut, ethernet_frame, arp_packet};
+use crate::wire::{EthernetAddress, Ipv4Address, IpCidr, PayloadMut, ethernet_frame, arp_packet, EthernetProtocol, ArpOperation};
 
 const MAC_ADDR_HOST: EthernetAddress = EthernetAddress([0, 1, 2, 3, 4, 5]);
 const IP_ADDR_HOST: Ipv4Address = Ipv4Address::new(127, 0, 0, 1);
@@ -51,16 +51,16 @@ fn simple_arp() {
 
     let buffer = nic.get_mut(0).unwrap();
     let eth = ethernet_frame::new_unchecked_mut(buffer);
-    assert_eq!(&eth.as_bytes()[..6], MAC_ADDR_OTHER.as_bytes());
-    assert_eq!(&eth.as_bytes()[6..12], MAC_ADDR_HOST.as_bytes());
-    assert_eq!(&eth.as_bytes()[12..14], &[0x08, 0x06]);
+    assert_eq!(eth.dst_addr(), MAC_ADDR_OTHER);
+    assert_eq!(eth.src_addr(), MAC_ADDR_HOST);
+    assert_eq!(eth.ethertype(), EthernetProtocol::Arp);
 
     let arp = arp_packet::new_unchecked_mut(eth.payload_mut_slice());
-    assert_eq!(&arp.as_bytes()[6..8], &[0x00, 0x02]);
-    assert_eq!(&arp.as_bytes()[8..14], MAC_ADDR_HOST.as_bytes());
-    assert_eq!(&arp.as_bytes()[14..18], IP_ADDR_HOST.as_bytes());
-    assert_eq!(&arp.as_bytes()[18..24], MAC_ADDR_OTHER.as_bytes());
-    assert_eq!(&arp.as_bytes()[24..28], IP_ADDR_OTHER.as_bytes());
+    assert_eq!(arp.operation(), ArpOperation::Reply);
+    assert_eq!(arp.source_hardware_addr(), MAC_ADDR_HOST);
+    assert_eq!(arp.source_protocol_addr(), IP_ADDR_HOST);
+    assert_eq!(arp.target_hardware_addr(), MAC_ADDR_OTHER);
+    assert_eq!(arp.target_protocol_addr(), IP_ADDR_OTHER);
 }
 
 impl<P: PayloadMut> arp::Send<P> for SimpleSend {
