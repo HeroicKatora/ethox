@@ -37,11 +37,11 @@ fn main() {
         tcp::IsnGenerator::from_std_hash(),
     );
 
-    let message = "GET / HTTP/1.0\r\n\r\n".to_owned();
+    let message = "GET / HTTP/1.0\r\n\r\n";
     let mut tcp_client = tcp::Client::new(
         Ipv4Address::from(server).into(), server_port,
         tcp::io::RecvInto::new(vec![0; 1 << 20]),
-        tcp::io::SendOnce::new(message));
+        tcp::io::SendFrom::once(message.as_bytes()));
 
     let mut interface = RawSocket::new(&name, vec![0; 1 << 14])
         .expect(&format!("Couldn't initialize interface {}", name));
