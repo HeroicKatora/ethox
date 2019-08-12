@@ -3,6 +3,7 @@ import difflib
 
 from mininet.topo import Topo
 from mininet.net import Mininet
+from mininet.node import OVSController
 from mininet.util import dumpNodeConnections
 from mininet.log import setLogLevel
 
@@ -16,7 +17,7 @@ class HostToEthoxTopo(Topo):
 def simpleTest():
     "Create and test a simple network"
     topo = HostToEthoxTopo()
-    net = Mininet(topo)
+    net = Mininet(topo, controller = OVSController)
     net.start()
     print "Dumping host connections"
     dumpNodeConnections(net.hosts)
@@ -42,6 +43,7 @@ def simpleTest():
         ethox.IP(), ethox.MAC(), host.IP(), host.MAC(), host.IP(), 8000)
     # The connection lingers in tcp TimeWait for 6 more seconds (2 full default rtts)
     answer = ethox.cmd('timeout 8s ' + ethox_tcp)
+    print answer
     print '\n'.join(filter(
         lambda l: not l.startswith('  '),
         difflib.ndiff(expected, answer)))
