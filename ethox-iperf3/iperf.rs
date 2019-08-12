@@ -11,6 +11,7 @@
 //! state change message on the control channel. The server the invokes the exchange of results and
 //! the client acknowledges when it has displayed them and terminates the connection.
 use core::fmt;
+use core::convert::TryFrom;
 
 use ethox::layer::{ip, tcp, udp};
 use ethox::managed::{List, Map, SlotMap};
@@ -59,12 +60,15 @@ enum State {
 
 /// The CreateStream handshake handler.
 struct Handshake {
+    shaken: bool,
 }
 
 struct IperfSend {
+    from: tcp::io::SendFrom<Vec<u8>>,
 }
 
 struct IperfRecv {
+    into: tcp::io::RecvInto<Vec<u8>>,
 }
 
 impl Iperf3 {
@@ -73,7 +77,7 @@ impl Iperf3 {
         Iperf3 {
             config: config.clone(),
             state: State::None,
-            stream_handshake: Handshake { },
+            stream_handshake: Handshake { shaken: false, },
             udp: Self::generate_udp(config),
             tcp: Self::generate_tcp(config),
             control: Self::generate_control(config),
@@ -106,13 +110,67 @@ impl Iperf3 {
 
 impl IperfRecv {
     pub fn new() -> Self {
-        unimplemented!()
+        IperfRecv {
+            into: tcp::io::RecvInto::new(vec![0; 1 << 12]),
+        }
+    }
+
+    pub fn recv_state(&mut self) -> Option<State> {
+        let s = self.into.received().get(0).copied()?;
+        let state = State::try_from(s as i8)?;
+        self.bump(1);
+        Some(state)
+    }
+
+    /// Get a received json representation.
+    pub fn get_json(&self) -> Option<&[u8]> {
+        let recv = self.into.received();
+        let len = self.get_json_len()?;
+        let len = usize::try_from(len)
+            .ok().expect("32-bit+ platforms only");
+        recv.get(4..len+4)
+    }
+
+    pub fn get_json_len(&self) -> Option<u32> {
+        let recv = self.into.received();
+        let raw_len = recv.get(..4)?;
+        let raw_len = <[u8; 4]>::try_from(raw_len)
+            .unwrap();
+        Some(u32::from_be_bytes(raw_len))
+    }
+
+    pub fn bump_json(&mut self) -> Option<()> {
+        let len = self.get_json_len()? + 4;
+        self.bump(len);
+        Some(())
+    }
+
+    fn bump(&mut self, num: u32) {
+        assert_eq!(num as usize as u32, num);
+        self.into.bump_to(num as usize);
     }
 }
 
 impl IperfSend {
     pub fn new() -> Self {
-        unimplemented!()
+        IperfSend {
+            from: tcp::io::SendFrom::new(vec![0; 1 << 12]),
+        }
+    }
+
+    /// Queue a state transition to send.
+    pub fn send_state(&mut self, state: State) {
+        self.from.get_mut().push(state as i8 as u8);
+    }
+
+    /// Queue json formatted data for sending.
+    ///
+    /// ## Panics
+    /// This method panics if the data is longer than `u32::MAX`.
+    pub fn send_json(&mut self, data: &[u8]) {
+        let len = u32::try_from(data.len())
+            .expect("json data too long");
+        self.from.get_mut().extend_from_slice(&len.to_be_bytes());
     }
 }
 
@@ -137,40 +195,69 @@ impl<P: PayloadMut> ip::Send<P> for &'_ mut Iperf3 {
 
 impl<P: PayloadMut> udp::Recv<P> for &'_ mut Handshake {
     fn receive(&mut self, packet: udp::Packet<P>) {
-        unimplemented!()
+        if packet.packet.repr().dst_port == 0 {
+            self.shaken = true;
+        }
     }
 }
 
 impl tcp::SendBuf for IperfSend {
     fn available(&self) -> tcp::AvailableBytes {
-        unimplemented!()
+        self.from.available()
     }
 
     fn fill(&mut self, buf: &mut [u8], begin: TcpSeqNumber) {
-        unimplemented!()
+        self.from.fill(buf, begin)
     }
 
     fn ack(&mut self, begin: TcpSeqNumber) {
-        unimplemented!()
+        self.from.ack(begin)
     }
 }
 
 impl tcp::RecvBuf for IperfRecv {
     fn receive(&mut self, buf: &[u8], segment: tcp::ReceivedSegment) {
-        unimplemented!()
+        self.into.receive(buf, segment)
     }
 
     fn ack(&mut self) -> TcpSeqNumber {
-        unimplemented!()
+        self.into.ack()
     }
 
     fn window(&self) -> usize {
-        unimplemented!()
+        self.into.window()
     }
 }
 
 impl fmt::Display for Result {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         unimplemented!()
+    }
+}
+
+impl State {
+    fn try_from(s: i8) -> Option<Self> {
+        Some(match s {
+            0 => State::None,
+            1 => State::TestStart,
+            2 => State::TestRunning,
+            3 => State::ResultRequest,
+            4 => State::TestEnd,
+            5 => State::StreamBegin,
+            6 => State::StreamRunning,
+            7 => State::StreamEnd,
+            8 => State::AllStreamsEnd,
+            9 => State::ParamExchange,
+            10 => State::CreateStreams,
+            11 => State::ServerTerminate,
+            12 => State::ClientTerminate,
+            13 => State::ExchangeResults,
+            14 => State::DisplayResults,
+            15 => State::IperfStart,
+            16 => State::IperfDone,
+            -1 => State::AccessDenied,
+            -2 => State::ServerError,
+            _ => return None,
+        })
     }
 }
