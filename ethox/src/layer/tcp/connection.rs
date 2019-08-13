@@ -448,7 +448,7 @@ impl Connection {
         self.send.unacked = self.send.initial_seq;
         self.send.next = self.send.initial_seq + 1;
 
-        Some(self.send_open(entry.four_tuple()))
+        Some(self.send_open(false, entry.four_tuple()))
     }
 
     /// Answers packets on closed sockets with resets.
@@ -622,17 +622,7 @@ impl Connection {
             self.change_state(State::SynReceived);
 
             let mut signals = Signals::default();
-            signals.answer = Some(InnerRepr {
-                flags: TcpFlags::SYN,
-                seq_number: self.send.initial_seq,
-                ack_number: Some(self.ack_all()),
-                window_len: self.recv.window,
-                window_scale: Some(self.send.window_scale),
-                max_seg_size: None,
-                sack_permitted: false,
-                sack_ranges: [None; 3],
-                payload_len: 0,
-            }.send_to(entry.four_tuple()));
+            signals.answer = Some(self.send_open(true, entry.four_tuple()));
             return signals;
         }
 
@@ -801,11 +791,15 @@ impl Connection {
         }.send_to(remote)
     }
 
-    fn send_open(&mut self, to: FourTuple) -> TcpRepr {
+    /// Send a SYN.
+    ///
+    /// If `ack` is true then it also acknowledges received segments (i.e. this is a passive open).
+    fn send_open(&mut self, ack: bool, to: FourTuple) -> TcpRepr {
+        let ack_number = if ack { Some(self.ack_all()) } else { None };
         InnerRepr {
             flags: TcpFlags::SYN,
             seq_number: self.send.initial_seq,
-            ack_number: None,
+            ack_number,
             window_len: 0,
             window_scale: Some(self.send.window_scale),
             max_seg_size: None,
@@ -842,7 +836,11 @@ impl Connection {
                     .unwrap_or_else(OutSignals::none)
             },
             State::TimeWait => self.ensure_time_wait(time, entry),
-            State::SynSent | State::SynReceived => unimplemented!("need to retransmit SYN on timeout"),
+            State::SynSent | State::SynReceived => {
+                self.select_syn_retransmit(time, entry)
+                    .map(OutSignals::segment)
+                    .unwrap_or_else(OutSignals::none)
+            },
             State::Listen => OutSignals::none(),
         }
     }
@@ -922,6 +920,26 @@ impl Connection {
         }
 
         None
+    }
+
+    fn select_syn_retransmit(&mut self, time: Instant, entry: EntryKey)
+        -> Option<Segment>
+    {
+        if self.retransmission_timer < time {
+            return None;
+        }
+
+        let ack = match self.current {
+            State::SynReceived => true,
+            State::SynSent => false,
+            _ => unreachable!(),
+        };
+
+        self.retransmission_timer = time + self.retransmission_timeout;
+        Some(Segment {
+            repr: self.send_open(ack, entry.four_tuple()),
+            range: 0..0,
+        })
     }
 
     fn fast_retransmit(&mut self, _time: Instant, entry: EntryKey)
