@@ -1264,3 +1264,47 @@ impl InnerRepr {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::layer::tcp::endpoint::{EntryKey, FourTuple, PortMap};
+    use crate::layer::tcp::IsnGenerator;
+    use crate::time::Instant;
+    use crate::wire::IpAddress;
+    use super::{AvailableBytes, Connection};
+
+    struct NoRemap;
+
+    impl PortMap for NoRemap {
+        fn remap(&mut self, _: FourTuple, _: FourTuple) {
+            panic!("Should not get remapped");
+        }
+    }
+
+    fn simple_connection() -> Connection {
+        Connection::zeroed()
+    }
+
+    #[test]
+    fn resent_syn() {
+        let mut connection = simple_connection();
+        let isn = IsnGenerator::from_key(0, 0);
+        let mut no_remap = NoRemap;
+        let mut four = FourTuple {
+            local: IpAddress::v4(192, 0, 10, 1),
+            remote: IpAddress::v4(192, 0, 10, 2),
+            local_port: 80,
+            remote_port: 80,
+        };
+
+        let time_start = Instant::from_secs(0);
+        let time_resend = Instant::from_secs(3);
+
+        let entry = EntryKey::fake(&mut no_remap, &isn, &mut four);
+        assert!(connection.open(time_start, entry).is_some());
+
+        let entry = EntryKey::fake(&mut no_remap, &isn, &mut four);
+        let available = AvailableBytes { fin: false, total: 0 };
+        let resent = connection.next_send_segment(available, time_resend, entry);
+    }
+}

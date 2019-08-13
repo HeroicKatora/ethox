@@ -119,7 +119,7 @@ pub struct EntryKey<'a> {
 /// Provides remapping a `SlotKey` under a different four tuple.
 ///
 /// Erases the lifetime from the underlying `Map` itself.
-trait PortMap {
+pub(crate) trait PortMap {
     /// Note: does not permit failure so we must never expose it.
     fn remap(&mut self, old: FourTuple, new: FourTuple);
 }
@@ -348,6 +348,17 @@ impl EntryKey<'_> {
     pub fn set_four_tuple(&mut self, new: FourTuple) {
         self.ports.remap(*self.key_in_slot, new);
         *self.key_in_slot = new;
+    }
+}
+
+#[cfg(test)]
+impl<'a> EntryKey<'a> {
+    pub(crate) fn fake(
+        ports: &'a mut PortMap,
+        isn: &'a IsnGenerator,
+        key_in_slot: &'a mut FourTuple,
+    ) -> EntryKey<'a> {
+        EntryKey { ports, isn, key_in_slot, }
     }
 }
 
