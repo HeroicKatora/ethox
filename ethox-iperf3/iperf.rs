@@ -15,11 +15,12 @@ use core::convert::TryFrom;
 
 use ethox::layer::{ip, tcp, udp};
 use ethox::managed::{List, Map, SlotMap};
+use ethox::time::Instant;
 use ethox::wire::{IpProtocol, PayloadMut, TcpSeqNumber};
 use super::config::Iperf3Config;
 
 pub struct Iperf3 {
-    config: Iperf3Config,
+    config: Config,
     state: State,
     stream_handshake: Handshake,
     udp: udp::Endpoint<'static>,
@@ -58,6 +59,15 @@ enum State {
     ServerError = (-2),
 }
 
+/// Private configuration representation.
+struct Config {
+    /// The size of each udp packet except the last, which may be smaller.
+    block_size: usize,
+
+    /// Number of unsent bytes.
+    remaining: usize,
+}
+
 /// The CreateStream handshake handler.
 struct Handshake {
     shaken: bool,
@@ -75,7 +85,7 @@ impl Iperf3 {
     /// Create a new iperf3 client.
     pub fn new(config: &Iperf3Config) -> Self {
         Iperf3 {
-            config: config.clone(),
+            config: Config::new(config),
             state: State::None,
             stream_handshake: Handshake { shaken: false, },
             udp: Self::generate_udp(config),
@@ -90,7 +100,59 @@ impl Iperf3 {
         self.result.clone()
     }
 
+    // Keep in mind: \ at line end deletes the leading whitespace of the next line.
+    // This makes the json quite beautiful as long as we not forget to \ at east line end.
+
+    const UDP_PARAM: &'static str = "{\
+        \"udp\":true,\
+        \"omit\":0,\
+        \"time\":0,\
+        \"num\":512000,\
+        \"parallel\":1,\
+        \"len\":32768,\
+        \"bandwidth\":1048576,\
+        \"pacing_timer\":1000,\
+        \"client_version\":\"3.7\"\
+    }";
+    const DEFAULT_REPORT: &'static str = "{\
+        \"cpu_util_total\":1.204690149406533,\
+        \"cpu_util_user\":0.28167023919975259,\
+        \"cpu_util_system\":0.92301991020678031,\
+        \"sender_has_retransmits\":0,\
+        \"streams\":[\
+            {\
+                \"id\":1,\
+                \"bytes\":524288,\
+                \"retransmits\":-1,\
+                \"jitter\":0,\
+                \"errors\":0,\
+                \"packets\":16,\
+                \"start_time\":0,\
+                \"end_time\":3.750127\
+            }\
+        ]\
+    }";
+    const SERVER_REPORT: &'static str = "{\
+        \"cpu_util_total\":0.020832187832532142,\
+        \"cpu_util_user\":0,\
+        \"cpu_util_system\":0.020832187832532142,\
+        \"sender_has_retransmits\":-1,\
+        \"streams\":[\
+            {\
+                \"id\":1,\
+                \"bytes\":524288,\
+                \"retransmits\":-1,\
+                \"jitter\":1.3123676140911693e-05,\
+                \"errors\":0,\
+                \"packets\":16,\
+                \"start_time\":0,\
+                \"end_time\":3.750182\
+            }\
+        ]\
+    }";
+
     fn generate_udp(config: &Iperf3Config) -> udp::Endpoint<'static> {
+        // We only need a single connection entry.
         udp::Endpoint::new(vec![Default::default()])
     }
 
@@ -103,8 +165,34 @@ impl Iperf3 {
     }
 
     fn generate_control(config: &Iperf3Config) -> tcp::Client<IperfRecv, IperfSend> {
-        let Iperf3Config::Client { host, port, bytes: _, } = config;
+        let Iperf3Config::Client { host, port, .. } = config;
         tcp::Client::new((*host).into(), *port, IperfRecv::new(), IperfSend::new())
+    }
+
+    /// Fill the necessary part of the packet.
+    fn fill(&mut self, packet: &mut [u8], time: Instant, count: u32) {
+        let secs = time.secs() as u32;
+        let millis = time.millis() as u32;
+        assert!(packet.len() >= 12);
+        packet[0..4].copy_from_slice(&secs.to_be_bytes());
+        packet[4..8].copy_from_slice(&millis.to_be_bytes());
+        packet[8..12].copy_from_slice(&count.to_be_bytes());
+    }
+}
+
+impl Config {
+    pub fn new(from: &Iperf3Config) -> Self {
+        let Iperf3Config::Client {
+            bytes,
+            length,
+            ..
+        } = *from;
+        assert!(length >= 12, "Udp block size too small, must be at least 12");
+        // TODO: for tcp length is something entirely different.
+        Config {
+            block_size: length,
+            remaining: bytes,
+        }
     }
 }
 

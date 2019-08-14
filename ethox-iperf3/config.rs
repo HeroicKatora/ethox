@@ -12,6 +12,8 @@ pub enum Iperf3Config {
 
         #[structopt(short = "n")]
         bytes: usize,
+        #[structopt(short = "l")]
+        length: usize,
     },
 }
 
