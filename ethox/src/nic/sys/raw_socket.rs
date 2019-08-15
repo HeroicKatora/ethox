@@ -4,7 +4,7 @@
 // in large parts from `smoltcp` originally distributed under 0-clause BSD
 use std::{mem, io};
 use std::os::unix::io::{RawFd, AsRawFd};
-use std::time::Instant;
+use std::time::SystemTime;
 
 use libc;
 use super::{ifreq, linux, test_result, FdResult, IoLenResult};
@@ -34,6 +34,7 @@ pub struct RawSocket<C> {
     inner: RawSocketDesc,
     buffer: Partial<C>,
     last_err: Option<io::Error>,
+    capabilities: Capabilities,
 }
 
 enum Received {
@@ -130,7 +131,20 @@ impl<C: PayloadMut> RawSocket<C> {
             inner,
             buffer: Partial::new(buffer),
             last_err: None,
+            capabilities: Capabilities::no_support(),
         })
+    }
+
+    /// Get the currently configured capabilities.
+    pub fn capabilities(&self) -> Capabilities {
+        self.capabilities
+    }
+
+    /// Get a mutable reference to the capability configuration.
+    ///
+    /// Allows disabling of checksum tests.
+    pub fn capabilities_mut(&mut self) -> &mut Capabilities {
+        &mut self.capabilities
     }
 
     /// Take the last io error returned by the OS.
@@ -176,10 +190,10 @@ impl<C: PayloadMut> RawSocket<C> {
         as_nic
     }
 
-    fn current_info() -> PacketInfo {
+    fn current_info(&self) -> PacketInfo {
         PacketInfo {
-            timestamp: Instant::now().into(),
-            capabilities: Capabilities::no_support(),
+            timestamp: SystemTime::now().into(),
+            capabilities: self.capabilities,
         }
     }
 }
@@ -205,7 +219,7 @@ impl<C: PayloadMut> Device for RawSocket<C> {
     fn tx(&mut self, _: usize, mut sender: impl nic::Send<Self::Handle, Self::Payload>)
         -> nic::Result<usize>
     {
-        let mut handle = EnqueueFlag::set_true(Self::current_info());
+        let mut handle = EnqueueFlag::set_true(self.current_info());
         self.recycle();
         sender.send(Packet {
             handle: &mut handle,
@@ -228,11 +242,15 @@ impl<C: PayloadMut> Device for RawSocket<C> {
             Received::NoData => return Ok(0),
         }
 
-        let mut handle = EnqueueFlag::not_possible(Self::current_info());
+        let mut handle = EnqueueFlag::set_true(self.current_info());
         receptor.receive(Packet {
             handle: &mut handle,
             payload: &mut self.buffer,
         });
+
+        if handle.was_sent() {
+            self.send()?;
+        }
 
         Ok(1)
     }

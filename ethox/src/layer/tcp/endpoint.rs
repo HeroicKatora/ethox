@@ -11,7 +11,7 @@
 //!     OS comparison in particular
 use crate::layer::ip;
 use crate::managed::{Map, SlotMap, slotmap::Key};
-use crate::wire::{IpAddress, TcpChecksum, TcpPacket, TcpSeqNumber};
+use crate::wire::{IpAddress, TcpPacket, TcpSeqNumber};
 use crate::wire::PayloadMut;
 use crate::time::{Duration, Expiration, Instant};
 
@@ -119,7 +119,7 @@ pub struct EntryKey<'a> {
 /// Provides remapping a `SlotKey` under a different four tuple.
 ///
 /// Erases the lifetime from the underlying `Map` itself.
-trait PortMap {
+pub(crate) trait PortMap {
     /// Note: does not permit failure so we must never expose it.
     fn remap(&mut self, old: FourTuple, new: FourTuple);
 }
@@ -351,6 +351,17 @@ impl EntryKey<'_> {
     }
 }
 
+#[cfg(test)]
+impl<'a> EntryKey<'a> {
+    pub(crate) fn fake(
+        ports: &'a mut PortMap,
+        isn: &'a IsnGenerator,
+        key_in_slot: &'a mut FourTuple,
+    ) -> EntryKey<'a> {
+        EntryKey { ports, isn, key_in_slot, }
+    }
+}
+
 impl Default for Slot {
     fn default() -> Self {
        Slot {
@@ -432,12 +443,10 @@ where
 {
     fn receive(&mut self, ip_packet: ip::InPacket<P>) {
         let ip::InPacket { mut handle, packet } = ip_packet;
-        let repr = packet.repr();
 
-        let checksum = TcpChecksum::Manual {
-            src_addr: repr.src_addr(),
-            dst_addr: repr.dst_addr(),
-        };
+        let repr = packet.repr();
+        let capabilities = handle.info().capabilities();
+        let checksum = capabilities.tcp().rx_checksum(repr);
 
         let packet = match TcpPacket::new_checked(packet, checksum) {
             Ok(packet) => packet,

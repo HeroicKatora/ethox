@@ -448,7 +448,7 @@ impl Connection {
         self.send.unacked = self.send.initial_seq;
         self.send.next = self.send.initial_seq + 1;
 
-        Some(self.send_open(entry.four_tuple()))
+        Some(self.send_open(false, entry.four_tuple()))
     }
 
     /// Answers packets on closed sockets with resets.
@@ -563,7 +563,7 @@ impl Connection {
     fn arrives_syn_sent(&mut self, incoming: &InPacket, entry: EntryKey)
         -> Signals
     {
-        let InPacket { segment, from, time, } = incoming;
+        let InPacket { segment, from: _, time, } = incoming;
 
         if let Some(ack) = segment.ack_number {
             if ack <= self.send.initial_seq || ack > self.send.next {
@@ -594,7 +594,7 @@ impl Connection {
                 return Signals::default();
             }
 
-            return self.forced_close_by_reset();
+            return self.remote_reset_connection();
         }
 
         if !segment.flags.syn() {
@@ -622,17 +622,7 @@ impl Connection {
             self.change_state(State::SynReceived);
 
             let mut signals = Signals::default();
-            signals.answer = Some(InnerRepr {
-                flags: TcpFlags::SYN,
-                seq_number: self.send.initial_seq,
-                ack_number: Some(self.ack_all()),
-                window_len: self.recv.window,
-                window_scale: Some(self.send.window_scale),
-                max_seg_size: None,
-                sack_permitted: false,
-                sack_ranges: [None; 3],
-                payload_len: 0,
-            }.send_to(entry.four_tuple()));
+            signals.answer = Some(self.send_open(true, entry.four_tuple()));
             return signals;
         }
 
@@ -645,36 +635,24 @@ impl Connection {
 
     fn arrives_established(&mut self, incoming: &InPacket, entry: EntryKey) -> Signals {
         // TODO: time for RTT estimation, ...
-        let InPacket { segment, from, time, } = incoming;
+        let InPacket { segment, from: _, time, } = incoming;
 
         let acceptable = self.ingress_acceptable(segment);
 
         if !acceptable {
             if segment.flags.rst() {
-                return self.forced_close_by_reset();
+                return self.remote_reset_connection();
             }
 
             // TODO: find out why this triggers in a nice tcp connection (python -m http.server)
-            let mut signals = Signals::default();
-            signals.answer = Some(InnerRepr {
-                flags: TcpFlags::default(),
-                seq_number: self.send.next,
-                ack_number: Some(self.recv.next),
-                window_len: 0,
-                window_scale: None,
-                max_seg_size: None,
-                sack_permitted: false,
-                sack_ranges: [None; 3],
-                payload_len: 0,
-            }.send_to(entry.four_tuple()));
-            return signals;
+            return self.signal_ack_all(entry.four_tuple());
         }
 
         if segment.flags.syn() {
             debug_assert!(self.recv.in_window(segment.seq_number));
 
             // This is not acceptable, reset the connection.
-            return self.force_close(segment, entry);
+            return self.signal_reset_connection(segment, entry);
         }
 
         let ack = match segment.ack_number {
@@ -687,27 +665,23 @@ impl Connection {
             AckUpdate::Unsent => {
                 // That acked something we hadn't sent yet. A madlad at the other end.
                 // Ignore the packet but we ack back the previous state.
-                let mut signals = Signals::default();
-                signals.answer = Some(InnerRepr {
-                    flags: TcpFlags::default(),
-                    seq_number: self.send.next,
-                    ack_number: Some(self.recv.next),
-                    window_len: 0,
-                    window_scale: None,
-                    max_seg_size: None,
-                    sack_permitted: false,
-                    sack_ranges: [None; 3],
-                    payload_len: 0,
-                }.send_to(entry.four_tuple()));
-
-                return signals;
+                return self.signal_ack_all(entry.four_tuple());
             },
             AckUpdate::Duplicate => {
                 self.duplicate_ack = self.duplicate_ack.saturating_add(1);
+                /*
+                self.flow_control.ssthresh = unimplemented!();
+                self.flow_control.congestion_window = unimplemented!();
+                */
             },
             // This is a reordered packet, potentially an attack. Do nothing.
             AckUpdate::TooLow => (),
             AckUpdate::Updated { new_bytes } => {
+                // No longer in fast retransmit.
+                if self.duplicate_ack > 0 {
+                    self.flow_control.congestion_window = self.flow_control.ssthresh;
+                    self.duplicate_ack = 0;
+                }
                 self.send.window = segment.window_len;
                 self.window_update(segment, new_bytes);
             },
@@ -722,6 +696,11 @@ impl Connection {
             begin: segment.seq_number,
             timestamp: *time,
         };
+
+        if segment_ack.data_len == 0 {
+            self.set_recv_ack(segment_ack);
+            return Signals::default();
+        }
 
         // Actually accept the segment data. Note that we do not control the receive buffer
         // ourselves but rather only know the precise buffer lengths at this point. Also, the
@@ -751,7 +730,7 @@ impl Connection {
     /// Close from an incoming reset.
     ///
     /// This shared logic is used by some states on receiving a packet with RST set.
-    fn forced_close_by_reset(&mut self) -> Signals {
+    fn remote_reset_connection(&mut self) -> Signals {
         self.change_state(State::Closed);
 
         let mut signals = Signals::default();
@@ -762,8 +741,8 @@ impl Connection {
 
     /// Close due to invalid incoming packet.
     ///
-    /// As opposed to `forced_close_by_reset` this one is proactive and we send the RST.
-    fn force_close(&mut self, segment: &TcpRepr, entry: EntryKey) -> Signals {
+    /// As opposed to `remote_reset_connection` this one is proactive and we send the RST.
+    fn signal_reset_connection(&mut self, _segment: &TcpRepr, entry: EntryKey) -> Signals {
         self.change_state(State::Closed);
 
         let mut signals = Signals::default();
@@ -783,18 +762,50 @@ impl Connection {
         signals
     }
 
-    fn send_open(&mut self, to: FourTuple) -> TcpRepr {
+    /// Explicitely send an ack for all data, now.
+    fn signal_ack_all(&mut self, remote: FourTuple) -> Signals {
+        let mut signals = Signals::default();
+        signals.answer = Some(self.repr_ack_all(remote));
+        return signals;
+    }
+
+    /// Construct a segment acking all data but nothing else.
+    fn segment_ack_all(&mut self, remote: FourTuple) -> Segment {
+        Segment {
+            repr: self.repr_ack_all(remote),
+            range: 0..0,
+        }
+    }
+
+    fn repr_ack_all(&mut self, remote: FourTuple) -> TcpRepr {
+        InnerRepr {
+            flags: TcpFlags::default(),
+            seq_number: self.send.next,
+            ack_number: Some(self.ack_all()),
+            window_len: self.recv.window,
+            window_scale: None,
+            max_seg_size: None,
+            sack_permitted: false,
+            sack_ranges: [None; 3],
+            payload_len: 0,
+        }.send_to(remote)
+    }
+
+    /// Send a SYN.
+    ///
+    /// If `ack` is true then it also acknowledges received segments (i.e. this is a passive open).
+    fn send_open(&mut self, ack: bool, to: FourTuple) -> TcpRepr {
+        let ack_number = if ack { Some(self.ack_all()) } else { None };
         InnerRepr {
             flags: TcpFlags::SYN,
             seq_number: self.send.initial_seq,
-            ack_number: None,
+            ack_number,
             window_len: 0,
             window_scale: Some(self.send.window_scale),
             max_seg_size: None,
             sack_permitted: false,
             sack_ranges: [None; 3],
             payload_len: 0,
-
         }.send_to(to)
     }
 
@@ -814,6 +825,7 @@ impl Connection {
             // When we have already sent our FIN, never send *new* data.
             State::FinWait | State::Closing | State::LastAck => {
                 available.total = available.total.min(self.send.next - self.send.unacked);
+                // FIXME: ensure fin bit is set for retranmissions of last segment.
                 self.select_send_segment(available, time, entry)
                     .map(OutSignals::segment)
                     .unwrap_or_else(OutSignals::none)
@@ -824,7 +836,11 @@ impl Connection {
                     .unwrap_or_else(OutSignals::none)
             },
             State::TimeWait => self.ensure_time_wait(time, entry),
-            State::SynSent | State::SynReceived => OutSignals::none(), // unimplemented!("need to retransmit SYN on timeout"),
+            State::SynSent | State::SynReceived => {
+                self.select_syn_retransmit(time, entry)
+                    .map(OutSignals::segment)
+                    .unwrap_or_else(OutSignals::none)
+            },
             State::Listen => OutSignals::none(),
         }
     }
@@ -845,11 +861,13 @@ impl Connection {
             // Fast retransmit?
             //
             // this would be a return path but just don't do anything atm.
+            return self.fast_retransmit(time, entry);
         }
 
         if self.retransmission_timer > time {
-            // Choose segments to retransmit:
-            return unimplemented!();
+            // Choose segments to retransmit, in contrast to `fast_retransmit` this may influence
+            // multiple next packets.
+            return self.start_timeout_retransmit(time, entry);
         }
 
         // That's funny. Even if we have sent a FIN, the other side could decrease their window
@@ -881,44 +899,64 @@ impl Connection {
                 }
             }
 
-            let seq_number = self.send.next;
+            let mut repr = self.repr_ack_all(entry.four_tuple());
+
+            repr.payload_len = range.len() as u16;
+            if is_fin {
+                repr.flags = TcpFlags::FIN;
+            }
+
             self.send.next = self.send.next + range.len() + usize::from(is_fin);
 
             return Some(Segment {
-                repr: InnerRepr {
-                    seq_number,
-                    flags: TcpFlags::FIN,
-                    ack_number: Some(self.ack_all()),
-                    window_len: self.recv.window,
-                    window_scale: None,
-                    max_seg_size: None,
-                    sack_permitted: false,
-                    sack_ranges: [None; 3],
-                    payload_len: range.len() as u16,
-                }.send_to(entry.four_tuple()),
+                repr,
                 range,
             });
         }
 
         // There is nothing to send but we may need to ack anyways.
         if self.should_ack() || Expiration::When(time) >= self.ack_timer {
-            return Some(Segment {
-                repr: InnerRepr {
-                    seq_number: self.send.next,
-                    flags: TcpFlags::default(),
-                    ack_number: Some(self.ack_all()),
-                    window_len: self.recv.window,
-                    window_scale: None,
-                    max_seg_size: None,
-                    sack_permitted: false,
-                    sack_ranges: [None; 3],
-                    payload_len: 0,
-                }.send_to(entry.four_tuple()),
-                range: 0..0,
-            });
+            return Some(self.segment_ack_all(entry.four_tuple()));
         }
 
         None
+    }
+
+    fn select_syn_retransmit(&mut self, time: Instant, entry: EntryKey)
+        -> Option<Segment>
+    {
+        if self.retransmission_timer < time {
+            return None;
+        }
+
+        let ack = match self.current {
+            State::SynReceived => true,
+            State::SynSent => false,
+            _ => unreachable!(),
+        };
+
+        self.retransmission_timer = time + self.retransmission_timeout;
+        Some(Segment {
+            repr: self.send_open(ack, entry.four_tuple()),
+            range: 0..0,
+        })
+    }
+
+    fn fast_retransmit(&mut self, _time: Instant, entry: EntryKey)
+        -> Option<Segment>
+    {
+        // See: https://tools.ietf.org/html/rfc5681#section-3.2
+        // Retransmit the first unacknowledged segment.
+        Some(Segment {
+            repr: self.repr_ack_all(entry.four_tuple()),
+            range: unimplemented!(),
+        })
+    }
+
+    fn start_timeout_retransmit(&mut self, _time: Instant, _entry: EntryKey)
+        -> Option<Segment>
+    {
+        unimplemented!()
     }
 
     fn ensure_closed_ack(&mut self, tuple: FourTuple) -> Option<Segment> {
@@ -926,20 +964,7 @@ impl Connection {
             return None;
         }
 
-        Some(Segment {
-            repr: InnerRepr {
-                seq_number: self.send.next,
-                flags: TcpFlags::default(),
-                ack_number: Some(self.ack_all()),
-                window_len: self.recv.window,
-                window_scale: None,
-                max_seg_size: None,
-                sack_permitted: false,
-                sack_ranges: [None; 3],
-                payload_len: 0,
-            }.send_to(tuple),
-            range: 0..0,
-        })
+        Some(self.segment_ack_all(tuple))
     }
 
     fn ensure_time_wait(&mut self, time: Instant, entry: EntryKey) -> OutSignals {
@@ -955,7 +980,7 @@ impl Connection {
         }
     }
 
-    fn window_update(&mut self, segment: &TcpRepr, new_bytes: u32) {
+    fn window_update(&mut self, _segment: &TcpRepr, new_bytes: u32) {
         let flow = &mut self.flow_control;
         if self.duplicate_ack > 0 {
             flow.congestion_window = flow.ssthresh;
@@ -977,14 +1002,18 @@ impl Connection {
         let acked_all = self.send.next == self.send.unacked;
 
         match (self.current, meta.fin, acked_all) {
-            (State::Established, true, _) | (State::SynReceived, true, _) => self.change_state(State::CloseWait),
+            (State::Established, true, _) | (State::SynReceived, true, _) => {
+                self.change_state(State::CloseWait);
+            },
             (State::FinWait, true, true) | (State::Closing, _, true) => {
                 self.change_state(State::TimeWait);
                 // We could have a segment lifetime estimation here, but use the retransmission
                 // timeout instead. Works as well, I guess.
                 self.retransmission_timer = meta.timestamp + 2*self.retransmission_timeout;
             },
-            (State::FinWait, true, false) => self.change_state(State::Closing),
+            (State::FinWait, true, false) => {
+                self.change_state(State::Closing);
+            },
             _ => (),
         }
 
@@ -1022,10 +1051,6 @@ impl Connection {
         self.current = new;
     }
 
-    fn release_retransmit(&mut self, now: Instant) {
-        self.retransmission_timer = now + self.retransmission_timeout;
-    }
-
     /// RFC5681 restart window.
     fn restart_window(&self) -> u32 {
         self.flow_control.congestion_window.min(self.send.window.into())
@@ -1043,7 +1068,7 @@ impl Receive {
             .unwrap_or_else(|_| u32::max_value())
             .min(max);
         let scaled_down = (capped >> self.window_scale)
-            + if capped % (1 << self.window_scale) == 0 { 0 }  else { 1 };
+            + u32::from(capped % (1 << self.window_scale) != 0);
         self.window = u16::try_from(scaled_down).unwrap();
     }
 }
@@ -1237,5 +1262,49 @@ impl InnerRepr {
             sack_ranges: self.sack_ranges,
             payload_len: self.payload_len,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::layer::tcp::endpoint::{EntryKey, FourTuple, PortMap};
+    use crate::layer::tcp::IsnGenerator;
+    use crate::time::Instant;
+    use crate::wire::IpAddress;
+    use super::{AvailableBytes, Connection};
+
+    struct NoRemap;
+
+    impl PortMap for NoRemap {
+        fn remap(&mut self, _: FourTuple, _: FourTuple) {
+            panic!("Should not get remapped");
+        }
+    }
+
+    fn simple_connection() -> Connection {
+        Connection::zeroed()
+    }
+
+    #[test]
+    fn resent_syn() {
+        let mut connection = simple_connection();
+        let isn = IsnGenerator::from_key(0, 0);
+        let mut no_remap = NoRemap;
+        let mut four = FourTuple {
+            local: IpAddress::v4(192, 0, 10, 1),
+            remote: IpAddress::v4(192, 0, 10, 2),
+            local_port: 80,
+            remote_port: 80,
+        };
+
+        let time_start = Instant::from_secs(0);
+        let time_resend = Instant::from_secs(3);
+
+        let entry = EntryKey::fake(&mut no_remap, &isn, &mut four);
+        assert!(connection.open(time_start, entry).is_some());
+
+        let entry = EntryKey::fake(&mut no_remap, &isn, &mut four);
+        let available = AvailableBytes { fin: false, total: 0 };
+        let resent = connection.next_send_segment(available, time_resend, entry);
     }
 }

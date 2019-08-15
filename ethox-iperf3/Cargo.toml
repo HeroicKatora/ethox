@@ -1,0 +1,16 @@
+[package]
+name = "ethox-iperf3"
+description = "Implementation of iperf with ethox"
+publish = false
+version = "0.0.1-wip"
+authors = ["Andreas Molzer <andreas.molzer@gmx.de>"]
+edition = "2018"
+license = "GPL-3.0-only"
+
+[dependencies]
+ethox = { path = "../ethox" }
+structopt = { version = "0.2", default-features = false }
+
+[[bin]]
+name = "iperf3"
+path = "main.rs"
