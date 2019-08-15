@@ -13,7 +13,7 @@ use crate::wire::{EthernetAddress, IpAddress};
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Neighbor {
     protocol_addr: IpAddress,
-    hardware_addr: EthernetAddress,
+    hardware_addr: Mapping,
     expires_at:    Expiration,
 }
 
@@ -29,13 +29,19 @@ pub enum Answer {
     RateLimited
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Mapping {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Mapping {
     /// An address is present.
     Address(EthernetAddress),
 
     /// We don't have a mapping but are looking for one.
     LookingFor,
+}
+
+impl Default for Mapping {
+    fn default() -> Self {
+        Mapping::LookingFor
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +53,9 @@ pub enum Error {
 
     /// All other entries that could be evicted live longer.
     ExpiresTooSoon,
+
+    /// Entry could not be found in the storage
+    EntryNotFound,
 }
 
 /// A neighbor cache backed by a map.
@@ -120,7 +129,18 @@ impl<'a> Cache<'a> {
         Cache { storage, silent_until: Instant::from_millis(0) }
     }
 
-    /// Add an entry.
+    /// Add a lookup entry.
+    ///
+    /// Provide the current timestamp or `None` to disable expiration.
+    pub fn fill_looking(
+        &mut self,
+        protocol_addr: IpAddress,
+        timestamp: Option<Instant>,
+    ) -> Result<(), Error> {
+        self.update_or_insert(protocol_addr, Mapping::LookingFor, timestamp)
+    }
+
+    /// Add an entry containing a MAC address.
     ///
     /// Provide the current timestamp or `None` to disable expiration.
     pub fn fill(
@@ -129,8 +149,22 @@ impl<'a> Cache<'a> {
         hardware_addr: EthernetAddress,
         timestamp: Option<Instant>,
     ) -> Result<(), Error> {
+        self.update_or_insert(protocol_addr, Mapping::Address(hardware_addr), timestamp)
+    }
+
+    /// Add an entry.
+    ///
+    /// Provide the current timestamp or `None` to disable expiration.
+    fn update_or_insert(
+        &mut self,
+        protocol_addr: IpAddress,
+        hardware_addr: Mapping,
+        timestamp: Option<Instant>,
+    ) -> Result<(), Error> {
         debug_assert!(protocol_addr.is_unicast());
-        debug_assert!(hardware_addr.is_unicast());
+        if let Mapping::Address(hw_addr) = hardware_addr {
+            debug_assert!(hw_addr.is_unicast());
+        }
 
         let new_neighbor = Neighbor {
             protocol_addr,
@@ -142,7 +176,7 @@ impl<'a> Cache<'a> {
         let exists = self.storage.ordered_slice()
             .binary_search_by_key(&protocol_addr, |neighbor| neighbor.protocol_addr);
         if let Ok(index) = exists {
-            assert!(self.storage[index].protocol_addr == new_neighbor.protocol_addr);
+            assert_eq!(self.storage[index].protocol_addr, new_neighbor.protocol_addr);
             let _old = self.storage.replace_at(index, new_neighbor)
                 .expect("Sorting didn't change since we only have one entry per protocol addr");
             // Why does this not work with current macros?????????
@@ -215,8 +249,19 @@ impl Table {
         protocol_addr: &IpAddress,
         timestamp: Instant
     ) -> Option<EthernetAddress> {
+        match self.lookup(protocol_addr, timestamp) {
+            Some(Mapping::Address(addr)) => Some(addr),
+            _ => None,
+        }
+    }
+
+    fn lookup(
+        &self,
+        protocol_addr: &IpAddress,
+        timestamp: Instant
+    ) -> Option<Mapping> {
         if protocol_addr.is_broadcast() {
-            return Some(EthernetAddress::BROADCAST)
+            return Some(Mapping::Address(EthernetAddress::BROADCAST))
         }
 
         let existing = self
@@ -228,7 +273,11 @@ impl Table {
             return None;
         }
 
-        Some(entry.hardware_addr)
+        if let Mapping::Address(hardware_addr) = entry.hardware_addr {
+            return Some(Mapping::Address(hardware_addr));
+        }
+
+        None
     }
 }
 

@@ -50,6 +50,7 @@ pub struct Init {
 pub(crate) trait Endpoint{
     fn src_addr(&mut self) -> EthernetAddress;
     fn resolve(&mut self, _: IpAddress, _: Instant) -> Result<EthernetAddress>;
+    fn update(&mut self, _: EthernetAddress, _: IpAddress, _: Instant) -> Result<()>;
 }
 
 impl<'a> Handle<'a> {
