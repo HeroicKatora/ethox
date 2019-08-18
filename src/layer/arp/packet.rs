@@ -73,31 +73,25 @@ impl<'a, P: Payload> In<'a, P> {
 impl<'a, P: PayloadMut> In<'a, P> {
     /// Try to answer an arp request in-place.
     pub fn answer(mut self) -> Result<Out<'a, P>> {
+        let dst_address;
         let answer = match self.packet.repr() {
             ArpRepr::EthernetIpv4 {
-                operation: _,
+                operation: ArpOperation::Request,
                 source_hardware_addr,
                 source_protocol_addr,
                 target_hardware_addr: _,
                 target_protocol_addr,
-            } => ArpRepr::EthernetIpv4 {
-                operation: ArpOperation::Reply,
-                source_hardware_addr: self.handle.inner.src_addr(),
-                source_protocol_addr: target_protocol_addr,
-                target_hardware_addr: source_hardware_addr,
-                target_protocol_addr: source_protocol_addr,
-            },
+            } => {
+                dst_address = source_hardware_addr;
+                ArpRepr::EthernetIpv4 {
+                    operation: ArpOperation::Reply,
+                    source_hardware_addr: self.handle.inner.src_addr(),
+                    source_protocol_addr: target_protocol_addr,
+                    target_hardware_addr: source_hardware_addr,
+                    target_protocol_addr: source_protocol_addr,
+                }
+            }
             _ => return Err(Error::Illegal),
-        };
-
-        let dst_address = match answer {
-            ArpRepr::EthernetIpv4 {
-                operation: _,
-                source_hardware_addr: _,
-                source_protocol_addr: _,
-                target_hardware_addr,
-                target_protocol_addr: _} => target_hardware_addr,
-            _ => unreachable!(),
         };
 
         let eth_frame = self.packet.into_inner();
@@ -105,7 +99,7 @@ impl<'a, P: PayloadMut> In<'a, P> {
             src_addr: self.handle.inner.src_addr(),
             dst_addr: dst_address,
             ethertype: EthernetProtocol::Arp,
-            payload: 28, // FIXME?
+            payload: 28,
         };
 
         let eth_in = eth::InPacket {
@@ -156,7 +150,7 @@ impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
             src_addr: lower.handle.src_addr(),
             dst_addr: EthernetAddress::BROADCAST,
             ethertype: EthernetProtocol::Arp,
-            payload: 28, // FIXME?
+            payload: 28,
         };
 
         let packet = lower.prepare(eth_init)?;

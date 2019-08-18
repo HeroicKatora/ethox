@@ -3,12 +3,11 @@
 //! immediate communication hosts. To make the requests themselves we thus need to be informed
 //! about missing addresses.
 
-use crate::layer::{eth, FnHandler, Result};
+use crate::layer::{eth, Result};
 use crate::wire::{ArpPacket, ArpRepr, ArpOperation, EthernetProtocol, Payload, PayloadMut, IpAddress};
 use crate::layer::ip::{self, IpEndpoint};
 
 use super::packet::{Handle, In, Raw};
-use super::{Recv, Send};
 
 /// An arp traffic handler.
 #[derive(Default)]
@@ -26,13 +25,10 @@ pub struct Receiver<'a, 'e> {
 }
 
 /// An arp endpoint for sending.
-pub struct Sender<'a, 'e, H> {
+pub struct Sender<'a, 'e> {
     endpoint: EndpointRef<'a>,
 
     ip: IpEndpoint<'a, 'e>,
-
-    /// The upper protocol sender.
-    handler: H,
 }
 
 struct EndpointRef<'a> {
@@ -52,16 +48,12 @@ impl Endpoint {
         }
     }
 
-    pub fn send<'a, 'e, H>(&'a mut self, ip: &'a mut ip::Endpoint<'e>, handler: H) -> Sender<'a, 'e, H> {
+    /// A sender that sends outstanding arp queries.
+    pub fn query<'a, 'e>(&'a mut self, ip: &'a mut ip::Endpoint<'e>) -> Sender<'a, 'e> {
         Sender {
             endpoint: self.get_mut(),
             ip: ip.ip(),
-            handler,
         }
-    }
-
-    pub fn send_with<'a, 'e, H>(&'a mut self, ip: &'a mut ip::Endpoint<'e>, handler: H) -> Sender<'a, 'e, FnHandler<H>> {
-        self.send(ip, FnHandler(handler))
     }
 
     /// Get this by mutable reference for a receiver or sender.
@@ -72,25 +64,36 @@ impl Endpoint {
 
 impl EndpointRef<'_> {
     /// Try to answer or otherwise handle the packet without propagating it upwards.
+    ///
+    /// See [RFC826] for details.
+    ///
+    /// [RFC826]: https://tools.ietf.org/html/rfc826
     fn handle_internally<P: PayloadMut>(&mut self, packet: In<P>, ip: &IpEndpoint) -> Result<()> {
-        let (operation, source_hardware_addr, source_protocol_addr, target_hardware_addr, target_protocol_addr) =
+        let (operation, source_hardware_addr, source_protocol_addr, target_protocol_addr) =
             match packet.packet.repr() {
                 ArpRepr::EthernetIpv4 {
                     operation,
                     source_hardware_addr,
                     source_protocol_addr,
-                    target_hardware_addr,
+                    target_hardware_addr: _,
                     target_protocol_addr
                 } => {
-                    (operation, source_hardware_addr, source_protocol_addr, target_hardware_addr, target_protocol_addr)
+                    (operation, source_hardware_addr, source_protocol_addr, target_protocol_addr)
                 },
-                _ => unreachable!(),
+                _ => return Ok(()),
             };
 
-        packet.handle.inner.endpoint.update(source_hardware_addr, IpAddress::Ipv4(source_protocol_addr), packet.handle.info().timestamp())?;
+        // Update the address if it already exists in our tables (may be currently looking it up).
+        packet.handle.inner.endpoint.update(
+            source_hardware_addr,
+            IpAddress::Ipv4(source_protocol_addr),
+            packet.handle.info().timestamp());
 
-        // verify that target protocol address is not a multicast address
-        if ip.inner.accepts(IpAddress::Ipv4(target_protocol_addr)) && !IpAddress::Ipv4(target_protocol_addr).is_multicast() {
+        // verify that target protocol address is not a multicast address and we accept it.
+        if !target_protocol_addr.is_multicast() && ip.inner.accepts(IpAddress::Ipv4(target_protocol_addr)) {
+            // unsolicited updates fully ignored not enabled.
+
+            // send a reply if necessary.
             if let ArpOperation::Request = operation {
                 packet.answer()?.send()?;
             }
@@ -98,11 +101,15 @@ impl EndpointRef<'_> {
 
         Ok(())
     }
+
+    /// Send oustanding arp requests.
+    fn send_oustanding<P: PayloadMut>(&mut self, _: Raw<P>, _: &IpEndpoint) -> Result<()> {
+        unimplemented!()
+    }
 }
 
 impl<P> eth::Recv<P> for Receiver<'_, '_>
-    where
-        P: PayloadMut,
+    where P: PayloadMut,
 {
     fn receive(&mut self, eth::InPacket { handle, frame }: eth::InPacket<P>) {
         let packet = match frame.repr().ethertype {
@@ -116,41 +123,26 @@ impl<P> eth::Recv<P> for Receiver<'_, '_>
         let handle = Handle::new(handle);
         let packet = In::new(handle, packet);
 
-        self.endpoint.handle_internally(packet, &self.ip);
+        if let Err(_) = self.endpoint.handle_internally(packet, &self.ip) {
+            // TODO: log error
+        }
     }
 }
 
-impl<P, T> eth::Send<P> for Sender<'_, '_, T>
-    where
-        P: Payload + PayloadMut,
-        T: Send<P>,
+impl<P> eth::Send<P> for Sender<'_, '_>
+    where P: Payload + PayloadMut,
 {
     fn send(&mut self, packet: eth::RawPacket<P>) {
         let eth::RawPacket {
             handle: mut eth_handle,
             payload,
         } = packet;
+
         let handle = Handle::new(eth_handle.borrow_mut());
         let packet = Raw::new(handle, payload);
 
-        self.handler.send(packet)
-    }
-}
-
-impl<P: Payload, F> Recv<P> for FnHandler<F>
-    where
-        F: FnMut(In<P>),
-{
-    fn receive(&mut self, frame: In<P>) {
-        self.0(frame)
-    }
-}
-
-impl<P: Payload, F> Send<P> for FnHandler<F>
-    where
-        F: FnMut(Raw<P>),
-{
-    fn send(&mut self, frame: Raw<P>) {
-        self.0(frame)
+        if let Err(_) = self.endpoint.send_oustanding(packet, &self.ip) {
+            // TODO: log error
+        }
     }
 }
