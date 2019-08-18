@@ -1,40 +1,8 @@
-[package]
-name = "ethox"
-description = "A standalone network stack for user-space networking and unikernels"
-version = "0.0.1-wip"
-authors = ["Andreas Molzer <andreas.molzer@gmx.de>"]
-edition = "2018"
-license = "GPL-3.0-only"
-documentation = "https://docs.rs/ethox"
-categories = ["network-programming", "no-std"]
-
-[dependencies]
-byteorder = "1.0"
-libc = { version = "0.2", optional = true }
-
-[features]
-default = ["std"]
-std = ["libc"]
-log = []
+[workspace]
+members = [
+	"ethox",
+	"ethox-iperf3",
+]
 
 [profile.release]
 lto = true
-
-[dev-dependencies]
-structopt = { version = "0.2", default-features = false }
-
-[[example]]
-name = "debug_tap"
-required-features = ["std"]
-
-[[example]]
-name = "ping_tap"
-required-features = ["std"]
-
-[[example]]
-name = "arp_tap"
-required-features = ["std"]
-
-[[example]]
-name = "tcp_hello"
-required-features = ["std"]

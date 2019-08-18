@@ -49,6 +49,11 @@ impl IsnGenerator {
         }
     }
 
+    #[cfg(test)]
+    pub fn from_key(a: u64, b: u64) -> Self {
+        IsnGenerator { keys: (a, b), }
+    }
+
     /// Get the initial sequence number for a connection.
     ///
     /// The value varies every 4ms or when the underlying secret key is updated.
