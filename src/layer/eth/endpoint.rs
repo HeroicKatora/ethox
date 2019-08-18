@@ -5,7 +5,7 @@ use crate::nic;
 
 use super::{Recv, Send};
 use super::packet::{self, Handle};
-use super::neighbor::{Cache};
+use super::neighbor::Cache;
 
 pub struct Endpoint<'a> {
     /// Our own address.
@@ -86,27 +86,26 @@ impl packet::Endpoint for EthEndpoint<'_, '_> {
         self.inner.addr
     }
 
-    fn resolve(&mut self, addr: IpAddress, time: Instant) -> Result<EthernetAddress> {
-        // TODO: should we automatically try to send an ARP request?  And if so, should lookup be used instead?
-        Ok(self.inner.neighbors.lookup_pure(&addr, time).ok_or(Error::Unreachable)?)
-
-        /*
-        if let Mapping::LookingFor = mapping {
-            // TODO: send ARP request?
+    fn resolve(&mut self, addr: IpAddress, time: Instant, look: bool) -> Result<EthernetAddress> {
+        match self.inner.neighbors.lookup_pure(addr, time) {
+            Some(addr) => return Ok(addr),
+            None if !look => return Err(Error::Unreachable),
+            None => (),
         }
 
-        Ok(mapping)
-        */
+        match self.inner.neighbors.fill_looking(addr, Some(time)) {
+            Ok(()) => Err(Error::Unreachable),
+            Err(_) => Err(Error::Exhausted),
+        }
     }
 
-    fn update(&mut self, hw_addr: EthernetAddress, prot_addr: IpAddress, time: Instant) -> Result<()> {
-        // TODO: return correct Error here
-
-        if let Some(_) = self.inner.neighbors.lookup_pure(&prot_addr, Instant::from_millis(0)) {
-            return self.inner.neighbors.fill(prot_addr, hw_addr, Some(time)).or(Err(Error::Unreachable))
+    fn update(&mut self, hw_addr: EthernetAddress, prot_addr: IpAddress, time: Instant) -> bool {
+        if let Some(_) = self.inner.neighbors.lookup_pure(prot_addr, Instant::from_millis(0)) {
+            assert!(self.inner.neighbors.fill(prot_addr, hw_addr, Some(time)).is_ok());
+            true
+        } else {
+            false
         }
-
-        Ok(())
     }
 }
 

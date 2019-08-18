@@ -49,8 +49,11 @@ pub struct Init {
 /// The interface to the endpoint.
 pub(crate) trait Endpoint{
     fn src_addr(&mut self) -> EthernetAddress;
-    fn resolve(&mut self, _: IpAddress, _: Instant) -> Result<EthernetAddress>;
-    fn update(&mut self, _: EthernetAddress, _: IpAddress, _: Instant) -> Result<()>;
+    /// Resolve an address. If `look` is true, try to actively lookup it up later.
+    fn resolve(&mut self, _: IpAddress, _: Instant, look: bool) -> Result<EthernetAddress>;
+    /// Update an arp entry but never add one.
+    /// Returns if an update was performed.
+    fn update(&mut self, _: EthernetAddress, _: IpAddress, _: Instant) -> bool;
 }
 
 impl<'a> Handle<'a> {
@@ -85,7 +88,7 @@ impl<'a> Handle<'a> {
         -> Result<EthernetAddress>
     {
         let time = self.nic_handle.info().timestamp();
-        self.endpoint.resolve(dst_addr, time)
+        self.endpoint.resolve(dst_addr, time, false)
     }
 }
 
