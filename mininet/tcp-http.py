@@ -33,6 +33,8 @@ def simpleTest():
 
     # Remove the ip addr to disable host ip+tcp response. Can't bring the whole link down.
     # Then wait for a short time to allow the server to boot and other effects to take place.
+    ethox.cmd('arp -d %s' % host.IP())
+    host.cmd('arp -d %s' % ethox.IP())
     ethox.cmd('ip addr flush dev ethoxtap')
 
     # There are some weird ' > > > >' in the answer if this is not on the same
