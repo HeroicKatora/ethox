@@ -386,7 +386,7 @@ impl<'a, P: PayloadMut> Open<'a, P> {
 
 impl<'a, P: PayloadMut> Raw<'a, P> {
     /// Create a new connection.
-    pub fn open(self, addr: IpAddress, port: u16) -> Result<Sending<'a>, crate::layer::Error> {
+    pub fn open(self, addr: IpAddress, port: u16) -> Result<Open<'a, P>, crate::layer::Error> {
         let local = self.source(addr)?;
         let local_port = self.endpoint.source_port(local)
             .ok_or(crate::layer::Error::Exhausted)?;
@@ -404,15 +404,18 @@ impl<'a, P: PayloadMut> Raw<'a, P> {
         };
 
         let time = self.ip.handle.info().timestamp();
-        let repr = operator.open(time)?;
-        let mut out_ip = prepare(self.ip, &mut operator, repr)?;
-        let mut tcp = TcpPacket::new_unchecked(out_ip.payload_mut_slice(), repr);
-        tcp.fill_checksum(local, addr);
-        out_ip.send()?;
+        assert!(operator.open(time).is_ok());
 
-        Ok(Sending {
+        let ip::RawPacket {
+            handle: ip,
+            payload: raw,
+        } = self.ip;
+
+        Ok(Open {
+            ip,
             operator,
             signals: UserSignals::default(),
+            packet: OpenPacket::Out { raw },
         })
     }
 
@@ -432,9 +435,9 @@ impl<'a, P: PayloadMut> Raw<'a, P> {
         } = self.ip;
 
         Ok(Open {
+            ip,
             operator,
             signals: UserSignals::default(),
-            ip,
             packet: OpenPacket::Out { raw },
         })
     }

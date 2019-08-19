@@ -124,25 +124,28 @@ where
     P: PayloadMut,
 {
     fn send(&mut self, packet: RawPacket<P>) {
-        match self.state {
+        let open = match self.state {
             ClientState::Uninstantiated { remote, remote_port } => {
                 match packet.open(remote, remote_port) {
-                    Ok(sending) => {
-                        self.state = ClientState::InStack { key: sending.key() };
+                    Ok(open) => {
+                        self.state = ClientState::InStack { key: open.key() };
+                        open
                     },
                     // TODO: error handling.
-                    Err(_) => self.state = ClientState::Finished,
+                    Err(_) => return self.state = ClientState::Finished,
                 }
             },
             ClientState::InStack { key } => {
                 match packet.attach(key) {
-                    Ok(open) => {
-                        let _ = open.write(&mut self.send);
-                    },
-                    Err(_) => self.state = ClientState::Finished,
+                    Ok(open) =>open,
+                    // TODO: error handling.
+                    Err(_) => return self.state = ClientState::Finished,
                 }
             },
-            ClientState::Finished => (),
-        }
+            ClientState::Finished => return,
+        };
+
+        // TODO: error handling.
+        let _ = open.write(&mut self.send);
     }
 }
