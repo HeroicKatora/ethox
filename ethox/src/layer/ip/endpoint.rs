@@ -166,6 +166,16 @@ impl<'data> IpEndpoint<'_, 'data> {
     pub fn neighbors_mut(&mut self) -> &mut arp::NeighborCache<'data> {
         self.inner.arp.neighbors_mut()
     }
+
+    fn into_arp_receiver(&mut self) -> arp::Receiver<'_, 'data> {
+        let Endpoint { routing, arp } = self.inner;
+        arp.answer_for(routing)
+    }
+
+    fn into_arp_sender(&mut self) -> arp::Sender<'_, 'data> {
+        let Endpoint { routing, arp } = self.inner;
+        arp.query_for(routing)
+    }
 }
 
 impl packet::Endpoint for IpEndpoint<'_, '_> {
@@ -198,7 +208,7 @@ impl packet::Endpoint for IpEndpoint<'_, '_> {
 
 impl<P, T> eth::Recv<P> for Receiver<'_, '_, T>
 where
-    P: Payload,
+    P: PayloadMut,
     T: Recv<P>,
 {
     fn receive(&mut self, eth::InPacket { mut handle, frame }: eth::InPacket<P>) {
@@ -216,6 +226,10 @@ where
                     Err(_) => return,
                 }
             },
+            EthernetProtocol::Arp => {
+                return self.endpoint.into_arp_receiver().receive(
+                    eth::InPacket { handle, frame, });
+            }
             _ => return,
         };
 
@@ -234,7 +248,12 @@ where
     P: Payload + PayloadMut,
     T: Send<P>,
 {
-    fn send<'a>(&mut self, packet: eth::RawPacket<'a, P>) {
+    fn send(&mut self, packet: eth::RawPacket<P>) {
+        // FIXME: will *always* intercept, even if we can't actually send any arp.
+        if self.endpoint.neighbors().missing().count() > 0 {
+            return self.endpoint.into_arp_sender().send(packet);
+        }
+
         let eth::RawPacket { handle: mut eth_handle, payload } = packet;
         let handle = Handle::new(eth_handle.borrow_mut(), &mut self.endpoint);
         let packet = packet::Raw { handle, payload };

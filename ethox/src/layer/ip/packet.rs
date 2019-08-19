@@ -124,7 +124,7 @@ impl<'a> Handle<'a> {
         -> Result<EthernetAddress>
     {
         let time = self.info().timestamp();
-        self.endpoint.resolve(dst_addr, time, false)
+        self.endpoint.resolve(dst_addr, time, true)
     }
 
     fn route_to(&mut self, dst_addr: IpAddress) -> Result<EthRoute> {
