@@ -184,7 +184,7 @@ impl super::Handle for Handle {
         self.0.queue()
     }
 
-    fn info(&self) -> &Info {
+    fn info(&self) -> &dyn Info {
         self.0.info()
     }
 }

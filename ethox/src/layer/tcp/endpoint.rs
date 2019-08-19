@@ -101,7 +101,7 @@ struct Borrow<'a, 'e> {
 pub struct Entry<'a> {
     // TODO: add remapping to the `Entry` based api of the map if required for performance.
     key: SlotKey,
-    ports: &'a mut PortMap,
+    ports: &'a mut dyn PortMap,
     isn: &'a IsnGenerator,
     slot: &'a mut Slot,
 }
@@ -111,7 +111,7 @@ pub struct Entry<'a> {
 /// From an `Entry` split into the connection and the keys referring to it in such a manner that
 /// the keys can be edited without affecting the connection itself.
 pub struct EntryKey<'a> {
-    ports: &'a mut PortMap,
+    ports: &'a mut dyn PortMap,
     isn: &'a IsnGenerator,
     key_in_slot: &'a mut FourTuple,
 }
@@ -354,7 +354,7 @@ impl EntryKey<'_> {
 #[cfg(test)]
 impl<'a> EntryKey<'a> {
     pub(crate) fn fake(
-        ports: &'a mut PortMap,
+        ports: &'a mut dyn PortMap,
         isn: &'a IsnGenerator,
         key_in_slot: &'a mut FourTuple,
     ) -> EntryKey<'a> {
