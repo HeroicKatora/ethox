@@ -208,6 +208,10 @@ impl<'a> Cache<'a> {
                 }
             }
 
+            println!("Refreshed entry {}: {:?} - expiry: {:?}", 
+                 new_neighbor.protocol_addr,
+                 new_neighbor.hardware_addr,
+                 new_neighbor.expires_at);
             let _old = self.storage.replace_at(index, new_neighbor)
                 .expect("Sorting didn't change since we only have one entry per protocol addr");
             return Ok(());
@@ -281,7 +285,7 @@ impl Table {
         if Expiration::When(timestamp) >= entry.expires_at {
             return None;
         }
-
+        
         Some(entry.hardware_addr)
     }
 
@@ -434,15 +438,5 @@ mod test {
         // Can still overwrite the entry itself though.
         assert!(cache.fill(MOCK_IP_ADDR_1, HADDR_B, None).is_ok());
         assert!(cache.fill(MOCK_IP_ADDR_2, HADDR_A, None).is_ok());
-    }
-
-    #[test]
-    fn hush() {
-        let mut cache_storage = [Default::default(); 3];
-        let mut cache = Cache::new(&mut cache_storage[..]);
-
-        assert_eq!(cache.lookup(MOCK_IP_ADDR_1, Instant::from_millis(0)), Answer::NotFound);
-        assert_eq!(cache.lookup(MOCK_IP_ADDR_1, Instant::from_millis(100)), Answer::RateLimited);
-        assert_eq!(cache.lookup(MOCK_IP_ADDR_1, Instant::from_millis(2000)), Answer::NotFound);
     }
 }

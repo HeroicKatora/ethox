@@ -106,7 +106,7 @@ enum Unhandled<'a, P: Payload> {
         tcp: TcpPacket<ip::IpPacket<'a, P>>,
     },
     Closed {
-        endpoint: &'a mut Endpoint,
+        endpoint: &'a mut dyn Endpoint,
         tcp: TcpPacket<ip::IpPacket<'a, P>>,
     },
 }
