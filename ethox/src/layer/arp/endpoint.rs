@@ -4,7 +4,8 @@
 //! about missing addresses.
 
 use crate::layer::{eth, Result};
-use crate::wire::{ArpPacket, ArpRepr, ArpOperation, EthernetProtocol, Payload, PayloadMut, IpAddress};
+use crate::wire::{ArpPacket, ArpRepr, ArpOperation, EthernetAddress, EthernetProtocol, Payload, PayloadMut, IpAddress};
+use crate::time::Instant;
 use crate::layer::ip;
 
 use super::packet::{Handle, In, Raw};
@@ -34,7 +35,7 @@ pub struct Sender<'a, 'data> {
 }
 
 struct EndpointRef<'a, 'data> {
-    inner: &'a Endpoint<'data>,
+    inner: &'a mut Endpoint<'data>,
     ip: &'a mut ip::Endpoint<'data>,
 }
 
@@ -97,7 +98,7 @@ impl EndpointRef<'_, '_> {
             };
 
         // Update the address if it already exists in our tables (may be currently looking it up).
-        packet.handle.inner.endpoint.update(
+        self.update(
             source_hardware_addr,
             IpAddress::Ipv4(source_protocol_addr),
             packet.handle.info().timestamp());
@@ -120,6 +121,15 @@ impl EndpointRef<'_, '_> {
     /// Send oustanding arp requests.
     fn send_oustanding<P: PayloadMut>(&mut self, _: Raw<P>) -> Result<()> {
         unimplemented!()
+    }
+
+    fn update(&mut self, hw_addr: EthernetAddress, prot_addr: IpAddress, time: Instant) -> bool {
+        if let Some(_) = self.inner.neighbors.lookup_pure(prot_addr, Instant::from_millis(0)) {
+            assert!(self.inner.neighbors.fill(prot_addr, hw_addr, Some(time)).is_ok());
+            true
+        } else {
+            false
+        }
     }
 }
 

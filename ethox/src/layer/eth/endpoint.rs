@@ -1,11 +1,11 @@
-use crate::layer::{arp, Result, Error, FnHandler};
-use crate::time::Instant;
-use crate::wire::{EthernetAddress, EthernetFrame, IpAddress,  Payload, PayloadMut};
+use core::marker::PhantomData;
+
+use crate::layer::FnHandler;
+use crate::wire::{EthernetAddress, EthernetFrame, Payload, PayloadMut};
 use crate::nic;
 
 use super::{Recv, Send};
 use super::packet::{self, Handle};
-use super::NeighborCache;
 
 pub struct Endpoint<'a> {
     /// Our own address.
@@ -13,8 +13,8 @@ pub struct Endpoint<'a> {
     /// We ignored any packets with mismatching destination.
     addr: EthernetAddress,
 
-    /// Internal arp state.
-    arp: arp::Endpoint<'a>,
+    /// TODO: figure out if we need any dynamically sized, non-owned data.
+    data: PhantomData<&'a ()>,
 }
 
 /// An endpoint borrowed for receiving.
@@ -41,12 +41,10 @@ struct EthEndpoint<'a, 'e> {
 }
 
 impl<'a> Endpoint<'a> {
-    pub fn new<C>(addr: EthernetAddress, neighbors: C) -> Self 
-        where C: Into<NeighborCache<'a>>,
-    {
+    pub fn new(addr: EthernetAddress) -> Self {
         Endpoint {
             addr,
-            arp: arp::Endpoint::new(neighbors.into()),
+            data: PhantomData,
         }
     }
 
@@ -74,45 +72,13 @@ impl<'a> Endpoint<'a> {
 
     fn accepts(&self, dst_addr: EthernetAddress) -> bool {
         // TODO: broadcast and multicast
-        self.addr == dst_addr
-    }
-}
-
-impl<'data> EthEndpoint<'_, 'data> {
-    pub fn neighbors(&self) -> &NeighborCache<'data> {
-        self.inner.arp.neighbors()
-    }
-
-    pub fn neighbors_mut(&mut self) -> &mut NeighborCache<'data> {
-        self.inner.arp.neighbors_mut()
+        self.addr == dst_addr || dst_addr.is_broadcast()
     }
 }
 
 impl packet::Endpoint for EthEndpoint<'_, '_> {
     fn src_addr(&mut self) -> EthernetAddress {
         self.inner.addr
-    }
-
-    fn resolve(&mut self, addr: IpAddress, time: Instant, look: bool) -> Result<EthernetAddress> {
-        match self.neighbors().lookup_pure(addr, time) {
-            Some(addr) => return Ok(addr),
-            None if !look => return Err(Error::Unreachable),
-            None => (),
-        }
-
-        match self.neighbors_mut().fill_looking(addr, Some(time)) {
-            Ok(()) => Err(Error::Unreachable),
-            Err(_) => Err(Error::Exhausted),
-        }
-    }
-
-    fn update(&mut self, hw_addr: EthernetAddress, prot_addr: IpAddress, time: Instant) -> bool {
-        if let Some(_) = self.neighbors().lookup_pure(prot_addr, Instant::from_millis(0)) {
-            assert!(self.neighbors_mut().fill(prot_addr, hw_addr, Some(time)).is_ok());
-            true
-        } else {
-            false
-        }
     }
 }
 

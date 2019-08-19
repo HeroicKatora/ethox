@@ -1,6 +1,7 @@
-use crate::layer::{eth, FnHandler};
+use crate::layer::{arp, eth, FnHandler};
+use crate::layer::{Error, Result};
 use crate::managed::Slice;
-use crate::wire::{EthernetProtocol, Payload, PayloadMut};
+use crate::wire::{EthernetAddress, EthernetProtocol, Payload, PayloadMut};
 use crate::wire::{IpAddress, IpCidr, IpSubnet, Ipv4Packet, Ipv6Packet};
 use crate::time::Instant;
 
@@ -14,6 +15,9 @@ pub struct Endpoint<'a> {
 
     /// Routing information.
     routes: Routes<'a>,
+
+    /// Internal ipv4/ipv6 arp state.
+    arp: arp::Endpoint<'a>,
 }
 
 /// An endpoint borrowed for receiving.
@@ -43,8 +47,11 @@ impl<'a> Endpoint<'a> {
     /// # Panics
     /// This method will panic if one of the addresses assigned to the interface is not a unicast
     /// address.
-    pub fn new<A, C>(addr: A, routes: C) -> Self
-        where A: Into<Slice<'a, IpCidr>>, C: Into<Routes<'a>>,
+    pub fn new<A, C, N>(addr: A, routes: C, neighbors: N) -> Self
+    where
+        A: Into<Slice<'a, IpCidr>>,
+        C: Into<Routes<'a>>,
+        N: Into<arp::NeighborCache<'a>>,
     {
         let addresses = addr.into();
         for addr in addresses.iter() {
@@ -53,6 +60,7 @@ impl<'a> Endpoint<'a> {
         Endpoint {
             addr: addresses,
             routes: routes.into(),
+            arp: arp::Endpoint::new(neighbors.into()),
         }
     }
 
@@ -126,6 +134,16 @@ impl<'a> Endpoint<'a> {
     }
 }
 
+impl<'data> IpEndpoint<'_, 'data> {
+    pub fn neighbors(&self) -> &arp::NeighborCache<'data> {
+        self.inner.arp.neighbors()
+    }
+
+    pub fn neighbors_mut(&mut self) -> &mut arp::NeighborCache<'data> {
+        self.inner.arp.neighbors_mut()
+    }
+}
+
 impl packet::Endpoint for IpEndpoint<'_, '_> {
     fn local_ip(&self, subnet: IpSubnet) -> Option<IpAddress> {
         self.inner.addr
@@ -138,6 +156,19 @@ impl packet::Endpoint for IpEndpoint<'_, '_> {
 
     fn route(&self, dst_addr: IpAddress, time: Instant) -> Option<Route> {
         self.inner.route(dst_addr, time)
+    }
+
+    fn resolve(&mut self, addr: IpAddress, time: Instant, look: bool) -> Result<EthernetAddress> {
+        match self.neighbors().lookup_pure(addr, time) {
+            Some(addr) => return Ok(addr),
+            None if !look => return Err(Error::Unreachable),
+            None => (),
+        }
+
+        match self.neighbors_mut().fill_looking(addr, Some(time)) {
+            Ok(()) => Err(Error::Unreachable),
+            Err(_) => Err(Error::Exhausted),
+        }
     }
 }
 
