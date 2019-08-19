@@ -340,7 +340,16 @@ impl Repr {
         ) {
             (Hardware::Ethernet, Protocol::Ipv4, 6, 4, Operation::Request) => {
                 Ok(Repr::EthernetIpv4 {
-                    operation: packet.operation(),
+                    operation: Operation::Request,
+                    source_hardware_addr: packet.source_hardware_addr(),
+                    source_protocol_addr: packet.source_protocol_addr(),
+                    target_hardware_addr: packet.target_hardware_addr(),
+                    target_protocol_addr: packet.target_protocol_addr(),
+                })
+            },
+            (Hardware::Ethernet, Protocol::Ipv4, 6, 4, Operation::Reply) => {
+                Ok(Repr::EthernetIpv4 {
+                    operation: Operation::Reply,
                     source_hardware_addr: packet.source_hardware_addr(),
                     source_protocol_addr: packet.source_protocol_addr(),
                     target_hardware_addr: packet.target_hardware_addr(),

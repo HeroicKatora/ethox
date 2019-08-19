@@ -242,23 +242,6 @@ impl<'a> Cache<'a> {
             .expect("There was one to insert");
         Ok(())
     }
-
-    pub fn lookup(
-        &mut self,
-        protocol_addr: IpAddress,
-        timestamp: Instant)
-    -> Answer {
-        match self.lookup_pure(protocol_addr, timestamp) {
-            Some(hardware_addr) =>
-                Answer::Found(hardware_addr),
-            None if timestamp < self.silent_until =>
-                Answer::RateLimited,
-            None => {
-                self.silent_until = timestamp + Self::SILENT_TIME;
-                Answer::NotFound
-            }
-        }
-    }
 }
 
 impl Table {
@@ -281,7 +264,7 @@ impl Table {
         }
     }
 
-    fn lookup(
+    pub fn lookup(
         &self,
         protocol_addr: IpAddress,
         timestamp: Instant
@@ -299,11 +282,7 @@ impl Table {
             return None;
         }
 
-        if let Mapping::Address(hardware_addr) = entry.hardware_addr {
-            return Some(Mapping::Address(hardware_addr));
-        }
-
-        None
+        Some(entry.hardware_addr)
     }
 
     pub fn missing(&self) -> Missing {

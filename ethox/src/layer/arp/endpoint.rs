@@ -186,7 +186,7 @@ impl EndpointRef<'_, '_> {
     }
 
     fn update(&mut self, hw_addr: EthernetAddress, prot_addr: IpAddress, time: Instant) -> bool {
-        if let Some(_) = self.inner.neighbors.lookup_pure(prot_addr, Instant::from_millis(0)) {
+        if let Some(_) = self.inner.neighbors.lookup(prot_addr, time) {
             assert!(self.inner.neighbors.fill(prot_addr, hw_addr, Some(time)).is_ok());
             true
         } else {
