@@ -49,6 +49,10 @@ pub struct Sender<'a, 'data, H> {
     handler: H,
 }
 
+pub struct Layer<'a, 'data> {
+    endpoint: IpEndpoint<'a, 'data>,
+}
+
 pub struct IpEndpoint<'a, 'data> {
     pub inner: &'a mut Endpoint<'data>,
 }
@@ -92,6 +96,11 @@ impl<'a> Endpoint<'a> {
 
     pub fn send_with<H>(&mut self, handler: H) -> Sender<'_, 'a, FnHandler<H>> {
         self.send(FnHandler(handler))
+    }
+
+    /// Do layer internal maintenance operation such as arp.
+    pub fn layer_internal(&mut self) -> Layer<'_, 'a> {
+        Layer { endpoint: self.ip() }
     }
 
     fn ip(&mut self) -> IpEndpoint<'_, 'a> {
@@ -261,6 +270,35 @@ where
         self.handler.send(packet)
     }
 }
+
+impl<P> eth::Recv<P> for Layer<'_, '_>
+    where P: PayloadMut,
+{
+    fn receive(&mut self, packet: eth::InPacket<P>) {
+        Receiver {
+            endpoint: IpEndpoint {
+                inner: self.endpoint.inner,
+            },
+            handler: FnHandler(recv_nothing),
+        }.receive(packet)
+    }
+}
+
+impl<P> eth::Send<P> for Layer<'_, '_>
+    where P: PayloadMut,
+{
+    fn send(&mut self, packet: eth::RawPacket<P>) {
+        Sender {
+            endpoint: IpEndpoint {
+                inner: self.endpoint.inner,
+            },
+            handler: FnHandler(send_nothing),
+        }.send(packet)
+    }
+}
+
+fn recv_nothing<P: PayloadMut>(_: packet::In<P>) { }
+fn send_nothing<P: PayloadMut>(_: packet::Raw<P>) { }
 
 impl<P: Payload, F> Recv<P> for FnHandler<F>
     where F: FnMut(packet::In<P>)
