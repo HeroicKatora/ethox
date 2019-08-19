@@ -8,7 +8,7 @@ use crate::wire::{ArpPacket, ArpRepr, ArpOperation, EthernetAddress, EthernetPro
 use crate::time::Instant;
 use crate::layer::ip;
 
-use super::packet::{Handle, In, Raw};
+use super::packet::{Handle, In, Init, Raw};
 use super::neighbor::Cache;
 
 /// The persistent data of an arp layer.
@@ -134,8 +134,55 @@ impl EndpointRef<'_, '_> {
     }
 
     /// Send oustanding arp requests.
-    fn send_oustanding<P: PayloadMut>(&mut self, _: Raw<P>) -> Result<()> {
-        unimplemented!()
+    fn send_oustanding<P: PayloadMut>(&mut self, raw: Raw<P>) -> Result<()> {
+        let ts = raw.handle.info().timestamp();
+
+        // Search through the missing arp entries:
+        let unresolved = self.inner.neighbors
+            .missing()
+            // only those that have not recently been requested already
+            .filter(|missing| !missing.is_alive(ts))
+            // … and that are entries for ipv4
+            .filter_map(|missing| match missing.protocol_addr() {
+                IpAddress::Ipv4(addr) => Some(addr),
+                _ => None,
+            })
+            // … and for which we can find a link-local outbound route.
+            .filter_map(|addr| {
+                self.ip.find_local_route(IpAddress::Ipv4(addr), ts)
+                    .map(|route| (addr, route))
+            })
+            .next();
+
+        let (addr, route) = match unresolved {
+            None => return Ok(()),
+            Some(required) => required,
+        };
+
+        debug_assert_eq!(route.next_hop, IpAddress::Ipv4(addr));
+
+        let ip_src_address = match route.src_addr {
+            IpAddress::Ipv4(addr) => addr,
+            _ => unreachable!("Ipv4 destination routed with non-ipv4 source"),
+        };
+
+        let mut raw = raw;
+
+        let src = raw.handle.inner.src_addr();
+        let prepared = raw.prepare(Init::EthernetIpv4Request {
+            source_hardware_addr: src,
+            target_hardware_addr: EthernetAddress::BROADCAST,
+            source_protocol_addr: ip_src_address,
+            target_protocol_addr: addr,
+        })?;
+
+        // Reset the timer for that entry. Should always succeed.
+        let reset = self.inner.neighbors.fill_looking(IpAddress::Ipv4(addr), Some(ts));
+        debug_assert!(reset.is_ok());
+
+        prepared.send()?;
+
+        Ok(())
     }
 
     fn update(&mut self, hw_addr: EthernetAddress, prot_addr: IpAddress, time: Instant) -> bool {

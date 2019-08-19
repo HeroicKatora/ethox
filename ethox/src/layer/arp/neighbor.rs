@@ -288,6 +288,27 @@ impl Table {
     }
 }
 
+impl Neighbor {
+    pub fn protocol_addr(&self) -> IpAddress {
+        self.protocol_addr
+    }
+
+    pub fn hardware_addr(&self) -> Option<EthernetAddress> {
+        match self.hardware_addr {
+            Mapping::LookingFor => None,
+            Mapping::Address(addr) => Some(addr),
+        }
+    }
+
+    pub fn is_alive(&self, ts: Instant) -> bool {
+        Expiration::When(ts) >= self.expires_at
+    }
+
+    pub fn is_expired(&self, ts: Instant) -> bool {
+        !self.is_alive(ts)
+    }
+}
+
 impl Deref for Cache<'_> {
     type Target = Table;
 
@@ -305,13 +326,13 @@ impl Deref for Table {
 }
 
 impl Iterator for Missing<'_> {
-    type Item = IpAddress;
+    type Item = Neighbor;
 
-    fn next(&mut self) -> Option<IpAddress> {
-        self.inner.by_ref().filter_map(|entry| match entry.hardware_addr {
-            Mapping::LookingFor => Some(entry.protocol_addr),
-            Mapping::Address(_) => None,
-        }).next()
+    fn next(&mut self) -> Option<Neighbor> {
+        self.inner.by_ref()
+            .filter(|entry| entry.hardware_addr().is_none())
+            .next()
+            .copied()
     }
 }
 

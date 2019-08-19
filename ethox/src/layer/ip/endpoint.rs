@@ -122,7 +122,7 @@ impl Routing<'_> {
     /// * Lookup in routing table for all other addresses.
     ///
     /// For lack of direct loopback mechanism (TODO) we only implement the second two stages.
-    fn route(&self, dst_addr: IpAddress, time: Instant) -> Option<Route> {
+    pub fn route(&self, dst_addr: IpAddress, time: Instant) -> Option<Route> {
         if let Some(route) = self.find_local_route(dst_addr, time) {
             return Some(route)
         }
@@ -130,7 +130,7 @@ impl Routing<'_> {
         self.find_outer_route(dst_addr, time)
     }
 
-    fn find_local_route(&self, dst_addr: IpAddress, _: Instant) -> Option<Route> {
+    pub fn find_local_route(&self, dst_addr: IpAddress, _: Instant) -> Option<Route> {
         let matching_src = self.addr
             .iter()
             .filter(|addr| addr.subnet().contains(dst_addr))
@@ -142,7 +142,7 @@ impl Routing<'_> {
         })
     }
 
-    fn find_outer_route(&self, dst_addr: IpAddress, time: Instant) -> Option<Route> {
+    pub fn find_outer_route(&self, dst_addr: IpAddress, time: Instant) -> Option<Route> {
         let next_hop = self.routes.lookup(dst_addr, time)?;
 
         // Which source to use?
