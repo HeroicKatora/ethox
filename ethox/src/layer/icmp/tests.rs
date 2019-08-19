@@ -25,19 +25,19 @@ fn answer_ping() {
 
     queue_ping(&mut nic);
 
-    let mut eth = [eth::Neighbor::default(); 1];
-    let mut eth = eth::Endpoint::new(MAC_ADDR_HOST, {
-        let mut eth_cache = eth::NeighborCache::new(&mut eth[..]);
+    let mut eth = eth::Endpoint::new(MAC_ADDR_HOST);
+    
+    let mut neighbors = [eth::Neighbor::default(); 1];
+    let neighbors = {
+        let mut eth_cache = eth::NeighborCache::new(&mut neighbors[..]);
         eth_cache.fill(IP_ADDR_OTHER.into(), MAC_ADDR_OTHER, None).unwrap();
         eth_cache
-    });
-
+    };
     let mut ip = [ip::Route::unspecified(); 2];
-    let mut ip = ip::Endpoint::new(IpCidr::new(IP_ADDR_HOST.into(), 24), {
-        let ip_routes = ip::Routes::new(&mut ip[..]);
+    let mut ip = ip::Endpoint::new(IpCidr::new(IP_ADDR_HOST.into(), 24),
         // No routes necessary for local link.
-        ip_routes
-    });
+        ip::Routes::new(&mut ip[..]),
+        neighbors);
 
     let mut icmp = icmp::Endpoint::new();
 
@@ -66,16 +66,18 @@ fn queue_ping(nic: &mut Loopback<Vec<u8>>) {
             .expect("Can send the packet");
     }
 
-    let mut eth = [eth::Neighbor::default(); 1];
-    let mut eth = eth::Endpoint::new(MAC_ADDR_OTHER, {
-        let mut eth_cache = eth::NeighborCache::new(&mut eth[..]);
+    let mut eth = eth::Endpoint::new(MAC_ADDR_OTHER);
+
+    let mut neighbors = [eth::Neighbor::default(); 1];
+    let neighbors = {
+        let mut eth_cache = eth::NeighborCache::new(&mut neighbors[..]);
         eth_cache.fill(IP_ADDR_HOST.into(), MAC_ADDR_HOST, None).unwrap();
         eth_cache
-    });
-
+    };
     let mut ip = ip::Endpoint::new(
         IpCidr::new(IP_ADDR_OTHER.into(), 24),
-        ip::Routes::new(Slice::empty()));
+        ip::Routes::new(Slice::empty()),
+        neighbors);
 
     let mut icmp = icmp::Endpoint::new();
 

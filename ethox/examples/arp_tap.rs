@@ -33,8 +33,8 @@ use structopt::StructOpt;
 
 use ethox::managed::{List, Slice};
 use ethox::nic::{Device, TapInterface};
-use ethox::layer::{eth, ip, arp};
-use ethox::wire::{Ipv4Cidr, EthernetAddress};
+use ethox::layer::{eth, ip};
+use ethox::wire::{Ipv4Cidr, EthernetAddress, PayloadMut};
 
 fn main() {
     let Config {
@@ -45,18 +45,17 @@ fn main() {
         gatemac,
     } = Config::from_args();
 
-    let mut eth = [eth::Neighbor::default(); 5];
-    let mut eth = eth::Endpoint::new(hostmac, {
-        let mut eth_cache = eth::NeighborCache::new(&mut eth[..]);
+    let mut eth = eth::Endpoint::new(hostmac);
+
+    let mut neighbors = [eth::Neighbor::default(); 5];
+    let neighbors = {
+        let mut eth_cache = eth::NeighborCache::new(&mut neighbors[..]);
         eth_cache.fill(gateway.address().into(), gatemac, None).unwrap();
         eth_cache
-    });
-
+    };
     let mut ip = [ip::Route::new_ipv4_gateway(gateway.address()); 1];
     let routes = ip::Routes::import(List::new_full(ip.as_mut().into()));
-    let mut ip = ip::Endpoint::new(Slice::One(host.into()), routes);
-
-    let mut arp = arp::Endpoint::new();
+    let mut ip = ip::Endpoint::new(Slice::One(host.into()), routes, neighbors);
 
     let mut interface = TapInterface::new(&name, vec![0; 1 << 14])
         .expect("Couldn't initialize interface");
@@ -68,7 +67,7 @@ fn main() {
 
     loop {
         // Receive the next packet.
-        let result = interface.rx(1, eth.recv(arp.answer(&mut ip)));
+        let result = interface.rx(1, eth.recv(ip.recv_with(drop_packet)));
 
         if let Ok(1) = result {
             out.write_all(b".").unwrap();
@@ -89,3 +88,6 @@ struct Config {
     gateway: Ipv4Cidr,
     gatemac: EthernetAddress,
 }
+
+/// Drops all packets. Arp should is handled internally.
+fn drop_packet<P: PayloadMut>(_: ip::InPacket<P>) { }

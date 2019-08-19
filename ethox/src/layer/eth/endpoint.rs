@@ -139,7 +139,7 @@ mod tests {
     use super::*;
     use crate::managed::Slice;
     use crate::nic::{external::External, Device};
-    use crate::layer::eth::{Init, NeighborCache};
+    use crate::layer::eth::Init;
     use crate::wire::{EthernetAddress, EthernetProtocol};
 
     const MAC_ADDR_1: EthernetAddress = EthernetAddress([0, 1, 2, 3, 4, 5]);
@@ -177,7 +177,7 @@ mod tests {
 
     #[test]
     fn simple() {
-        let mut endpoint = Endpoint::new(MAC_ADDR_1, NeighborCache::new(&mut [][..]));
+        let mut endpoint = Endpoint::new(MAC_ADDR_1);
         let mut nic = External::new_send(Slice::One(vec![0; 1024]));
 
         let sent = nic.tx(

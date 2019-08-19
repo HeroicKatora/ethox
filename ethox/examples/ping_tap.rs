@@ -46,16 +46,17 @@ fn main() {
         gatemac,
     } = Config::from_args();
 
-    let mut eth = [eth::Neighbor::default(); 1];
-    let mut eth = eth::Endpoint::new(hostmac, {
-        let mut eth_cache = eth::NeighborCache::new(&mut eth[..]);
+    let mut eth = eth::Endpoint::new(hostmac);
+
+    let mut neighbors = [eth::Neighbor::default(); 1];
+    let neighbors = {
+        let mut eth_cache = eth::NeighborCache::new(&mut neighbors[..]);
         eth_cache.fill(gateway.address().into(), gatemac, None).unwrap();
         eth_cache
-    });
-
+    };
     let mut ip = [ip::Route::new_ipv4_gateway(gateway.address()); 1];
     let routes = ip::Routes::import(List::new_full(ip.as_mut().into()));
-    let mut ip = ip::Endpoint::new(Slice::One(host.into()), routes);
+    let mut ip = ip::Endpoint::new(Slice::One(host.into()), routes, neighbors);
 
     let mut icmp = icmp::Endpoint::new();
 

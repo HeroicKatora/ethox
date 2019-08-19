@@ -14,19 +14,17 @@ const IP_ADDR_OTHER: Ipv4Address = Ipv4Address::new(127, 0, 0, 2);
 fn simple_arp() {
     let mut nic = External::new_send(Slice::One(vec![0; 1024]));
 
-    let mut eth = [eth::Neighbor::default(); 1];
-    let mut eth = eth::Endpoint::new(MAC_ADDR_HOST, {
-        // No ARP cache entries needed.
-        eth::NeighborCache::new(&mut eth[..])
-    });
+    let mut eth = eth::Endpoint::new(MAC_ADDR_HOST);
 
-    let mut ip = [ip::Route::unspecified(); 2];
-    let mut ip = ip::Endpoint::new(IpCidr::new(IP_ADDR_HOST.into(), 24), {
+    // No prior ARP cache entries needed.
+    let mut neighbors = [eth::Neighbor::default(); 1];
+    let mut routes = [ip::Route::unspecified(); 2];
+    let mut ip = ip::Endpoint::new(IpCidr::new(IP_ADDR_HOST.into(), 24),
         // No routes necessary for local link.
-        ip::Routes::new(&mut ip[..])
-    });
+        ip::Routes::new(&mut routes[..]),
+        eth::NeighborCache::new(Slice::empty()));
 
-    let mut arp = arp::Endpoint::new();
+    let mut arp = arp::Endpoint::new(eth::NeighborCache::new(&mut neighbors[..]));
 
     {
         // Initialize the request.
