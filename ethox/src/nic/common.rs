@@ -64,7 +64,7 @@ impl Handle for EnqueueFlag {
         self.flag.queue()
     }
 
-    fn info(&self) -> &Info {
+    fn info(&self) -> &dyn Info {
         &self.info
     }
 }

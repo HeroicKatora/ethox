@@ -44,7 +44,7 @@ impl<'a> Handle<'a> {
     }
 
     /// Get the hardware info for that packet.
-    pub fn info(&self) -> &Info {
+    pub fn info(&self) -> &dyn Info {
         self.inner.info()
     }
 

@@ -356,7 +356,7 @@ pub trait Endpoint {
 
 /// The interface to a single active connection on an endpoint.
 pub(crate) struct Operator<'a> {
-    pub endpoint: &'a mut Endpoint,
+    pub endpoint: &'a mut dyn Endpoint,
     pub connection_key: SlotKey,
 }
 
@@ -1193,7 +1193,7 @@ impl<'a> Operator<'a> {
     /// Operate some connection.
     ///
     /// This returns `None` if the key does not refer to an existing connection.
-    pub fn new(endpoint: &'a mut Endpoint, key: SlotKey) -> Option<Self> {
+    pub fn new(endpoint: &'a mut dyn Endpoint, key: SlotKey) -> Option<Self> {
         let _ = endpoint.get(key)?;
         Some(Operator {
             endpoint,
@@ -1201,7 +1201,7 @@ impl<'a> Operator<'a> {
         })
     }
 
-    pub fn from_tuple(endpoint: &'a mut Endpoint, tuple: FourTuple) -> Result<Self, &'a mut Endpoint> {
+    pub fn from_tuple(endpoint: &'a mut dyn Endpoint, tuple: FourTuple) -> Result<Self, &'a mut dyn Endpoint> {
         let key = match endpoint.find_tuple(tuple) {
             Some(entry) => Some(entry.slot_key()),
             None => None,
@@ -1234,7 +1234,7 @@ impl<'a> Operator<'a> {
     }
 
     /// Remove the connection and close the operator.
-    pub(crate) fn delete(self) -> &'a mut Endpoint {
+    pub(crate) fn delete(self) -> &'a mut dyn Endpoint {
         self.endpoint.remove(self.connection_key);
         self.endpoint
     }

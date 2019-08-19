@@ -48,7 +48,7 @@ pub trait Handle {
     ///
     /// Note that technically the information may change after a call to `queue` or in the future
     /// after changing the target interface of an outgoing packet. That is intentional.
-    fn info(&self) -> &Info;
+    fn info(&self) -> &dyn Info;
     // TODO: multiple interfaces (=zerocopy forwarding).
 }
 
