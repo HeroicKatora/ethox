@@ -10,35 +10,47 @@ use super::packet::{self, IpPacket, Handle, Route};
 use super::route::Routes;
 
 pub struct Endpoint<'a> {
-    /// Our own address.
-    addr: Slice<'a, IpCidr>,
-
     /// Routing information.
-    routes: Routes<'a>,
+    routing: Routing<'a>,
 
     /// Internal ipv4/ipv6 arp state.
     arp: arp::Endpoint<'a>,
 }
 
+/// Routing information of an ip endpoint.
+///
+/// Separated in struct such that the arp and other neighborhood protocols can borrow this portion
+/// to generate and receive packets but also store their own data in the ip endpoint.
+///
+/// `'data` is the lifetime of the memory referenced for storing the routing data (address
+/// assignments, routing table).
+pub(crate) struct Routing<'data> {
+    /// Our own address.
+    addr: Slice<'data, IpCidr>,
+
+    /// Routing information.
+    routes: Routes<'data>,
+}
+
 /// An endpoint borrowed for receiving.
 ///
 /// Dispatching to higher protocols is configurerd here, and not in the endpoint state.
-pub struct Receiver<'a, 'e, H> {
-    endpoint: IpEndpoint<'a, 'e>,
+pub struct Receiver<'a, 'data, H> {
+    endpoint: IpEndpoint<'a, 'data>,
 
     /// The upper protocol receiver.
     handler: H,
 }
 
-pub struct Sender<'a, 'e, H> {
-    endpoint: IpEndpoint<'a, 'e>,
+pub struct Sender<'a, 'data, H> {
+    endpoint: IpEndpoint<'a, 'data>,
 
     /// The upper protocol sender.
     handler: H,
 }
 
-pub struct IpEndpoint<'a, 'e> {
-    pub inner: &'a mut Endpoint<'e>,
+pub struct IpEndpoint<'a, 'data> {
+    pub inner: &'a mut Endpoint<'data>,
 }
 
 impl<'a> Endpoint<'a> {
@@ -58,8 +70,10 @@ impl<'a> Endpoint<'a> {
             assert!(addr.address().is_unicast());
         }
         Endpoint {
-            addr: addresses,
-            routes: routes.into(),
+            routing: Routing {
+                addr: addresses,
+                routes: routes.into(),
+            },
             arp: arp::Endpoint::new(neighbors.into()),
         }
     }
@@ -86,6 +100,16 @@ impl<'a> Endpoint<'a> {
         }
     }
 
+    pub fn accepts(&self, dst_addr: IpAddress) -> bool {
+        self.routing.accepts(dst_addr)
+    }
+
+    pub(crate) fn routing(&mut self) -> &mut Routing<'a> {
+        &mut self.routing
+    }
+}
+
+impl Routing<'_> {
     pub fn accepts(&self, dst_addr: IpAddress) -> bool {
         self.addr.iter().any(|own_addr| own_addr.accepts(dst_addr))
     }
@@ -146,7 +170,7 @@ impl<'data> IpEndpoint<'_, 'data> {
 
 impl packet::Endpoint for IpEndpoint<'_, '_> {
     fn local_ip(&self, subnet: IpSubnet) -> Option<IpAddress> {
-        self.inner.addr
+        self.inner.routing.addr
             .iter()
             .cloned()
             .map(|cidr| cidr.address())
@@ -155,7 +179,7 @@ impl packet::Endpoint for IpEndpoint<'_, '_> {
     }
 
     fn route(&self, dst_addr: IpAddress, time: Instant) -> Option<Route> {
-        self.inner.route(dst_addr, time)
+        self.inner.routing.route(dst_addr, time)
     }
 
     fn resolve(&mut self, addr: IpAddress, time: Instant, look: bool) -> Result<EthernetAddress> {

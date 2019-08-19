@@ -36,7 +36,7 @@ pub struct Sender<'a, 'data> {
 
 struct EndpointRef<'a, 'data> {
     inner: &'a mut Endpoint<'data>,
-    ip: &'a mut ip::Endpoint<'data>,
+    ip: &'a mut ip::Routing<'data>,
 }
 
 impl<'data> Endpoint<'data> {
@@ -48,22 +48,37 @@ impl<'data> Endpoint<'data> {
         }
     }
 
-    /// A receiver that only answers (and handles) arp requests.
+    /// A receiver that answers arp requests in stead of an ip endpoint.
+    ///
+    /// Utilizes the address and routing configuration of the endpoint but handles arp traffic
+    /// instead of the built-in arp handler of the ip endpoint.
     pub fn answer<'a>(&'a mut self, ip: &'a mut ip::Endpoint<'data>) -> Receiver<'a, 'data> {
+        self.answer_for(ip.routing())
+    }
+
+    pub(crate) fn answer_for<'a>(&'a mut self, ip: &'a mut ip::Routing<'data>) -> Receiver<'a, 'data> {
         Receiver {
             endpoint: self.get_mut(ip),
         }
     }
 
     /// A sender that sends outstanding arp queries.
+    ///
+    /// Utilizes the address and routing configuration of the endpoint but handles arp traffic
+    /// instead of the built-in arp handler of the ip endpoint.
     pub fn query<'a>(&'a mut self, ip: &'a mut ip::Endpoint<'data>) -> Sender<'a, 'data> {
+        self.query_for(ip.routing())
+    }
+
+
+    pub(crate) fn query_for<'a>(&'a mut self, ip: &'a mut ip::Routing<'data>) -> Sender<'a, 'data> {
         Sender {
             endpoint: self.get_mut(ip),
         }
     }
 
     /// Get this by mutable reference for a receiver or sender.
-    fn get_mut<'a>(&'a mut self, ip: &'a mut ip::Endpoint<'data>) -> EndpointRef<'a, 'data> {
+    fn get_mut<'a>(&'a mut self, ip: &'a mut ip::Routing<'data>) -> EndpointRef<'a, 'data> {
         EndpointRef { inner: self, ip, }
     }
 

@@ -41,3 +41,5 @@ pub trait Recv<P: Payload> {
 pub trait Send<P: Payload> {
     fn send(&mut self, raw: RawPacket<P>);
 }
+
+pub(crate) use endpoint::Routing;
