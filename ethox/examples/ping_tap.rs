@@ -5,8 +5,7 @@
 //! The example will try to open a tap as a network device and then answer all incoming icmpv4
 //! pings to its hostaddress. For this purpose it is also configured with one static device that is
 //! assumed to provide a gateway if you want to ping it from an address outside its assigned CIDR
-//! block. [WIP] It does not yet perform arp in either direction so that you will need to configure
-//! both an arp entry in the host system and it can only answer via the configured gateway.
+//! block.
 //!
 //! The following steps are necessary to set the example up (likey requires root or sudo):
 //!
@@ -19,12 +18,9 @@
 //! 3. Bring up the interface on the host
 //!
 //!   > $ ip link set up dev tap0
-//! 4. Chose ip and mac for the example and add them to arp
-//!
-//!   > $ arp -si tap0 10.0.0.1 ab:ff:ff:ff:ff:ff
 //! 4. You no longer require root. Start the ping_tap example.
 //! 
-//!   > $ cargo run --example ping_tap -- tap0 10.0.0.1/24 ab:ff:ff:ff:ff:ff 10.0.0.2/24 <host_mac>
+//!   > $ cargo run --example ping_tap -- tap0 10.0.0.1/24 ab:ff:ff:ff:ff:ff 10.0.0.2/24
 //! 5. Ping the interface from the host (show unanswered packets). You could also try flood pings
 //!    for fun (`-f`).
 //! 
@@ -43,20 +39,17 @@ fn main() {
         host,
         hostmac,
         gateway,
-        gatemac,
     } = Config::from_args();
 
     let mut eth = eth::Endpoint::new(hostmac);
 
     let mut neighbors = [eth::Neighbor::default(); 1];
-    let neighbors = {
-        let mut eth_cache = eth::NeighborCache::new(&mut neighbors[..]);
-        eth_cache.fill(gateway.address().into(), gatemac, None).unwrap();
-        eth_cache
-    };
-    let mut ip = [ip::Route::new_ipv4_gateway(gateway.address()); 1];
-    let routes = ip::Routes::import(List::new_full(ip.as_mut().into()));
-    let mut ip = ip::Endpoint::new(Slice::One(host.into()), routes, neighbors);
+    let mut routes = [ip::Route::new_ipv4_gateway(gateway.address()); 1];
+    let mut ip = ip::Endpoint::new(Slice::One(host.into()),
+        // Prefill the routes
+        ip::Routes::import(List::new_full(routes.as_mut().into())), 
+        // But do automatic arp
+        eth::NeighborCache::new(&mut neighbors[..]));
 
     let mut icmp = icmp::Endpoint::new();
 
@@ -70,9 +63,13 @@ fn main() {
 
     loop {
         // Receive the next packet.
-        let result = interface.rx(1, eth.recv(ip.recv(icmp.answer())));
+        let rx_ok = interface.rx(1, eth.recv(ip.recv(icmp.answer())));
+        // Give some chance for outgoing maintenance such as arp.
+        let tx_ok = interface.tx(1, eth.send(ip.layer_internal()));
 
-        if let Ok(1) = result {
+        let result = rx_ok.and_then(|x| tx_ok.map(|y| x + y));
+
+        if let Ok(1) | Ok(2) = result {
             out.write_all(b".").unwrap();
             out.flush().unwrap();
         }
@@ -89,5 +86,4 @@ struct Config {
     host: Ipv4Cidr,
     hostmac: EthernetAddress,
     gateway: Ipv4Cidr,
-    gatemac: EthernetAddress,
 }
