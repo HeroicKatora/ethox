@@ -208,10 +208,12 @@ impl<'a> Cache<'a> {
                 }
             }
 
+            /*
             println!("Refreshed entry {}: {:?} - expiry: {:?}", 
                  new_neighbor.protocol_addr,
                  new_neighbor.hardware_addr,
                  new_neighbor.expires_at);
+                 */
             let _old = self.storage.replace_at(index, new_neighbor)
                 .expect("Sorting didn't change since we only have one entry per protocol addr");
             return Ok(());

@@ -23,7 +23,9 @@ fn main() {
 
     let mut eth = eth::Endpoint::new(hostmac);
 
+    // Buffer space for arp neighbor cache
     let mut neighbors = [eth::Neighbor::default(); 1];
+    // Buffer space for routes, we only have a single state one.
     let mut routes = [ip::Route::new_ipv4_gateway(gateway.address()); 1];
     let mut ip = ip::Endpoint::new(Slice::One(host.into()),
         ip::Routes::import(List::new_full(routes.as_mut().into())),

@@ -437,18 +437,22 @@ impl Connection {
         }
     }
 
-    pub fn open(&mut self, time: Instant, entry: EntryKey) -> Option<TcpRepr> {
+    pub fn open(&mut self, time: Instant, entry: EntryKey)
+        -> Result<(), crate::layer::Error>
+    {
         match self.current {
             State::Closed | State::Listen => (),
-            _ => return None,
+            _ => return Err(crate::layer::Error::Illegal),
         }
 
         self.change_state(State::SynSent);
         self.send.initial_seq = entry.initial_seq_num(time);
         self.send.unacked = self.send.initial_seq;
         self.send.next = self.send.initial_seq + 1;
+        // Schedule 'immediate' transmission.
+        self.retransmission_timer = time;
 
-        Some(self.send_open(false, entry.four_tuple()))
+        Ok(())
     }
 
     /// Answers packets on closed sockets with resets.
@@ -864,7 +868,7 @@ impl Connection {
             return self.fast_retransmit(time, entry);
         }
 
-        if self.retransmission_timer > time {
+        if self.retransmission_timer < time {
             // Choose segments to retransmit, in contrast to `fast_retransmit` this may influence
             // multiple next packets.
             return self.start_timeout_retransmit(time, entry);
@@ -925,7 +929,7 @@ impl Connection {
     fn select_syn_retransmit(&mut self, time: Instant, entry: EntryKey)
         -> Option<Segment>
     {
-        if self.retransmission_timer < time {
+        if self.retransmission_timer > time {
             return None;
         }
 
@@ -956,6 +960,7 @@ impl Connection {
     fn start_timeout_retransmit(&mut self, _time: Instant, _entry: EntryKey)
         -> Option<Segment>
     {
+        return None;
         unimplemented!()
     }
 
@@ -1022,8 +1027,20 @@ impl Connection {
         self.ack_timer = self.ack_timer.min(new_timer);
     }
 
+    /// Get the sequence number of the last byte acknowledged by the other side.
+    ///
+    /// Always points into the byte sequence space by offsetting a missing SYN in case none has
+    /// been received yet.
     pub fn get_send_ack(&self) -> TcpSeqNumber {
-        self.send.unacked
+        match self.current {
+            // If our SYN has not been acked, advance beyond the SYN.
+            State::SynSent => self.send.unacked + 1,
+            // Don't include our FIN even if it has already been acked.
+            State::FinWait | State::Closing | State::TimeWait | State::LastAck
+                if self.send.unacked == self.send.next
+                    => self.send.unacked - 1,
+            _ => self.send.unacked,
+        }
     }
 
     /// Indicate sending an ack for all arrived packets.
@@ -1211,10 +1228,9 @@ impl<'a> Operator<'a> {
         connection.next_send_segment(available, time, entry_key)
     }
 
-    pub fn open(&mut self, time: Instant) -> Result<TcpRepr, crate::layer::Error> {
+    pub fn open(&mut self, time: Instant) -> Result<(), crate::layer::Error> {
         let (entry_key, connection) = self.entry().into_key_value();
         connection.open(time, entry_key)
-            .ok_or(crate::layer::Error::Illegal)
     }
 
     /// Remove the connection and close the operator.
@@ -1301,7 +1317,7 @@ mod tests {
         let time_resend = Instant::from_secs(3);
 
         let entry = EntryKey::fake(&mut no_remap, &isn, &mut four);
-        assert!(connection.open(time_start, entry).is_some());
+        assert!(connection.open(time_start, entry).is_ok());
 
         let entry = EntryKey::fake(&mut no_remap, &isn, &mut four);
         let available = AvailableBytes { fin: false, total: 0 };
