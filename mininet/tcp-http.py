@@ -33,14 +33,16 @@ def simpleTest():
 
     # Remove the ip addr to disable host ip+tcp response. Can't bring the whole link down.
     # Then wait for a short time to allow the server to boot and other effects to take place.
+    ethox.cmd('arp -d %s' % host.IP())
+    host.cmd('arp -d %s' % ethox.IP())
     ethox.cmd('ip addr flush dev ethoxtap')
 
     # There are some weird ' > > > >' in the answer if this is not on the same
     # shell line.  I wish mininet had better job control and output retrieval,
     # like real python instead of a direct **terminal** fd0/fd1 interaction.
     # FIXME: subnet specifiers should not be hardcoded
-    ethox_tcp = '../target/debug/examples/curl ethoxtap %s/8 %s %s/8 %s %s %s' % (
-        ethox.IP(), ethox.MAC(), host.IP(), host.MAC(), host.IP(), 8000)
+    ethox_tcp = '../target/debug/examples/curl ethoxtap %s/8 %s %s/8 %s %s' % (
+        ethox.IP(), ethox.MAC(), host.IP(), host.IP(), 8000)
     # The connection lingers in tcp TimeWait for 6 more seconds (2 full default rtts)
     answer = ethox.cmd('timeout 8s ' + ethox_tcp)
     print answer

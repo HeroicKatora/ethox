@@ -106,7 +106,7 @@ pub mod pretty_print;
 
 mod ethernet;
 mod error;
-mod arp;
+pub(crate) mod arp;
 pub(crate) mod ip;
 mod ipv4;
 mod ipv6;
@@ -164,6 +164,7 @@ pub use self::error::{
     Result};
 
 pub use self::arp::{
+    arp as arp_packet,
     Hardware as ArpHardware,
     Operation as ArpOperation,
     Packet as ArpPacket,

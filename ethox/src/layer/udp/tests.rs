@@ -44,19 +44,19 @@ fn simple_recv<P: Payload>(frame: udp::Packet<P>) {
 fn simple() {
     let mut nic = External::new_send(Slice::One(vec![0; 1024]));
 
-    let mut eth = [eth::Neighbor::default(); 1];
-    let mut eth = eth::Endpoint::new(MAC_ADDR_SRC, {
-        let mut eth_cache = eth::NeighborCache::new(&mut eth[..]);
+    let mut eth = eth::Endpoint::new(MAC_ADDR_SRC);
+
+    let mut neighbors = [eth::Neighbor::default(); 1];
+    let neighbors = {
+        let mut eth_cache = eth::NeighborCache::new(&mut neighbors[..]);
         eth_cache.fill(IP_ADDR_DST.into(), MAC_ADDR_DST, None).unwrap();
         eth_cache
-    });
-
+    };
     let mut ip = [ip::Route::unspecified(); 2];
-    let mut ip = ip::Endpoint::new(IpCidr::new(IP_ADDR_SRC.into(), 24), {
-        let ip_routes = ip::Routes::new(&mut ip[..]);
+    let mut ip = ip::Endpoint::new(IpCidr::new(IP_ADDR_SRC.into(), 24),
         // No routes necessary for local link.
-        ip_routes
-    });
+        ip::Routes::new(&mut ip[..]),
+        neighbors);
 
     let mut udp = udp::Endpoint::new(80);
 

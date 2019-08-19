@@ -29,5 +29,9 @@ name = "ping_tap"
 required-features = ["std"]
 
 [[example]]
+name = "arp_tap"
+required-features = ["std"]
+
+[[example]]
 name = "curl"
 required-features = ["std"]

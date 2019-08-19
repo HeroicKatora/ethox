@@ -3,7 +3,6 @@ use crate::wire::{ethernet_frame, Payload};
 use crate::wire::pretty_print::{PrettyPrinter, Formatter};
 
 mod endpoint;
-mod neighbor;
 mod packet;
 
 pub use endpoint::{
@@ -12,11 +11,13 @@ pub use endpoint::{
     Sender,
 };
 
-pub use neighbor::{
+// Re-export arp as a utility.
+pub use crate::layer::arp::{
     Neighbor,
-    Answer as NeighborAnswer,
-    Cache as NeighborCache,
-    Table as NeighborTable,
+    NeighborAnswer,
+    NeighborMapping,
+    NeighborCache,
+    NeighborTable,
 };
 
 pub use packet::{

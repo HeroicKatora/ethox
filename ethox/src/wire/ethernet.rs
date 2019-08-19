@@ -371,7 +371,7 @@ impl PrettyPrint for ethernet {
         match frame.ethertype() {
             EtherType::Arp => {
                 indent.increase(f)?;
-                super::ArpPacket::<&[u8]>::pretty_print(&frame.payload(), f, indent)
+                super::arp_packet::pretty_print(&frame.payload(), f, indent)
             }
             EtherType::Ipv4 => {
                 indent.increase(f)?;

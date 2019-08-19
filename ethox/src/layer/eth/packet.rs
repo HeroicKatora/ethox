@@ -1,8 +1,7 @@
 use crate::nic;
 use crate::layer::{Error, Result};
-use crate::time::Instant;
 use crate::wire::{Payload, PayloadResult, PayloadMut, PayloadMutExt, Reframe, ReframePayload, payload};
-use crate::wire::{EthernetAddress, EthernetFrame, EthernetProtocol, EthernetRepr, IpAddress, ethernet_frame};
+use crate::wire::{EthernetAddress, EthernetFrame, EthernetProtocol, EthernetRepr, ethernet_frame};
 
 /// An incoming packet.
 ///
@@ -48,8 +47,8 @@ pub struct Init {
 
 /// The interface to the endpoint.
 pub(crate) trait Endpoint{
+    /// Get the default source address.
     fn src_addr(&mut self) -> EthernetAddress;
-    fn resolve(&mut self, _: IpAddress, _: Instant) -> Result<EthernetAddress>;
 }
 
 impl<'a> Handle<'a> {
@@ -74,17 +73,6 @@ impl<'a> Handle<'a> {
 
     pub fn src_addr(&mut self) -> EthernetAddress {
         self.endpoint.src_addr()
-    }
-
-    /// Try to initialize the destination from an upper layer protocol address.
-    ///
-    /// Failure to satisfy the request is clearly signalled. Use the result to initialize the
-    /// representation to a valid eth frame.
-    pub fn resolve(&mut self, dst_addr: IpAddress)
-        -> Result<EthernetAddress>
-    {
-        let time = self.nic_handle.info().timestamp();
-        self.endpoint.resolve(dst_addr, time)
     }
 }
 
