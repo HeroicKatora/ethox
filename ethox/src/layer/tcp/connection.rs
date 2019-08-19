@@ -1027,8 +1027,20 @@ impl Connection {
         self.ack_timer = self.ack_timer.min(new_timer);
     }
 
+    /// Get the sequence number of the last byte acknowledged by the other side.
+    ///
+    /// Always points into the byte sequence space by offsetting a missing SYN in case none has
+    /// been received yet.
     pub fn get_send_ack(&self) -> TcpSeqNumber {
-        self.send.unacked
+        match self.current {
+            // If our SYN has not been acked, advance beyond the SYN.
+            State::SynSent => self.send.unacked + 1,
+            // Don't include our FIN even if it has already been acked.
+            State::FinWait | State::Closing | State::TimeWait | State::LastAck
+                if self.send.unacked == self.send.next
+                    => self.send.unacked - 1,
+            _ => self.send.unacked,
+        }
     }
 
     /// Indicate sending an ack for all arrived packets.

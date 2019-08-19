@@ -146,8 +146,6 @@ impl<B: AsRef<[u8]>> SendBuf for SendOnce<B> {
     fn ack(&mut self, ack: TcpSeqNumber) {
         let previous = *self.at.get_or_insert(ack);
         self.consumed += ack - previous;
-        // FIXME: The ack'ed FIN will be one out-of-bounds otherwise. This is ugly.
-        self.consumed = self.consumed.min(self.data.as_ref().len());
         self.at = Some(ack);
     }
 }
