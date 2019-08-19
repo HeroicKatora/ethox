@@ -140,8 +140,8 @@ impl EndpointRef<'_, '_> {
         // Search through the missing arp entries:
         let unresolved = self.inner.neighbors
             .missing()
-            // only those that have not recently been requested already
-            .filter(|missing| !missing.is_alive(ts))
+            // only those alive and not recently been requested already
+            .filter(|missing| missing.is_alive(ts) && missing.looking_for())
             // … and that are entries for ipv4
             .filter_map(|missing| match missing.protocol_addr() {
                 IpAddress::Ipv4(addr) => Some(addr),
@@ -177,7 +177,7 @@ impl EndpointRef<'_, '_> {
         })?;
 
         // Reset the timer for that entry. Should always succeed.
-        let reset = self.inner.neighbors.fill_looking(IpAddress::Ipv4(addr), Some(ts));
+        let reset = self.inner.neighbors.requesting(IpAddress::Ipv4(addr), ts);
         debug_assert!(reset.is_ok());
 
         prepared.send()?;

@@ -37,8 +37,11 @@ pub enum Mapping {
     /// An address is present.
     Address(EthernetAddress),
 
-    /// We don't have a mapping but are looking for one.
+    /// We don't have a mapping but want to have one.
     LookingFor,
+
+    /// We are currently sending a request.
+    Requesting,
 }
 
 impl Default for Mapping {
@@ -148,6 +151,17 @@ impl<'a> Cache<'a> {
         self.update_or_insert(protocol_addr, Mapping::LookingFor, timestamp)
     }
 
+    /// Indicate an entry is currently being requested.
+    ///
+    /// This blocks updates to `LookingFor` from occurring until the timeout.
+    pub fn requesting(
+        &mut self,
+        protocol_addr: IpAddress,
+        timestamp: Instant,
+    ) -> Result<(), Error> {
+        self.update_or_insert(protocol_addr, Mapping::Requesting, Some(timestamp))
+    }
+
     /// Add an entry containing a MAC address.
     ///
     /// Provide the current timestamp or `None` to disable expiration.
@@ -184,7 +198,16 @@ impl<'a> Cache<'a> {
         let exists = self.storage.ordered_slice()
             .binary_search_by_key(&protocol_addr, |neighbor| neighbor.protocol_addr);
         if let Ok(index) = exists {
-            assert_eq!(self.storage[index].protocol_addr, new_neighbor.protocol_addr);
+            let old = self.storage[index];
+            assert_eq!(old.protocol_addr, new_neighbor.protocol_addr);
+
+            if let (Mapping::Requesting, Mapping::LookingFor) = (old.hardware_addr, new_neighbor.hardware_addr) {
+                if old.expires_at >= Expiration::from(timestamp) {
+                    // A not-yet expired request is currently running. Simply do nothing.
+                    return Ok(())
+                }
+            }
+
             let _old = self.storage.replace_at(index, new_neighbor)
                 .expect("Sorting didn't change since we only have one entry per protocol addr");
             return Ok(());
@@ -211,6 +234,8 @@ impl<'a> Cache<'a> {
                     .expect("At least one entry is now free")
             },
         };
+
+        debug_assert!(new_neighbor.hardware_addr != Mapping::Requesting);
 
         *free = new_neighbor;
         self.storage.push()
@@ -295,17 +320,23 @@ impl Neighbor {
 
     pub fn hardware_addr(&self) -> Option<EthernetAddress> {
         match self.hardware_addr {
-            Mapping::LookingFor => None,
             Mapping::Address(addr) => Some(addr),
+            Mapping::LookingFor => None,
+            Mapping::Requesting => None,
         }
     }
 
     pub fn is_alive(&self, ts: Instant) -> bool {
-        Expiration::When(ts) >= self.expires_at
+        Expiration::When(ts) <= self.expires_at
     }
 
     pub fn is_expired(&self, ts: Instant) -> bool {
         !self.is_alive(ts)
+    }
+
+    /// If this address mapping is unknown and should be requested.
+    pub fn looking_for(&self) -> bool {
+        self.hardware_addr == Mapping::LookingFor
     }
 }
 
