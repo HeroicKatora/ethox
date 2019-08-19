@@ -33,6 +33,7 @@ pub mod exports {
     pub use super::tap_interface::{TapInterface, TapInterfaceDesc};
     #[cfg(target_os = "linux")]
     pub use super::raw_socket::{RawSocket, RawSocketDesc};
+    pub use super::wait as sys_wait;
 }
 
 /// Wait until given file descriptor becomes readable, but no longer than given timeout.
@@ -40,9 +41,10 @@ pub fn wait(fd: RawFd, duration: Option<Duration>) -> io::Result<()> {
     let mut readfds;
 
     unsafe {
-        readfds = mem::uninitialized::<libc::fd_set>();
-        libc::FD_ZERO(&mut readfds);
-        libc::FD_SET(fd, &mut readfds);
+        let mut readfds_init = mem::MaybeUninit::<libc::fd_set>::uninit();
+        libc::FD_ZERO(readfds_init.as_mut_ptr());
+        libc::FD_SET(fd, readfds_init.as_mut_ptr());
+        readfds = readfds_init.assume_init();
     }
 
     let mut timeout = libc::timeval { tv_sec: 0, tv_usec: 0 };

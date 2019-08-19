@@ -115,9 +115,6 @@ pub struct Missing<'a> {
 pub struct Table([Neighbor]);
 
 impl<'a> Cache<'a> {
-    /// Minimum delay between discovery requests, in milliseconds.
-    pub(crate) const SILENT_TIME: Duration = Duration::from_millis(1_000);
-
     /// Neighbor entry lifetime, in milliseconds.
     pub(crate) const ENTRY_LIFETIME: Duration = Duration::from_millis(60_000);
 
