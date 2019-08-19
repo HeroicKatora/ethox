@@ -5,70 +5,83 @@
 
 use crate::layer::{eth, Result};
 use crate::wire::{ArpPacket, ArpRepr, ArpOperation, EthernetProtocol, Payload, PayloadMut, IpAddress};
-use crate::layer::ip::{self, IpEndpoint};
+use crate::layer::ip;
 
 use super::packet::{Handle, In, Raw};
+use super::neighbor::Cache;
 
-/// An arp traffic handler.
-#[derive(Default)]
-pub struct Endpoint {
-    // Some configuration could be done here ...
+/// The persistent data of an arp layer.
+///
+/// A protocol layer (currently only IP) must be used in together with this structure to provide
+/// the answer and query functionality.
+///
+/// The endpoint of arp is embedded into the ethernet layer where it can be used by all other upper
+/// layers for handling their protocol specific arp tasks.
+pub struct Endpoint<'data> {
+    neighbors: Cache<'data>,
 }
 
 /// An endpoint borrowed for receiving.
 ///
 /// Dispatching to higher protocols is configured here, and not in the endpoint state.
-pub struct Receiver<'a, 'e> {
-    endpoint: EndpointRef<'a>,
-
-    ip: IpEndpoint<'a, 'e>,
+pub struct Receiver<'a, 'data> {
+    endpoint: EndpointRef<'a, 'data>,
 }
 
 /// An arp endpoint for sending.
-pub struct Sender<'a, 'e> {
-    endpoint: EndpointRef<'a>,
-
-    ip: IpEndpoint<'a, 'e>,
+pub struct Sender<'a, 'data> {
+    endpoint: EndpointRef<'a, 'data>,
 }
 
-struct EndpointRef<'a> {
-    inner: &'a Endpoint,
+struct EndpointRef<'a, 'data> {
+    inner: &'a Endpoint<'data>,
+    ip: &'a mut ip::Endpoint<'data>,
 }
 
-impl Endpoint {
-    pub fn new() -> Self {
-        Self::default()
+impl<'data> Endpoint<'data> {
+    pub fn new<C>(neighbors: C) -> Self
+        where C: Into<Cache<'data>>,
+    {
+        Endpoint {
+            neighbors: neighbors.into(),
+        }
     }
 
     /// A receiver that only answers (and handles) arp requests.
-    pub fn answer<'a, 'e>(&'a mut self, ip: &'a mut ip::Endpoint<'e>) -> Receiver<'a, 'e> {
+    pub fn answer<'a>(&'a mut self, ip: &'a mut ip::Endpoint<'data>) -> Receiver<'a, 'data> {
         Receiver {
-            endpoint: self.get_mut(),
-            ip: ip.ip(),
+            endpoint: self.get_mut(ip),
         }
     }
 
     /// A sender that sends outstanding arp queries.
-    pub fn query<'a, 'e>(&'a mut self, ip: &'a mut ip::Endpoint<'e>) -> Sender<'a, 'e> {
+    pub fn query<'a>(&'a mut self, ip: &'a mut ip::Endpoint<'data>) -> Sender<'a, 'data> {
         Sender {
-            endpoint: self.get_mut(),
-            ip: ip.ip(),
+            endpoint: self.get_mut(ip),
         }
     }
 
     /// Get this by mutable reference for a receiver or sender.
-    fn get_mut(&mut self) -> EndpointRef {
-        EndpointRef { inner: self }
+    fn get_mut<'a>(&'a mut self, ip: &'a mut ip::Endpoint<'data>) -> EndpointRef<'a, 'data> {
+        EndpointRef { inner: self, ip, }
+    }
+
+    pub(crate) fn neighbors(&self) -> &Cache<'data> {
+        &self.neighbors
+    }
+
+    pub(crate) fn neighbors_mut(&mut self) -> &mut Cache<'data> {
+        &mut self.neighbors
     }
 }
 
-impl EndpointRef<'_> {
+impl EndpointRef<'_, '_> {
     /// Try to answer or otherwise handle the packet without propagating it upwards.
     ///
     /// See [RFC826] for details.
     ///
     /// [RFC826]: https://tools.ietf.org/html/rfc826
-    fn handle_internally<P: PayloadMut>(&mut self, packet: In<P>, ip: &IpEndpoint) -> Result<()> {
+    fn handle_internally<P: PayloadMut>(&mut self, packet: In<P>) -> Result<()> {
         let (operation, source_hardware_addr, source_protocol_addr, target_protocol_addr) =
             match packet.packet.repr() {
                 ArpRepr::EthernetIpv4 {
@@ -89,8 +102,10 @@ impl EndpointRef<'_> {
             IpAddress::Ipv4(source_protocol_addr),
             packet.handle.info().timestamp());
 
+        // TODO: handle incoming gratuitous ARP ?
+
         // verify that target protocol address is not a multicast address and we accept it.
-        if !target_protocol_addr.is_multicast() && ip.inner.accepts(IpAddress::Ipv4(target_protocol_addr)) {
+        if target_protocol_addr.is_unicast() && self.ip.accepts(IpAddress::Ipv4(target_protocol_addr)) {
             // unsolicited updates fully ignored not enabled.
 
             // send a reply if necessary.
@@ -103,7 +118,7 @@ impl EndpointRef<'_> {
     }
 
     /// Send oustanding arp requests.
-    fn send_oustanding<P: PayloadMut>(&mut self, _: Raw<P>, _: &IpEndpoint) -> Result<()> {
+    fn send_oustanding<P: PayloadMut>(&mut self, _: Raw<P>) -> Result<()> {
         unimplemented!()
     }
 }
@@ -123,7 +138,7 @@ impl<P> eth::Recv<P> for Receiver<'_, '_>
         let handle = Handle::new(handle);
         let packet = In::new(handle, packet);
 
-        if let Err(_) = self.endpoint.handle_internally(packet, &self.ip) {
+        if let Err(_) = self.endpoint.handle_internally(packet) {
             // TODO: log error
         }
     }
@@ -141,7 +156,7 @@ impl<P> eth::Send<P> for Sender<'_, '_>
         let handle = Handle::new(eth_handle.borrow_mut());
         let packet = Raw::new(handle, payload);
 
-        if let Err(_) = self.endpoint.send_oustanding(packet, &self.ip) {
+        if let Err(_) = self.endpoint.send_oustanding(packet) {
             // TODO: log error
         }
     }

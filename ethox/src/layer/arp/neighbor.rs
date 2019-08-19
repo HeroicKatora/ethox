@@ -1,5 +1,6 @@
 // Heads up! Before working on this file you should read, at least,
 // the parts of RFC 1122 that discuss ARP.
+use core::slice;
 use core::ops::Deref;
 
 use crate::managed::Ordered;
@@ -88,6 +89,11 @@ pub enum Error {
 pub struct Cache<'a> {
     storage:      Ordered<'a, Neighbor>,
     silent_until: Instant,
+}
+
+/// Iterator over missing entries.
+pub struct Missing<'a> {
+    inner: slice::Iter<'a, Neighbor>,
 }
 
 /// A part of the neighbor table.
@@ -274,6 +280,12 @@ impl Table {
 
         None
     }
+
+    pub fn missing(&self) -> Missing {
+        Missing {
+            inner: self.0.iter(),
+        }
+    }
 }
 
 impl Deref for Cache<'_> {
@@ -289,6 +301,17 @@ impl Deref for Table {
 
     fn deref(&self) -> &[Neighbor] {
         &self.0
+    }
+}
+
+impl Iterator for Missing<'_> {
+    type Item = IpAddress;
+
+    fn next(&mut self) -> Option<IpAddress> {
+        self.inner.by_ref().filter_map(|entry| match entry.hardware_addr {
+            Mapping::LookingFor => Some(entry.protocol_addr),
+            Mapping::Address(_) => None,
+        }).next()
     }
 }
 

@@ -17,8 +17,6 @@ pub use endpoint::{
     Sender,
 };
 
-pub(crate) use endpoint::IpEndpoint;
-
 pub use packet::{
     Handle,
     Init,
