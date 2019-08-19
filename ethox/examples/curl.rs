@@ -17,7 +17,6 @@ fn main() {
         host,
         hostmac,
         gateway,
-        gatemac,
         server,
         server_port,
     } = Config::from_args();
@@ -25,14 +24,10 @@ fn main() {
     let mut eth = eth::Endpoint::new(hostmac);
 
     let mut neighbors = [eth::Neighbor::default(); 1];
-    let neighbors = {
-        let mut eth_cache = eth::NeighborCache::new(&mut neighbors[..]);
-        eth_cache.fill(gateway.address().into(), gatemac, None).unwrap();
-        eth_cache
-    };
-    let mut ip = [ip::Route::new_ipv4_gateway(gateway.address()); 1];
-    let routes = ip::Routes::import(List::new_full(ip.as_mut().into()));
-    let mut ip = ip::Endpoint::new(Slice::One(host.into()), routes, neighbors);
+    let mut routes = [ip::Route::new_ipv4_gateway(gateway.address()); 1];
+    let mut ip = ip::Endpoint::new(Slice::One(host.into()),
+        ip::Routes::import(List::new_full(routes.as_mut().into())),
+        eth::NeighborCache::new(&mut neighbors[..]));
 
     let mut tcp = tcp::Endpoint::new(
         Map::Pairs(List::new(Slice::One(Default::default()))),
@@ -65,7 +60,7 @@ fn main() {
     let received = tcp_client.recv().received();
     let http = String::from_utf8_lossy(received);
     let header_end = http.find("\r\n\r\n")
-        .expect("Expected http header end");
+        .expect(&format!("Expected http header end in {}", http));
     write!(out, "{}", &http[header_end+4..])
         .unwrap();
 }
@@ -76,7 +71,6 @@ struct Config {
     host: Ipv4Cidr,
     hostmac: EthernetAddress,
     gateway: Ipv4Cidr,
-    gatemac: EthernetAddress,
     server: net::Ipv4Addr,
     server_port: u16,
 }
