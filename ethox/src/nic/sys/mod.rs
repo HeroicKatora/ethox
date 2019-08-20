@@ -10,13 +10,15 @@
 // * `mod.rs`
 // * `raw_socket.rs`
 // * `tap_interface.rs`
-use core::{mem, ptr};
+use core::mem;
 #[cfg(feature = "std")]
-use std::io;
+use std::{io, ptr};
 #[cfg(feature = "std")]
 use std::os::unix::io::RawFd;
 
 use libc;
+use crate::time::Instant;
+#[cfg(feature = "std")]
 use crate::time::Duration;
 
 #[cfg(target_os = "linux")]
@@ -36,6 +38,7 @@ pub mod exports {
     pub use super::tap_interface::{TapInterface, TapInterfaceDesc};
     #[cfg(target_os = "linux")]
     pub use super::raw_socket::{RawSocket, RawSocketDesc};
+    #[cfg(feature = "std")]
     pub use super::wait as sys_wait;
     pub use super::Errno;
 }
@@ -88,6 +91,9 @@ struct FdResult(pub libc::c_int);
 #[derive(Clone, Copy)]
 struct IoLenResult(pub libc::ssize_t);
 
+#[derive(Clone, Copy)]
+struct ClockResult(pub libc::c_int);
+
 type IoctlResult = FdResult;
 #[allow(non_snake_case)] // Emulate type alias also importing constructor.
 fn IoctlResult(val: libc::c_int) -> IoctlResult { FdResult(val) }
@@ -137,6 +143,12 @@ impl LibcResult for IoLenResult {
     }
 }
 
+impl LibcResult for ClockResult {
+    fn is_fail(self) -> bool {
+        self.0 == -1
+    }
+}
+
 #[cfg(feature = "std")]
 impl From<Errno> for io::Error {
     fn from(err: Errno) -> io::Error {
@@ -158,3 +170,15 @@ impl ifreq {
     }
 }
 
+fn now() -> Result<Instant, Errno> {
+   let ts = unsafe {
+       let mut ts = mem::MaybeUninit::<libc::timespec>::uninit();
+       let res = libc::clock_gettime(libc::CLOCK_MONOTONIC, ts.as_mut_ptr());
+
+       ClockResult(res).errno()?;
+
+       ts.assume_init()
+   };
+
+   Ok(Instant::from_millis(ts.tv_sec*1000 + ts.tv_nsec/1000_000))
+}

@@ -4,10 +4,9 @@
 // in large parts from `smoltcp` originally distributed under 0-clause BSD
 #[cfg(feature = "std")]
 use std::os::unix::io::{RawFd, AsRawFd};
-use std::time::SystemTime;
 
 use libc;
-use super::{Errno, FdResult, IoLenResult, LibcResult, ifreq};
+use super::{now, Errno, FdResult, IoLenResult, LibcResult, ifreq};
 
 use crate::nic::{self, Capabilities, Device, Packet, Personality};
 use crate::nic::common::{EnqueueFlag, PacketInfo};
@@ -176,7 +175,7 @@ impl<C: PayloadMut> TapInterface<C> {
 
     fn current_info() -> PacketInfo {
         PacketInfo {
-            timestamp: SystemTime::now().into(),
+            timestamp: now().unwrap(),
             capabilities: Capabilities::no_support(),
         }
     }

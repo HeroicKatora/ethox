@@ -5,10 +5,9 @@
 use core::mem;
 #[cfg(feature = "std")]
 use std::os::unix::io::{RawFd, AsRawFd};
-use std::time::SystemTime;
 
 use libc;
-use super::{ifreq, linux, Errno, FdResult, LibcResult, IoLenResult};
+use super::{ifreq, linux, now, Errno, FdResult, LibcResult, IoLenResult};
 
 use crate::nic::{self, Capabilities, Device, Packet, Personality};
 use crate::nic::common::{EnqueueFlag, PacketInfo};
@@ -195,7 +194,7 @@ impl<C: PayloadMut> RawSocket<C> {
 
     fn current_info(&self) -> PacketInfo {
         PacketInfo {
-            timestamp: SystemTime::now().into(),
+            timestamp: now().unwrap(),
             capabilities: self.capabilities,
         }
     }
