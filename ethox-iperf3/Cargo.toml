@@ -8,7 +8,7 @@ edition = "2018"
 license = "GPL-3.0-only"
 
 [dependencies]
-ethox = { path = "../ethox" }
+ethox = { path = "../ethox", default-features = false, features = ["std", "sys"] }
 structopt = { version = "0.2", default-features = false }
 
 [[bin]]

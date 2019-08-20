@@ -7,9 +7,11 @@ main_task:
   env:
     matrix:
       - ETHOX_FEATURES:
+      - ETHOX_FEATURES: alloc
       - ETHOX_FEATURES: std
-      - ETHOX_FEATURES: log
-      - ETHOX_FEATURES: std log
+      - ETHOX_FEATURES: sys
+      - ETHOX_FEATURES: alloc sys
+      - ETHOX_FEATURES: std sys
   build_script: cargo build --no-default-features --features "$ETHOX_FEATURES"
   test_script: cargo test --no-default-features --features "$ETHOX_FEATURES"
   before_cache_script: rm -rf $CARGO_HOME/registry/index

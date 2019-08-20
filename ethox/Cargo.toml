@@ -13,25 +13,29 @@ byteorder = "1.0"
 libc = { version = "0.2", optional = true }
 
 [features]
-default = ["std"]
-std = ["libc"]
-log = []
+default = ["alloc"]
+# Interact with the `alloc` crate from std
+alloc = []
+# Interact with all of `std`
+std = ["alloc"]
+# Have libc-based platform dependent sockets
+sys = ["libc"]
 
 [dev-dependencies]
 structopt = { version = "0.2", default-features = false }
 
 [[example]]
 name = "debug_tap"
-required-features = ["std"]
+required-features = ["alloc", "sys"]
 
 [[example]]
 name = "ping_tap"
-required-features = ["std"]
+required-features = ["alloc", "sys"]
 
 [[example]]
 name = "arp_tap"
-required-features = ["std"]
+required-features = ["alloc", "sys"]
 
 [[example]]
 name = "curl"
-required-features = ["std"]
+required-features = ["alloc", "sys"]
