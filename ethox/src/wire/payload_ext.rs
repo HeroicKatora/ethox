@@ -33,7 +33,7 @@ pub trait PayloadMutExt: PayloadMut {
     /// ## Example
     ///
     /// ```rust
-    /// # #[cfg(feature = "std")] {
+    /// # #[cfg(feature = "alloc")] {
     /// # use ethox::wire::{PayloadMutExt, ReframePayload};
     /// const PAYLOAD: &[u8] = b"xxxx";
     /// let mut packet = b"******"[..].to_vec();
