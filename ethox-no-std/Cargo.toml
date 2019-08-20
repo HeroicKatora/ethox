@@ -1,0 +1,15 @@
+[package]
+name = "ethox-no-std"
+description = "Showing ethox without std"
+publish = false
+version = "0.0.0"
+authors = ["Andreas Molzer <andreas.molzer@gmx.de>"]
+edition = "2018"
+license = "GPL-3.0-only"
+
+[dependencies]
+ethox = { path = "../ethox", default-features = false, features = ["sys"] }
+
+[[bin]]
+name = "raw-ping"
+path = "main.rs"
