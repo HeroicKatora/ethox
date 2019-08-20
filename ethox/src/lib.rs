@@ -13,11 +13,11 @@ pub mod wire;
 
 /// The `alloc` crate, or a replacement without feature `"std"`.
 #[cfg(any(
-    feature = "std",
+    feature = "alloc",
     test))]
 pub extern crate alloc;
 
 #[cfg(all(
-    not(feature = "std"),
+    not(feature = "alloc"),
     not(test)))]
 pub use self::managed::alloc;

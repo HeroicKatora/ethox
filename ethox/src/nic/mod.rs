@@ -5,7 +5,7 @@ pub mod common;
 pub mod loopback;
 pub mod external;
 mod personality;
-#[cfg(feature = "std")]
+#[cfg(feature = "sys")]
 mod sys;
 
 use crate::wire::Payload;
@@ -19,7 +19,7 @@ pub use self::personality::{
     Personality,
     Protocol};
 
-#[cfg(feature = "std")]
+#[cfg(feature = "sys")]
 pub use self::sys::exports::*;
 
 /// A reference to memory holding packet data and a handle.

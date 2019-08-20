@@ -1,0 +1,31 @@
+[package]
+name = "ethox-no-std"
+description = "Showing ethox without std"
+publish = false
+version = "0.0.0"
+authors = ["Andreas Molzer <andreas.molzer@gmx.de>"]
+edition = "2018"
+license = "GPL-3.0-only"
+
+[workspace]
+# Our own workspace since we want to control over the profile etc.
+
+[dependencies]
+ethox = { path = "../ethox", default-features = false, features = ["sys"] }
+
+[[bin]]
+name = "raw-ping"
+path = "main.rs"
+
+[profile.dev]
+# Smaller, doesn't require eh_personality, and everything hopefully handled.
+panic = "abort"
+# For some reason, at opt-level = 0, rustc tries to link to _Unwind_Resume and
+# panic handler even though we have `panic = abort`. Welp.
+opt-level = 1
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
