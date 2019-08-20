@@ -2,12 +2,12 @@
 // Copyright (C) 2019 Andreas Molzer <andreas.molzer@tum.de>
 //
 // in large parts from `smoltcp` originally distributed under 0-clause BSD
-use std::io;
+#[cfg(feature = "std")]
 use std::os::unix::io::{RawFd, AsRawFd};
 use std::time::SystemTime;
 
 use libc;
-use super::{FdResult, IoLenResult, ifreq, test_result};
+use super::{Errno, FdResult, IoLenResult, ifreq, test_result};
 
 use crate::nic::{self, Capabilities, Device, Packet, Personality};
 use crate::nic::common::{EnqueueFlag, PacketInfo};
@@ -34,7 +34,7 @@ pub struct TapInterfaceDesc {
 pub struct TapInterface<C> {
     inner: TapInterfaceDesc,
     buffer: Partial<C>,
-    last_err: Option<io::Error>,
+    last_err: Option<Errno>,
 }
 
 enum Received {
@@ -43,12 +43,14 @@ enum Received {
     Err(crate::layer::Error),
 }
 
+#[cfg(feature = "std")]
 impl AsRawFd for TapInterfaceDesc {
     fn as_raw_fd(&self) -> RawFd {
         self.lower
     }
 }
 
+#[cfg(feature = "std")]
 impl<C> AsRawFd for TapInterface<C> {
     fn as_raw_fd(&self) -> RawFd {
         self.inner.as_raw_fd()
@@ -58,7 +60,7 @@ impl<C> AsRawFd for TapInterface<C> {
 static TAP_PATH: &'static [u8] = b"/dev/net/tun\0";
 
 impl TapInterfaceDesc {
-    pub fn new(name: &str) -> io::Result<TapInterfaceDesc> {
+    pub fn new(name: &str) -> Result<TapInterfaceDesc, Errno> {
         let lower = unsafe {
             libc::open(
                 TAP_PATH.as_ptr() as *const libc::c_char,
@@ -73,14 +75,14 @@ impl TapInterfaceDesc {
         })
     }
 
-    pub fn attach_interface(&mut self) -> io::Result<()> {
+    pub fn attach_interface(&mut self) -> Result<(), Errno> {
         self.ifreq.tun_set_tap(self.lower)
     }
 
     /// Try to find the mtu of the tap.
     ///
     /// Works (more or less) by opening an `AF_INET/PROTO_IP` socket and querying its mtu.
-    pub fn interface_mtu(&mut self) -> io::Result<usize> {
+    pub fn interface_mtu(&mut self) -> Result<usize, Errno> {
         let lower = unsafe {
             libc::socket(libc::AF_INET, libc::SOCK_DGRAM, libc::IPPROTO_IP)
         };
@@ -95,7 +97,7 @@ impl TapInterfaceDesc {
         mtu
     }
 
-    pub fn recv(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+    pub fn recv(&mut self, buffer: &mut [u8]) -> Result<usize, Errno> {
         let len = unsafe {
             libc::read(
                 self.lower,
@@ -106,7 +108,7 @@ impl TapInterfaceDesc {
         Ok(len as usize)
     }
 
-    pub fn send(&mut self, buffer: &[u8]) -> io::Result<usize> {
+    pub fn send(&mut self, buffer: &[u8]) -> Result<usize, Errno> {
         let len = unsafe {
             libc::write(
                 self.lower,
@@ -119,7 +121,7 @@ impl TapInterfaceDesc {
 }
 
 impl<C: PayloadMut> TapInterface<C> {
-    pub fn new(name: &str, buffer: C) -> io::Result<Self> {
+    pub fn new(name: &str, buffer: C) -> Result<Self, Errno> {
         let mut inner = TapInterfaceDesc::new(name)?;
         inner.attach_interface()?;
         Ok(TapInterface {
@@ -130,7 +132,7 @@ impl<C: PayloadMut> TapInterface<C> {
     }
 
     /// Take the last io error returned by the OS.
-    pub fn last_err(&mut self) -> Option<io::Error> {
+    pub fn last_err(&mut self) -> Option<Errno> {
         self.last_err.take()
     }
 
@@ -161,12 +163,12 @@ impl<C: PayloadMut> TapInterface<C> {
                 self.buffer.set_len_unchecked(len);
                 Received::Ok
             },
-            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => Received::NoData,
+            Err(ref err) if err.0 == libc::EWOULDBLOCK => Received::NoData,
             Err(err) => Received::Err(self.store_err(err)),
         }
     }
 
-    fn store_err(&mut self, err: io::Error) -> crate::layer::Error {
+    fn store_err(&mut self, err: Errno) -> crate::layer::Error {
         let as_nic = io_error_to_layer(&err);
         self.last_err = Some(err);
         as_nic
@@ -239,7 +241,7 @@ impl<C: PayloadMut> Device for TapInterface<C> {
     }
 }
 
-fn io_error_to_layer(_: &io::Error) -> crate::layer::Error {
+fn io_error_to_layer(_: &Errno) -> crate::layer::Error {
     // FIXME: not the best feed back.
     crate::layer::Error::Illegal 
 }

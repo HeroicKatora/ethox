@@ -10,7 +10,9 @@
 // * `mod.rs`
 // * `raw_socket.rs`
 // * `tap_interface.rs`
-use std::{mem, ptr, io};
+use core::{mem, ptr};
+#[cfg(feature = "std")]
+use std::io;
 use std::os::unix::io::RawFd;
 
 use libc;
@@ -34,10 +36,11 @@ pub mod exports {
     #[cfg(target_os = "linux")]
     pub use super::raw_socket::{RawSocket, RawSocketDesc};
     pub use super::wait as sys_wait;
+    pub use super::Errno;
 }
 
 /// Wait until given file descriptor becomes readable, but no longer than given timeout.
-pub fn wait(fd: RawFd, duration: Option<Duration>) -> io::Result<()> {
+pub fn wait(fd: RawFd, duration: Option<Duration>) -> Result<(), Errno> {
     let mut readfds;
 
     unsafe {
@@ -79,13 +82,33 @@ type IoctlResult = FdResult;
 #[allow(non_snake_case)] // Emulate type alias also importing constructor.
 fn IoctlResult(val: libc::c_int) -> IoctlResult { FdResult(val) }
 
+/// An errno value.
+///
+/// This is used as the error representation of raw libc calls. It can be converted into a
+/// `std::io::Error` when the `std` feature is enabled, where it will consequently have much more
+/// extensive error information.
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct Errno(pub libc::c_int);
+
+/// Trait for interpreting integer return values.
+///
+/// Failure signals may vary between:
+/// * `-1`
+/// * arbitrary negative values
+/// * non-zero
 trait LibcResult: Copy {
     fn is_fail(self) -> bool;
 }
 
-fn test_result(ret: impl LibcResult) -> io::Result<()> {
+impl Errno {
+    pub fn new() -> Errno {
+        Errno(unsafe { *libc::__errno_location() })
+    }
+}
+
+fn test_result(ret: impl LibcResult) -> Result<(), Errno> {
     if ret.is_fail() {
-        Err(io::Error::last_os_error()) 
+        Err(Errno::new())
     } else {
         Ok(())
     }
@@ -100,6 +123,13 @@ impl LibcResult for FdResult {
 impl LibcResult for IoLenResult {
     fn is_fail(self) -> bool {
         self.0 == -1
+    }
+}
+
+#[cfg(feature = "std")]
+impl From<Errno> for io::Error {
+    fn from(err: Errno) -> io::Error {
+        io::Error::from_raw_os_error(err.0 as i32)
     }
 }
 
