@@ -9,8 +9,8 @@ documentation = "https://docs.rs/ethox"
 categories = ["network-programming", "no-std"]
 
 [dependencies]
-byteorder = "1.0"
-libc = { version = "0.2", optional = true }
+byteorder = { version = "1.0", default-features = false }
+libc = { version = "0.2", default-features = false, optional = true }
 
 [features]
 default = ["alloc"]
