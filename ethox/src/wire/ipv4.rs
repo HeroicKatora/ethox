@@ -381,11 +381,13 @@ impl Subnet {
     }
 }
 
+#[cfg(feature = "std")]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParseCidrError {
     kind: ParseCidrErrorKind,
 }
 
+#[cfg(feature = "std")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ParseCidrErrorKind {
     NoSubnet,
@@ -399,6 +401,7 @@ impl fmt::Display for Cidr {
     }
 }
 
+#[cfg(feature = "std")]
 impl fmt::Display for ParseCidrError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.write_str(match self.kind {
