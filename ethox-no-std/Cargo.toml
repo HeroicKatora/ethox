@@ -20,6 +20,9 @@ path = "main.rs"
 [profile.dev]
 # Smaller, doesn't require eh_personality, and everything hopefully handled.
 panic = "abort"
+# For some reason, at opt-level = 0, rustc tries to link to _Unwind_Resume and
+# panic handler even though we have `panic = abort`. Welp.
+opt-level = 1
 
 [profile.release]
 opt-level = 3
