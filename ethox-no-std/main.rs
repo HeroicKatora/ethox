@@ -3,13 +3,16 @@
 //! Note that this is not as ergonomic for argument parsing, so we set up a stack answering only
 //! icmpv4 pings (and arp) without any routes.
 #![no_std]
+#![no_main]
 
 use ethox::managed::Slice;
 use ethox::nic::{Device, TapInterface};
 use ethox::layer::{eth, ip, icmp};
 use ethox::wire::{Ipv4Address, Ipv4Cidr, EthernetAddress};
 
-fn main() {
+#[no_mangle]
+// The main function, with its input arguments ignored, and an exit status is returned
+pub extern fn main(_nargs: i32, _args: *const *const u8) -> i32 {
     let name = "tap0";
     let host = Ipv4Cidr::new(Ipv4Address([10, 0, 0, 1]), 24);
     let hostmac = EthernetAddress([0xab,0xff,0xff,0xff,0xff,0xff]);
@@ -41,4 +44,12 @@ fn main() {
             break;
         }
     }
+
+    0
+}
+
+#[panic_handler]
+fn panic(_: &core::panic::PanicInfo) -> ! {
+    // We abort on panic.
+    loop { }
 }

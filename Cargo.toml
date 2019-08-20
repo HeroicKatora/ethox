@@ -2,7 +2,6 @@
 members = [
 	"ethox",
 	"ethox-iperf3",
-	"ethox-no-std",
 ]
 
 [profile.release]
