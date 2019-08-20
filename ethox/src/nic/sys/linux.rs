@@ -2,7 +2,7 @@
 // Copyright (C) 2019 Andreas Molzer <andreas.molzer@tum.de>
 //
 // in large parts from `smoltcp` originally distributed under 0-clause BSD
-use super::{ifreq, Errno, IoctlResult, test_result};
+use super::{ifreq, Errno, LibcResult, IoctlResult};
 use libc;
 
 pub const ETH_P_ALL:    libc::c_short = 0x0003;
@@ -54,7 +54,7 @@ impl TunSetIf for ifreq {
             libc::ioctl(fd, Self::TUNSETIFF, &mut request as *mut _)
         };
 
-        test_result(IoctlResult(res))?;
+        IoctlResult(res).errno()?;
 
         Ok(())
     }
@@ -81,7 +81,7 @@ impl NetdeviceMtu for ifreq {
             libc::ioctl(fd, Self::SIOCGIFMTU, &mut request as *mut _)
         };
 
-        test_result(IoctlResult(res))?;
+        IoctlResult(res).errno()?;
 
         Ok(request.ifr_mtu)
     }
@@ -104,7 +104,7 @@ impl IfIndex for ifreq {
             libc::ioctl(fd, Self::SIOCGIFINDEX, &mut request as *mut _)
         };
 
-        test_result(IoctlResult(res))?;
+        IoctlResult(res).errno()?;
 
         Ok(request.ifr_ifindex)
     }

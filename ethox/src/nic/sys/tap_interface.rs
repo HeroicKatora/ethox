@@ -7,7 +7,7 @@ use std::os::unix::io::{RawFd, AsRawFd};
 use std::time::SystemTime;
 
 use libc;
-use super::{Errno, FdResult, IoLenResult, ifreq, test_result};
+use super::{Errno, FdResult, IoLenResult, LibcResult, ifreq};
 
 use crate::nic::{self, Capabilities, Device, Packet, Personality};
 use crate::nic::common::{EnqueueFlag, PacketInfo};
@@ -67,7 +67,7 @@ impl TapInterfaceDesc {
                 libc::O_RDWR | libc::O_NONBLOCK)
         };
 
-        test_result(FdResult(lower))?;
+        FdResult(lower).errno()?;
 
         Ok(TapInterfaceDesc {
             lower,
@@ -87,7 +87,7 @@ impl TapInterfaceDesc {
             libc::socket(libc::AF_INET, libc::SOCK_DGRAM, libc::IPPROTO_IP)
         };
 
-        test_result(FdResult(lower))?;
+        FdResult(lower).errno()?;
 
         let mtu = self.ifreq.get_mtu(self.lower)
             .map(|mtu| mtu as usize);
@@ -104,7 +104,7 @@ impl TapInterfaceDesc {
                 buffer.as_mut_ptr() as *mut libc::c_void,
                 buffer.len())
         };
-        test_result(IoLenResult(len))?;
+        IoLenResult(len).errno()?;
         Ok(len as usize)
     }
 
@@ -115,7 +115,7 @@ impl TapInterfaceDesc {
                 buffer.as_ptr() as *const libc::c_void,
                 buffer.len())
         };
-        test_result(IoLenResult(len))?;
+        IoLenResult(len).errno()?;
         Ok(len as usize)
     }
 }

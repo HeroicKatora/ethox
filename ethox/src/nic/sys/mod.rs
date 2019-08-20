@@ -13,6 +13,7 @@
 use core::{mem, ptr};
 #[cfg(feature = "std")]
 use std::io;
+#[cfg(feature = "std")]
 use std::os::unix::io::RawFd;
 
 use libc;
@@ -39,6 +40,7 @@ pub mod exports {
     pub use super::Errno;
 }
 
+#[cfg(feature = "std")]
 /// Wait until given file descriptor becomes readable, but no longer than given timeout.
 pub fn wait(fd: RawFd, duration: Option<Duration>) -> Result<(), Errno> {
     let mut readfds;
@@ -69,8 +71,16 @@ pub fn wait(fd: RawFd, duration: Option<Duration>) -> Result<(), Errno> {
             timeout_ptr)
     };
 
-    test_result(FdResult(res))
+    FdResult(res).errno()
 }
+
+/// An errno value.
+///
+/// This is used as the error representation of raw libc calls. It can be converted into a
+/// `std::io::Error` when the `std` feature is enabled, where it will consequently have much more
+/// extensive error information.
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct Errno(pub libc::c_int);
 
 #[derive(Clone, Copy)]
 struct FdResult(pub libc::c_int);
@@ -82,13 +92,14 @@ type IoctlResult = FdResult;
 #[allow(non_snake_case)] // Emulate type alias also importing constructor.
 fn IoctlResult(val: libc::c_int) -> IoctlResult { FdResult(val) }
 
-/// An errno value.
+/// Base for an if ioctl request.
 ///
-/// This is used as the error representation of raw libc calls. It can be converted into a
-/// `std::io::Error` when the `std` feature is enabled, where it will consequently have much more
-/// extensive error information.
-#[derive(Debug, PartialEq, Eq, Hash)]
-pub struct Errno(pub libc::c_int);
+/// Contains the name of the interface.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct ifreq {
+    ifr_name: [libc::c_char; libc::IF_NAMESIZE],
+}
 
 /// Trait for interpreting integer return values.
 ///
@@ -98,19 +109,19 @@ pub struct Errno(pub libc::c_int);
 /// * non-zero
 trait LibcResult: Copy {
     fn is_fail(self) -> bool;
+
+    fn errno(self) -> Result<(), Errno> {
+        if self.is_fail() {
+            Err(Errno::new())
+        } else {
+            Ok(())
+        }
+    }
 }
 
 impl Errno {
     pub fn new() -> Errno {
         Errno(unsafe { *libc::__errno_location() })
-    }
-}
-
-fn test_result(ret: impl LibcResult) -> Result<(), Errno> {
-    if ret.is_fail() {
-        Err(Errno::new())
-    } else {
-        Ok(())
     }
 }
 
@@ -131,15 +142,6 @@ impl From<Errno> for io::Error {
     fn from(err: Errno) -> io::Error {
         io::Error::from_raw_os_error(err.0 as i32)
     }
-}
-
-/// Base for an if ioctl request.
-///
-/// Contains the name of the interface.
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-struct ifreq {
-    ifr_name: [libc::c_char; libc::IF_NAMESIZE],
 }
 
 impl ifreq {

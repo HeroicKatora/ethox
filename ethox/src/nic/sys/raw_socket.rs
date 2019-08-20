@@ -8,7 +8,7 @@ use std::os::unix::io::{RawFd, AsRawFd};
 use std::time::SystemTime;
 
 use libc;
-use super::{ifreq, linux, test_result, Errno, FdResult, IoLenResult};
+use super::{ifreq, linux, Errno, FdResult, LibcResult, IoLenResult};
 
 use crate::nic::{self, Capabilities, Device, Packet, Personality};
 use crate::nic::common::{EnqueueFlag, PacketInfo};
@@ -67,7 +67,7 @@ impl RawSocketDesc {
                 linux::ETH_P_ALL.to_be() as i32)
         };
 
-        test_result(FdResult(lower))?;
+        FdResult(lower).errno()?;
 
         Ok(RawSocketDesc {
             lower,
@@ -98,7 +98,7 @@ impl RawSocketDesc {
                 mem::size_of::<libc::sockaddr_ll>() as u32)
         };
 
-        test_result(FdResult(res))
+        FdResult(res).errno()
     }
 
     pub fn recv(&mut self, buffer: &mut [u8]) -> Result<usize, Errno> {
@@ -109,7 +109,7 @@ impl RawSocketDesc {
                 buffer.len(),
                 0)
         };
-        test_result(IoLenResult(len))?;
+        IoLenResult(len).errno()?;
         Ok(len as usize)
     }
 
@@ -121,7 +121,7 @@ impl RawSocketDesc {
                 buffer.len(),
                 0)
         };
-        test_result(IoLenResult(len))?;
+        IoLenResult(len).errno()?;
         Ok(len as usize)
     }
 }
