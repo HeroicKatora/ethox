@@ -22,8 +22,17 @@ nightly_task:
   cargo_cache:
     folder: $CARGO_HOME/registry
     fingerprint_script: cat Cargo.lock
-  build_script: cargo build --all-features
-  test_script: cargo test --all-features
+  test_all_script: cargo test --all-features
+  before_cache_script: rm -rf $CARGO_HOME/registry/index
+
+no_std_task:
+  container:
+    image: rust:latest
+  cargo_cache:
+    folder: $CARGO_HOME/registry
+    fingerprint_script: cat ethox-no-std/Cargo.lock
+  normal_script: cd ethox-no-std && cargo build
+  release_script: cd ethox-no-std && cargo build --release
   before_cache_script: rm -rf $CARGO_HOME/registry/index
 
 doc_task:
