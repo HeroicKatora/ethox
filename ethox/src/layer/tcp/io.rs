@@ -2,7 +2,7 @@
 //!
 //! This is not quite a compatibility layer with socket APIs but parts of it may be reasonably
 //! close to enabling it.
-use core::borrow::BorrowMut;
+use core::borrow::{Borrow, BorrowMut};
 use core::convert::TryFrom;
 
 use crate::wire::TcpSeqNumber;
@@ -27,10 +27,17 @@ pub struct Sink {
     highest: Option<TcpSeqNumber>,
 }
 
-/// Sender with fixed data.
-pub struct SendOnce<B> {
+/// Sender with buffered data.
+pub struct SendFrom<B> {
+    /// The buffer of bytes.
     data: B,
+    /// Index of the next fully acked byte.
     consumed: usize,
+    /// Index of the highest sent byte.
+    sent: usize,
+    /// Indicate that all data has been put into the buffer.
+    fin: bool,
+    /// The tcp sequence number corresponding to the `consumed` index.
     at: Option<TcpSeqNumber>,
 }
 
@@ -58,13 +65,62 @@ impl Sink {
     }
 }
 
-impl<B: AsRef<[u8]>> SendOnce<B> {
+impl<B: Borrow<[u8]>> SendFrom<B> {
+    /// Create a buffered sender.
     pub fn new(data: B) -> Self {
-        SendOnce {
+        SendFrom {
             data,
             consumed: 0,
+            sent: 0,
+            fin: false,
             at: None,
         }
+    }
+
+    /// A one-shot sender.
+    ///
+    /// This is equivalent to calling `fin` immediately.
+    pub fn once(data: B) -> Self {
+        SendFrom {
+            data,
+            consumed: 0,
+            sent: 0,
+            fin: true,
+            at: None,
+        }
+    }
+
+    pub fn get_ref(&self) -> &B {
+        &self.data
+    }
+
+    pub fn get_mut(&mut self) -> &mut B {
+        &mut self.data
+    }
+
+    /// Indicate that no more data will be added.
+    pub fn fin(&mut self) {
+        self.fin = true;
+    }
+
+    /// Get a reference to the data in the retransmit buffer.
+    ///
+    /// No mutable variant since you should not change this data. It's of course not compliant with
+    /// the tcp specification to modify the data.
+    pub fn sending(&self) -> &[u8] {
+        &self.data.borrow()[self.consumed..self.sent]
+    }
+
+    /// Get a reference to the data that was not yet sent.
+    pub fn unsent(&self) -> &[u8] {
+        &self.data.borrow()[self.sent..]
+    }
+
+    /// Get a mutable reference to the data that was not yet sent.
+    pub fn unsent_mut(&mut self) -> &mut [u8]
+        where B: BorrowMut<[u8]>
+    {
+        &mut self.data.borrow_mut()[self.sent..]
     }
 }
 
@@ -126,20 +182,21 @@ impl RecvBuf for Sink {
     }
 }
 
-impl<B: AsRef<[u8]>> SendBuf for SendOnce<B> {
+impl<B: Borrow<[u8]>> SendBuf for SendFrom<B> {
     fn available(&self) -> AvailableBytes {
         AvailableBytes {
-            total: self.data.as_ref().len() - self.consumed,
-            fin: true,
+            total: self.data.borrow().len() - self.consumed,
+            fin: self.fin,
         }
     }
 
     fn fill(&mut self, buf: &mut [u8], begin: TcpSeqNumber) {
         let consumed_at = self.at.expect("Fill must not be called before isn indication");
-        let data = &self.data.as_ref()[self.consumed..];
+        let data = &self.data.borrow()[self.consumed..];
 
         let start = begin - consumed_at;
         let end = start + buf.len();
+        self.sent = self.sent.max(self.consumed + end);
         buf.copy_from_slice(&data[start..end])
     }
 

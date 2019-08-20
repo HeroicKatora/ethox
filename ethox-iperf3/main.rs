@@ -42,7 +42,7 @@ fn main() {
     );
     let mut tcp_client = tcp::Client::new(
         Ipv4Address::from(server).into(), server_port,
-        tcp::io::Sink::new(), tcp::io::SendOnce::new(message));
+        tcp::io::Sink::new(), tcp::io::SendFrom::new(message));
 
     let mut interface = TapInterface::new(&name, vec![0; 1 << 14])
         .expect("Couldn't initialize interface");
@@ -71,5 +71,5 @@ struct Config {
     gatemac: EthernetAddress,
     server: net::Ipv4Addr,
     server_port: u16,
-    message: String,
+    message: Vec<u8>,
 }
