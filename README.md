@@ -11,12 +11,24 @@ never perform internal allocation. However, the user may choose to do so where
 deemed nessary. It targets `stable` and `nightly` Rust only, and does not aim
 to be compatible to previous stable releases.
 
-## Features
+## Overview and Features
 
 The initial feature set will be `eth+(ipv4|ipv6)+(udp+tcp)`. Also `arp` and
 `icmp` are supported. See the more complete feature list [below](#Details).
 
+<!--[![crates.io](https://img.shields.io/crates/v/image.svg)](https://crates.io/crates/image) -->
+[![CI Status](https://api.cirrus-ci.com/github/HeroicKatora/ethox.svg)](https://cirrus-ci.com/github/HeroicKatora/ethox)
+[![License](https://img.shields.io/badge/license-GPLv3-blue.svg)](COPYING)
+[![Scc lines of code](https://sloc.xyz/github/HeroicKatora/ethox?category=code)](#Ethox)
+[![Scc comments](https://sloc.xyz/github/HeroicKatora/ethox?category=comments)](#Ethox)
+
 ## Usage
+
+```
+# Cargo.toml
+# Pin the version to a specific commit with `rev = "…"`.
+ethox = { git = "https://github.com/HeroicKatora/ethox" }
+```
 
 The main interface of **Ethox** is built around zero-copy, for as long as
 possible. It is *not* socket oriented but based on a dynamically built tree of
