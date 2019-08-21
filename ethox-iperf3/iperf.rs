@@ -23,6 +23,7 @@ pub struct Iperf3 {
     config: Config,
     state: State,
     stream_handshake: Handshake,
+    wait_json: bool,
     udp: udp::Endpoint<'static>,
     tcp: tcp::Endpoint<'static>,
     control: tcp::Client<IperfRecv, IperfSend>,
@@ -92,6 +93,7 @@ impl Iperf3 {
             tcp: Self::generate_tcp(config),
             control: Self::generate_control(config),
             result: None,
+            wait_json: false,
         }
     }
 
@@ -177,6 +179,76 @@ impl Iperf3 {
         packet[0..4].copy_from_slice(&secs.to_be_bytes());
         packet[4..8].copy_from_slice(&millis.to_be_bytes());
         packet[8..12].copy_from_slice(&count.to_be_bytes());
+    }
+
+    fn receive_control<P: PayloadMut>(&mut self, packet: ip::InPacket<P>) {
+        use ip::Recv;
+
+        self.tcp.recv(&mut self.control).receive(packet);
+        if self.wait_json {
+            self.wait_json_content();
+        }
+
+        self.wait_state_transition()
+    }
+
+    fn wait_state_transition(&mut self) {
+        if let Some(state) = self.control.recv_mut().recv_state() {
+            self.remote_transition(state);
+        }
+    }
+
+    fn wait_json_content(&mut self) {
+        if let Some(json) = self.control.recv_mut().get_json() {
+            let json = json.to_owned();
+            self.control.recv_mut().bump_json();
+            self.remote_json(json);
+        }
+    }
+
+    fn receive_stream<P: PayloadMut>(&mut self, packet: ip::InPacket<P>) {
+        use ip::Recv;
+
+        self.udp.recv(&mut self.stream_handshake).receive(packet);
+        if self.stream_handshake.shaken {
+            self.control.send_mut().send_state(State::TestStart);
+        }
+    }
+
+    /// Execute state transition wanted by remote.
+    fn remote_transition(&mut self, state: State) {
+        // Expected transitions.
+        match (self.state, state) {
+            | (State::None, State::ParamExchange)
+            | (State::ParamExchange, State::CreateStreams)
+            | (State::TestRunning, State::TestEnd)
+            | (State::TestEnd, State::ExchangeResults)
+            | (State::ExchangeResults, State::DisplayResults)
+                => (),
+            (other, unexpected) => println!("Unexpected state transition from {:?} to {:?}", other, unexpected),
+        }
+
+        let wait_json = match state {
+            State::ParamExchange | State::ExchangeResults => true,
+            _ => false,
+        };
+
+        self.state = state;
+        self.wait_json = wait_json;
+    }
+
+    /// Accept incoming remote json data.
+    fn remote_json(&mut self, json: Vec<u8>) {
+        match self.state {
+            State::ParamExchange => (),
+            State::ExchangeResults => (),
+            state => {
+                println!("Unexpect json in state {:?}: {:?}", state, String::from_utf8_lossy(&json));
+                return;
+            },
+        }
+
+        // TODO: maybe we should at least parse it.
     }
 }
 
@@ -265,11 +337,14 @@ impl IperfSend {
 impl<P: PayloadMut> ip::Recv<P> for &'_ mut Iperf3 {
     fn receive(&mut self, packet: ip::InPacket<P>) {
         match packet.packet.repr().protocol() {
-            IpProtocol::Tcp => self.tcp.recv(&mut self.control).receive(packet),
+            IpProtocol::Tcp => {
+                self.receive_control(packet);
+            },
             // We want to receive a single packet on udp: When creating streams we get one from the
             // server. I don't even know yet if its content is important.
-            IpProtocol::Udp if self.state == State::CreateStreams =>
-                self.udp.recv(&mut self.stream_handshake).receive(packet),
+            IpProtocol::Udp if self.state == State::CreateStreams => {
+                self.receive_stream(packet);
+            },
             _ => (),
         }
     }
