@@ -5,6 +5,7 @@
 use core::borrow::{Borrow, BorrowMut};
 use core::convert::TryFrom;
 
+use crate::alloc::vec::Vec;
 use crate::wire::TcpSeqNumber;
 use crate::storage::assembler::{Assembler, Contig};
 
