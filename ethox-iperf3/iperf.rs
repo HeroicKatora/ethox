@@ -94,6 +94,7 @@ impl Iperf3 {
             control: Self::generate_control(config),
             result: None,
             wait_json: false,
+            wait_remote: false,
         }
     }
 
@@ -196,6 +197,10 @@ impl Iperf3 {
         if let Some(state) = self.control.recv_mut().recv_state() {
             self.remote_transition(state);
         }
+
+        if self.control.send().retransmit_bytes() == 0 && self.wait_remote {
+            self.remote_transitioned();
+        }
     }
 
     fn wait_json_content(&mut self) {
@@ -235,6 +240,22 @@ impl Iperf3 {
 
         self.state = state;
         self.wait_json = wait_json;
+    }
+
+    /// Opposite of remote_transition, we noticed that the remote has transitioned.
+    fn remote_transitioned(&mut self) {
+        // Expected transitions.
+        let sent = match self.state {
+            State::CreateStreams => State::TestRunning,
+            State::DisplayResults => State::ClientTerminate,
+            other => {
+                println!("Unexpected state transition from {:?} to {:?}", other, unexpected),
+                State::None
+            },
+        };
+
+        self.state = state;
+        self.wait_json = false;
     }
 
     /// Accept incoming remote json data.
