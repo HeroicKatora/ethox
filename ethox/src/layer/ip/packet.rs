@@ -43,6 +43,7 @@ pub enum IpPacket<'a, P: Payload> {
 }
 
 /// Initializer for a packet.
+#[derive(Copy, Clone, Debug)]
 pub struct Init {
     pub source: Source,
     pub dst_addr: IpAddress,
