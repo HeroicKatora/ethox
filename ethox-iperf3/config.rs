@@ -23,7 +23,6 @@ pub struct Config {
     pub host: Ipv4Cidr,
     pub hostmac: EthernetAddress,
     pub gateway: Ipv4Cidr,
-    pub gatemac: EthernetAddress,
 
     #[structopt(subcommand)]
     pub iperf3: Iperf3Config,

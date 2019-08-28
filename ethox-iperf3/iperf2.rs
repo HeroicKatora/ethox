@@ -108,11 +108,14 @@ impl Connection {
         allowed >= self.packet_size as u128
     }
 
+    /// Called after a packet has been sent.
     fn update_sent(&mut self, now: Instant) {
         let allowed = self.allowed_bytes(now);
         self.wrapping_part_bytes = allowed
             .saturating_sub(self.packet_size as u128)
             as usize;
+        self.remaining = self.remaining
+            .saturating_sub(self.packet_size);
         self.last_time = now;
         self.packet_count += 1;
     }
@@ -143,6 +146,11 @@ impl Connection {
         packet[8..12].copy_from_slice(&millis.to_be_bytes());
         // For some reason, these bytes are always zeroed.
         packet[16..20].copy_from_slice(&[0, 0, 0, 0]);
+
+        // Last packet marker.
+        if self.remaining < self.packet_size {
+            packet[0] |= 0x80;
+        }
     }
 
     fn error_shutdown(&mut self) {

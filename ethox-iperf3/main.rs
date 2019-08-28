@@ -2,6 +2,10 @@
 //!
 //! Connects to a given remote tcp host and sends a single provided message. Any incoming data is
 //! silently discarded without having been copied into a buffer (but no FIN sent).
+//!
+//! Prepend the ethox configuration to the usual iperf options. Call example:
+//!
+//! * `iperf3 tap0 10.0.0.1/24 ab:ff:ff:ff:ff:ff 10.0.0.2/24 -c 10.0.0.2 5001 -l 10000 -n 2470`
 mod config;
 // mod iperf;
 mod iperf2;
