@@ -3,7 +3,8 @@
 //! Connects to a given remote tcp host and sends a single provided message. Any incoming data is
 //! silently discarded without having been copied into a buffer (but no FIN sent).
 mod config;
-mod iperf;
+// mod iperf;
+mod iperf2;
 
 use std::io::{stdout, Write};
 
@@ -29,7 +30,7 @@ fn main() {
         ip::Routes::import(List::new_full(routes.as_mut().into())),
         eth::NeighborCache::new(&mut neighbors[..]));
 
-    let mut iperf = iperf::Iperf3::new(&config.iperf3);
+    let mut iperf = iperf2::Iperf::new(&config.iperf3);
 
     out.write_all(b"[+] Configured layers, communicating").unwrap();
 
@@ -43,5 +44,5 @@ fn main() {
     };
 
     out.write_all(b"[+] Done").unwrap();
-    write!(out, "{}", result).unwrap();
+    write!(out, "{:?}", result).unwrap();
 }
