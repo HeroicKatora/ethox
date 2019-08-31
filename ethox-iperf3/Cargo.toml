@@ -1,5 +1,5 @@
 [package]
-name = "ethox-iperf3"
+name = "ethox-iperf"
 description = "Implementation of iperf with ethox"
 publish = false
 version = "0.0.1-wip"
@@ -11,6 +11,9 @@ license = "GPL-3.0-only"
 ethox = { path = "../ethox", default-features = false, features = ["std", "sys"] }
 structopt = { version = "0.2", default-features = false }
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "iperf3"
-path = "main.rs"
+path = "bin/main.rs"
