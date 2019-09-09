@@ -23,7 +23,10 @@ pub struct Iperf3 {
     config: Config,
     state: State,
     stream_handshake: Handshake,
+    /// Whether we are waiting on a remote json transmission.
     wait_json: bool,
+    /// True while we wait for remote to acknowledge a state transition.
+    wait_remote: bool,
     udp: udp::Endpoint<'static>,
     tcp: tcp::Endpoint<'static>,
     control: tcp::Client<IperfRecv, IperfSend>,
@@ -198,7 +201,7 @@ impl Iperf3 {
             self.remote_transition(state);
         }
 
-        if self.control.send().retransmit_bytes() == 0 && self.wait_remote {
+        if self.control.send().from.retransmit_bytes() == 0 && self.wait_remote {
             self.remote_transitioned();
         }
     }
@@ -249,12 +252,12 @@ impl Iperf3 {
             State::CreateStreams => State::TestRunning,
             State::DisplayResults => State::ClientTerminate,
             other => {
-                println!("Unexpected state transition from {:?} to {:?}", other, unexpected),
+                println!("Unexpected remove transition while in {:?}", other);
                 State::None
             },
         };
 
-        self.state = state;
+        self.state = sent;
         self.wait_json = false;
     }
 
