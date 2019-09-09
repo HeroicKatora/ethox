@@ -8,6 +8,8 @@
 //!
 //! There is no control channel as for iperf3. This may have negative impact on the accuracy of the
 //! measurement but greatly simplifies the independent implementation for udp.
+use core::{fmt, mem};
+
 use ethox::layer::{ip, udp, Error};
 use ethox::time::Instant;
 use ethox::wire::{Ipv4Subnet, PayloadMut};
@@ -41,6 +43,24 @@ struct Connection {
 
     /// Time of the last packet.
     last_time: Instant,
+
+    /// Result we got from the server.
+    result: Option<Result>,
+}
+
+#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+pub struct Result {
+    a: u32, // 00 00 00 00
+    data_len: u32, // 00 02 0a 8a - total data
+    delta_s: u32, // 00 00 00 01 - delta t (s)
+    delta_ms: u32, // 00 00 4f ad - delta t (ms)
+    e: u32, // 00 00 00 00
+    f: u32, // 00 00 00 00
+    packet_count: u32, // 00 00 00 5b - total packets
+    h: u32, // 00 00 00 00
+    i: u32, // 00 00 00 00
+    j: u32, // 00 00 00 09
 }
 
 impl Iperf {
@@ -51,12 +71,8 @@ impl Iperf {
         }
     }
 
-    pub fn result(&self) -> Option<()> {
-        if self.connection.remaining == 0 {
-            Some(())
-        } else {
-            None
-        }
+    pub fn result(&self) -> Option<Result> {
+        self.connection.result
     }
 
     fn generate_udp(_: &Iperf3Config) -> udp::Endpoint<'static> {
@@ -85,6 +101,7 @@ impl Connection {
             wrapping_part_bytes: 0,
             packet_count: 0,
             last_time: Instant::from_millis(0),
+            result: None,
         }
     }
 
@@ -123,7 +140,7 @@ impl Connection {
     /// Allowed bandwidth use until the timestamp.
     fn allowed_bytes(&self, now: Instant) -> u128 {
         let diff_millis = (now - self.last_time).as_millis();
-        let new_bytes = diff_millis 
+        let new_bytes = diff_millis
             .saturating_mul(self.bytes_per_sec as u128)
             / 1_000_000;
         let part = self.wrapping_part_bytes as u128;
@@ -167,8 +184,12 @@ impl<P: PayloadMut> ip::Send<P> for &'_ mut Iperf {
 }
 
 impl<P: PayloadMut> ip::Recv<P> for &'_ mut Iperf {
-    fn receive(&mut self, _: ip::InPacket<P>) {
-        // Do nothing ...
+    fn receive(&mut self, packet: ip::InPacket<P>) {
+        if self.connection.remaining == 0 && self.connection.result.is_none() {
+            self.udp
+                .recv(&mut self.connection)
+                .receive(packet)
+        }
     }
 }
 
@@ -205,5 +226,59 @@ impl<P: PayloadMut> udp::Send<P> for &'_ mut Connection {
             Ok(()) => (),
             Err(_) => return self.error_shutdown(),
         }
+    }
+}
+
+impl<P: PayloadMut> udp::Recv<P> for &'_ mut Connection {
+    fn receive(&mut self, packet: udp::Packet<P>) {
+        let repr = packet.packet.repr();
+        if repr.dst_port != self.send_init.src_port {
+            return;
+        }
+
+        let payload = packet.packet.payload_slice();
+
+        if payload.len() <= 20 + mem::size_of::<Result>() {
+            return;
+        }
+
+        let mem_result = &payload[20..][..mem::size_of::<Result>()];
+        let be_result = unsafe { &*(mem_result.as_ptr() as *const Result) };
+
+        self.result = Some(Result {
+            a: u32::from_be(be_result.a),
+            data_len: u32::from_be(be_result.data_len),
+            delta_s: u32::from_be(be_result.delta_s),
+            delta_ms: u32::from_be(be_result.delta_ms),
+            e: u32::from_be(be_result.e),
+            f: u32::from_be(be_result.f),
+            packet_count: u32::from_be(be_result.packet_count),
+            h: u32::from_be(be_result.h),
+            i: u32::from_be(be_result.i),
+            j: u32::from_be(be_result.j),
+        });
+    }
+}
+
+impl fmt::Display for Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // Emulate the iperf style:
+        //
+        // ```text
+        // [  3]  0.0- 1.0 sec   131 KBytes  1.05 Mbits/sec   0.000 ms    0/   91 (0%)
+        // ```
+        write!(f,
+           "[{ts}] {begin}-{end} sec\t{total} KBytes\t{rate} Mbits/sec\t{dt} ms\t\
+            {loss}/\t{packets} ({loss_percent})",
+           ts=3,
+           begin=0.0,
+           end=1.0,
+           total=self.data_len/1024,
+           rate=(self.data_len as f32)/(self.delta_s as f32 + self.delta_ms as f32/1000.0),
+           dt=0.0,
+           loss=0,
+           packets=self.packet_count,
+           loss_percent=(0 as f32)/(self.packet_count as f32)*100.0,
+        )
     }
 }
