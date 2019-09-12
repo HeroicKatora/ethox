@@ -11,7 +11,7 @@ pub use ethox_iperf::{config, iperf2};
 use std::io::{stdout, Write};
 
 use ethox::managed::{List, Slice};
-use ethox::nic::{Device, TapInterface};
+use ethox::nic::TapInterface;
 use ethox::layer::{eth, ip};
 
 fn main() {
@@ -32,21 +32,20 @@ fn main() {
         ip::Routes::import(List::new_full(routes.as_mut().into())),
         eth::NeighborCache::new(&mut neighbors[..]));
 
-    let mut iperf = match &config.iperf3 {
+    let iperf = match &config.iperf3 {
         config::Iperf3Config::Client(client) => iperf2::Iperf::new(client),
     };
 
     out.write_all(b"[+] Configured layers, communicating").unwrap();
 
-    let result = loop {
-        interface.rx(10, eth.recv(ip.recv(&mut iperf))).unwrap();
-        interface.tx(10, eth.send(ip.send(&mut iperf))).unwrap();
-
-        if let Some(result) = iperf.result() {
-            break result;
-        }
-    };
+    let result = ethox_iperf::client(
+        &mut interface,
+        10,
+        &mut eth,
+        &mut ip,
+        iperf,
+    );
 
     out.write_all(b"[+] Done").unwrap();
-    write!(out, "{:?}", result).unwrap();
+    write!(out, "{}", result).unwrap();
 }

@@ -13,6 +13,7 @@ use core::{fmt, mem};
 use ethox::layer::{ip, udp, Error};
 use ethox::time::Instant;
 use ethox::wire::{Ipv4Subnet, PayloadMut};
+
 use super::config::IperfClient;
 
 pub struct Iperf {
@@ -51,16 +52,16 @@ struct Connection {
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct Result {
-    a: u32, // 00 00 00 00
-    data_len: u32, // 00 02 0a 8a - total data
-    delta_s: u32, // 00 00 00 01 - delta t (s)
-    delta_ms: u32, // 00 00 4f ad - delta t (ms)
-    e: u32, // 00 00 00 00
-    f: u32, // 00 00 00 00
-    packet_count: u32, // 00 00 00 5b - total packets
-    h: u32, // 00 00 00 00
-    i: u32, // 00 00 00 00
-    j: u32, // 00 00 00 09
+    pub a: u32, // 00 00 00 00
+    pub data_len: u32, // 00 02 0a 8a - total data
+    pub delta_s: u32, // 00 00 00 01 - delta t (s)
+    pub delta_ms: u32, // 00 00 4f ad - delta t (ms)
+    pub e: u32, // 00 00 00 00
+    pub f: u32, // 00 00 00 00
+    pub packet_count: u32, // 00 00 00 5b - total packets
+    pub h: u32, // 00 00 00 00
+    pub i: u32, // 00 00 00 00
+    pub j: u32, // 00 00 00 09
 }
 
 impl Iperf {
@@ -188,6 +189,16 @@ impl<P: PayloadMut> ip::Recv<P> for Iperf {
                 .recv(&mut self.connection)
                 .receive(packet)
         }
+    }
+}
+
+impl<Nic> super::Client<Nic> for Iperf
+where
+    Nic: ethox::nic::Device,
+    Nic::Payload: PayloadMut + Sized,
+{
+    fn result(&self) -> Option<super::Score> {
+        Iperf::result(self).map(|result| result.into())
     }
 }
 
