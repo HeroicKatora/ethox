@@ -13,7 +13,7 @@ use core::{fmt, mem};
 use ethox::layer::{ip, udp, Error};
 use ethox::time::Instant;
 use ethox::wire::{Ipv4Subnet, PayloadMut};
-use super::config::Iperf3Config;
+use super::config::IperfClient;
 
 pub struct Iperf {
     connection: Connection,
@@ -64,7 +64,7 @@ pub struct Result {
 }
 
 impl Iperf {
-    pub fn new(config: &Iperf3Config) -> Self {
+    pub fn new(config: &IperfClient) -> Self {
         Iperf {
             connection: Connection::new(config),
             udp: Self::generate_udp(config),
@@ -75,15 +75,15 @@ impl Iperf {
         self.connection.result
     }
 
-    fn generate_udp(_: &Iperf3Config) -> udp::Endpoint<'static> {
+    fn generate_udp(_: &IperfClient) -> udp::Endpoint<'static> {
         // We only need a single connection entry.
         udp::Endpoint::new(vec![Default::default()])
     }
 }
 
 impl Connection {
-    fn new(config: &Iperf3Config) -> Self {
-        let Iperf3Config::Client {
+    fn new(config: &IperfClient) -> Self {
+        let IperfClient {
             host: _, port: _,
             bytes: packet_size,
             length: remaining,
@@ -105,17 +105,15 @@ impl Connection {
         }
     }
 
-    fn generate_udp_init(config: &Iperf3Config) -> udp::Init {
-        let Iperf3Config::Client { host, port, bytes, ..  } = config;
-
+    fn generate_udp_init(config: &IperfClient) -> udp::Init {
         udp::Init {
             source: ip::Source::Mask {
                 subnet: Ipv4Subnet::ANY.into(),
             },
             src_port: 50020,
-            dst_addr: (*host).into(),
-            dst_port: *port,
-            payload: *bytes,
+            dst_addr: config.host.into(),
+            dst_port: config.port,
+            payload: config.bytes,
         }
     }
 

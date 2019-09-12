@@ -6,15 +6,18 @@ use ethox::wire::{Ipv4Cidr, EthernetAddress};
 #[derive(Clone, StructOpt)]
 pub enum Iperf3Config {
     #[structopt(name = "-c")]
-    Client {
-        host: net::Ipv4Addr,
-        port: u16,
+    Client(IperfClient),
+}
 
-        #[structopt(short = "n")]
-        bytes: usize,
-        #[structopt(short = "l")]
-        length: usize,
-    },
+#[derive(Clone, StructOpt)]
+pub struct IperfClient {
+    pub host: net::Ipv4Addr,
+    pub port: u16,
+
+    #[structopt(short = "n")]
+    pub bytes: usize,
+    #[structopt(short = "l")]
+    pub length: usize,
 }
 
 #[derive(StructOpt)]

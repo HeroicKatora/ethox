@@ -32,7 +32,9 @@ fn main() {
         ip::Routes::import(List::new_full(routes.as_mut().into())),
         eth::NeighborCache::new(&mut neighbors[..]));
 
-    let mut iperf = iperf2::Iperf::new(&config.iperf3);
+    let mut iperf = match &config.iperf3 {
+        config::Iperf3Config::Client(client) => iperf2::Iperf::new(client),
+    };
 
     out.write_all(b"[+] Configured layers, communicating").unwrap();
 

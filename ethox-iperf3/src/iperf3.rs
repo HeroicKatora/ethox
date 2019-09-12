@@ -17,7 +17,7 @@ use ethox::layer::{ip, tcp, udp};
 use ethox::managed::{List, Map, SlotMap};
 use ethox::time::Instant;
 use ethox::wire::{IpProtocol, PayloadMut, TcpSeqNumber};
-use super::config::Iperf3Config;
+use super::config::IperfClient;
 
 pub struct Iperf3 {
     config: Config,
@@ -87,7 +87,7 @@ struct IperfRecv {
 
 impl Iperf3 {
     /// Create a new iperf3 client.
-    pub fn new(config: &Iperf3Config) -> Self {
+    pub fn new(config: &IperfClient) -> Self {
         Iperf3 {
             config: Config::new(config),
             state: State::None,
@@ -157,12 +157,12 @@ impl Iperf3 {
         ]\
     }";
 
-    fn generate_udp(config: &Iperf3Config) -> udp::Endpoint<'static> {
+    fn generate_udp(config: &IperfClient) -> udp::Endpoint<'static> {
         // We only need a single connection entry.
         udp::Endpoint::new(vec![Default::default()])
     }
 
-    fn generate_tcp(config: &Iperf3Config) -> tcp::Endpoint<'static> {
+    fn generate_tcp(config: &IperfClient) -> tcp::Endpoint<'static> {
         // We only need a single connection entry.
         tcp::Endpoint::new(
             Map::Pairs(List::new(vec![Default::default()].into())),
@@ -170,9 +170,8 @@ impl Iperf3 {
             tcp::IsnGenerator::from_std_hash())
     }
 
-    fn generate_control(config: &Iperf3Config) -> tcp::Client<IperfRecv, IperfSend> {
-        let Iperf3Config::Client { host, port, .. } = config;
-        tcp::Client::new((*host).into(), *port, IperfRecv::new(), IperfSend::new())
+    fn generate_control(config: &IperfClient) -> tcp::Client<IperfRecv, IperfSend> {
+        tcp::Client::new(config.host.into(), config.port, IperfRecv::new(), IperfSend::new())
     }
 
     /// Fill the necessary part of the packet.
@@ -277,8 +276,8 @@ impl Iperf3 {
 }
 
 impl Config {
-    pub fn new(from: &Iperf3Config) -> Self {
-        let Iperf3Config::Client {
+    pub fn new(from: &IperfClient) -> Self {
+        let IperfClient {
             bytes,
             length,
             ..
