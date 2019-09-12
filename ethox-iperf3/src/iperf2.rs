@@ -173,7 +173,7 @@ impl Connection {
     }
 }
 
-impl<P: PayloadMut> ip::Send<P> for &'_ mut Iperf {
+impl<P: PayloadMut> ip::Send<P> for Iperf {
     fn send(&mut self, packet: ip::RawPacket<P>) {
         self.udp
             .send(&mut self.connection)
@@ -181,7 +181,7 @@ impl<P: PayloadMut> ip::Send<P> for &'_ mut Iperf {
     }
 }
 
-impl<P: PayloadMut> ip::Recv<P> for &'_ mut Iperf {
+impl<P: PayloadMut> ip::Recv<P> for Iperf {
     fn receive(&mut self, packet: ip::InPacket<P>) {
         if self.connection.remaining == 0 && self.connection.result.is_none() {
             self.udp

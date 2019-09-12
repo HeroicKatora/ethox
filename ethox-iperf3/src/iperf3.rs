@@ -357,7 +357,7 @@ impl IperfSend {
     }
 }
 
-impl<P: PayloadMut> ip::Recv<P> for &'_ mut Iperf3 {
+impl<P: PayloadMut> ip::Recv<P> for Iperf3 {
     fn receive(&mut self, packet: ip::InPacket<P>) {
         match packet.packet.repr().protocol() {
             IpProtocol::Tcp => {
@@ -373,7 +373,7 @@ impl<P: PayloadMut> ip::Recv<P> for &'_ mut Iperf3 {
     }
 }
 
-impl<P: PayloadMut> ip::Send<P> for &'_ mut Iperf3 {
+impl<P: PayloadMut> ip::Send<P> for Iperf3 {
     fn send(&mut self, packet: ip::RawPacket<P>) {
         unimplemented!()
     }
