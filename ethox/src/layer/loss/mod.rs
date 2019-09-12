@@ -8,7 +8,7 @@ use crate::wire::{Payload, PayloadMut};
 /// Simple pseudo-random loss.
 ///
 /// Can simulate burst-losses and uniform losses by dropping packets based on a pulse design.
-#[derive(Clone, Debug, Hash)]
+#[derive(Copy, Clone, Debug, Hash)]
 pub struct PrngLoss {
     /// Threshold for dropping the packet.
     pub threshold: u32,
@@ -42,7 +42,7 @@ pub struct LossyHandle<H: ?Sized> {
     handle: *mut H,
 }
 
-#[derive(Clone, Debug, Hash)]
+#[derive(Copy, Clone, Debug, Hash)]
 pub struct Xoroshiro256 {
     state: [u64; 4],
 }
@@ -204,6 +204,36 @@ impl<H: nic::Handle + ?Sized> nic::Handle for LossyHandle<H> {
 
     fn info(&self) -> &dyn nic::Info {
         unsafe { &*self.handle }.info()
+    }
+}
+
+impl<D> nic::Device for Lossy<D>
+where
+    D: nic::Device,
+{
+    type Handle = LossyHandle<D::Handle>;
+    type Payload = D::Payload;
+
+    fn personality(&self) -> nic::Personality {
+        self.0.personality()
+    }
+
+    fn tx(&mut self, max: usize, sender: impl nic::Send<Self::Handle, Self::Payload>)
+        -> crate::layer::Result<usize>
+    {
+        let mut sender = Lossy(sender, self.1);
+        let result = self.0.tx(max, &mut sender);
+        self.1 = sender.1;
+        result
+    }
+
+    fn rx(&mut self, max: usize, receptor: impl nic::Recv<Self::Handle, Self::Payload>)
+        -> crate::layer::Result<usize>
+    {
+        let mut sender = Lossy(receptor, self.1);
+        let result = self.0.rx(max, &mut sender);
+        self.1 = sender.1;
+        result
     }
 }
 

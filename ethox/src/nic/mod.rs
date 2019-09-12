@@ -127,6 +127,34 @@ impl<F, H: Handle + ?Sized, P: Payload + ?Sized> Send<H, P> for FnHandler<F>
     }
 }
 
+impl<F, H: Handle + ?Sized, P: Payload + ?Sized> Recv<H, P> for &'_ mut F
+    where F: Recv<H, P>
+{
+    fn receive(&mut self, packet: Packet<H, P>) {
+        (**self).receive(packet)
+    }
+
+    fn receivev<'a>(&mut self, packets: impl IntoIterator<Item=Packet<'a, H, P>>)
+        where P: 'a, H: 'a
+    {
+        (**self).receivev(packets)
+    }
+}
+
+impl<F, H: Handle + ?Sized, P: Payload + ?Sized> Send<H, P> for &'_ mut F
+    where F: Send<H, P>
+{
+    fn send(&mut self, packet: Packet<H, P>) {
+        (**self).send(packet)
+    }
+
+    fn sendv<'a>(&mut self, packets: impl IntoIterator<Item=Packet<'a, H, P>>)
+        where P: 'a, H: 'a
+    {
+        (**self).sendv(packets)
+    }
+}
+
 /// Available only on `std` because it prints to standard out.
 #[cfg(feature = "std")]
 impl<H: Handle + ?Sized, P: Payload + ?Sized> Recv<H, P> for Formatter<ethernet_frame> {
