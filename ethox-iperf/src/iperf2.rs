@@ -10,9 +10,9 @@
 //! measurement but greatly simplifies the independent implementation for udp.
 use core::{fmt, mem};
 
-use ethox::layer::{ip, udp, Error};
+use ethox::layer::{ip, tcp, udp, Error};
 use ethox::time::Instant;
-use ethox::wire::{Ipv4Subnet, PayloadMut};
+use ethox::wire::{Ipv4Subnet, PayloadMut, TcpSeqNumber};
 
 use super::config::IperfClient;
 
@@ -47,6 +47,21 @@ struct Connection {
 
     /// Result we got from the server.
     result: Option<Result>,
+}
+
+/// A 'TCP-buffer' for the iperf pattern.
+///
+/// This does not allocate any data, instead filling each pattern dynamically as if the pattern
+/// would have been put into a sequential queue.
+struct PatternBuffer {
+    /// Total number of bytes.
+    len: usize,
+
+    /// Number of acked bytes.
+    acked: usize,
+
+    /// The sequence number corresponding to `acked`.
+    at: Option<TcpSeqNumber>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -199,6 +214,42 @@ where
 {
     fn result(&self) -> Option<super::Score> {
         Iperf::result(self).map(|result| result.into())
+    }
+}
+
+impl tcp::SendBuf for PatternBuffer {
+    fn available(&self) -> tcp::AvailableBytes {
+        tcp::AvailableBytes {
+            total: self.len - self.acked,
+            fin: true,
+        }
+    }
+
+    fn fill(&mut self, buf: &mut [u8], begin: TcpSeqNumber) {
+        const HEAD: [u8; 4] = [0x80, 0x00, 0x00, 0x00];
+        const DIGIT: [u8; 10] = *b"0123456789";
+
+        let prev = self.at.expect("Fill must not be called before isn indication");
+        let relative = begin - prev;
+
+        let offset = (self.acked + relative) % 10;
+
+        buf.iter_mut().fold(offset, |pattern, byte| {
+            *byte = DIGIT[pattern];
+            (pattern + 1) % 10
+        });
+
+        // The first 4 byte are special.
+        if let Some(head) = 4usize.checked_sub(relative + self.acked) {
+            let head_len = 4 - head;
+            buf[..head_len].copy_from_slice(&HEAD[head..]);
+        }
+    }
+
+    fn ack(&mut self, ack: TcpSeqNumber) {
+        let previous = *self.at.get_or_insert(ack);
+        self.acked += ack - previous;
+        self.at = Some(ack);
     }
 }
 
