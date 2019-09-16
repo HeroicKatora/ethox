@@ -5,9 +5,9 @@ use ethox::time::Duration;
 
 /// The result of running the benchmark.
 pub struct Score {
-    data_len: u64,
-    time: ethox::time::Duration,
-    packet_count: u32,
+    pub(crate) data_len: u64,
+    pub(crate) time: ethox::time::Duration,
+    pub(crate) packet_count: u32,
 }
 
 impl Score {
@@ -38,6 +38,12 @@ impl From<iperf2::Result> for Score {
                 u64::from(result.delta_ms)),
             packet_count: result.packet_count,
         }
+    }
+}
+
+impl From<iperf2::TcpResult> for Score {
+    fn from(result: iperf2::TcpResult) -> Score {
+        unimplemented!()
     }
 }
 

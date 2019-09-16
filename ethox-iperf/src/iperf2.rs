@@ -13,12 +13,19 @@ use core::{fmt, mem};
 use ethox::layer::{ip, tcp, udp, Error};
 use ethox::time::Instant;
 use ethox::wire::{Ipv4Subnet, PayloadMut, TcpSeqNumber};
+use ethox::managed::{Map, Partial, SlotMap};
 
 use super::config::IperfClient;
 
 pub struct Iperf {
     connection: Connection,
     udp: udp::Endpoint<'static>,
+}
+
+pub struct IperfTcp {
+    client: tcp::Client<tcp::io::Sink, PatternBuffer>,
+    tcp: tcp::Endpoint<'static>,
+    result: Option<TcpResult>,
 }
 
 struct Connection {
@@ -79,6 +86,11 @@ pub struct Result {
     pub j: u32, // 00 00 00 09
 }
 
+/// The result is **not** sent by the remote.
+#[derive(Clone, Copy)]
+pub(crate) struct TcpResult {
+}
+
 impl Iperf {
     pub fn new(config: &IperfClient) -> Self {
         Iperf {
@@ -94,6 +106,40 @@ impl Iperf {
     fn generate_udp(_: &IperfClient) -> udp::Endpoint<'static> {
         // We only need a single connection entry.
         udp::Endpoint::new(vec![Default::default()])
+    }
+}
+
+impl IperfTcp {
+    pub fn new(config: &IperfClient) -> Self {
+        IperfTcp {
+            client: Self::generate_client(config),
+            tcp: Self::generate_tcp(config),
+            result: None,
+        }
+    }
+
+    fn generate_client(client: &IperfClient)
+        -> tcp::Client<tcp::io::Sink, PatternBuffer>
+    {
+        let remote = unimplemented!();
+        let port = unimplemented!();
+        let sink = tcp::io::Sink::default();
+        let pattern = PatternBuffer {
+            len: unimplemented!(),
+            acked: 0,
+            at: None,
+        };
+
+        tcp::Client::new(remote, port, sink, pattern)
+    }
+
+    fn generate_tcp(_: &IperfClient) -> tcp::Endpoint<'static> {
+        let isn = tcp::IsnGenerator::from_std_hash();
+        // We only need a single connection entry.
+        tcp::Endpoint::new(
+            Map::Pairs(Partial::new(vec![].into())),
+            SlotMap::new(vec![].into(), vec![].into()),
+            isn)
     }
 }
 
@@ -207,6 +253,18 @@ impl<P: PayloadMut> ip::Recv<P> for Iperf {
     }
 }
 
+impl<P: PayloadMut> ip::Send<P> for IperfTcp {
+    fn send(&mut self, packet: ip::RawPacket<P>) {
+        unimplemented!()
+    }
+}
+
+impl<P: PayloadMut> ip::Recv<P> for IperfTcp {
+    fn receive(&mut self, packet: ip::InPacket<P>) {
+        unimplemented!()
+    }
+}
+
 impl<Nic> super::Client<Nic> for Iperf
 where
     Nic: ethox::nic::Device,
@@ -214,6 +272,16 @@ where
 {
     fn result(&self) -> Option<super::Score> {
         Iperf::result(self).map(|result| result.into())
+    }
+}
+
+impl<Nic> super::Client<Nic> for IperfTcp
+where
+    Nic: ethox::nic::Device,
+    Nic::Payload: PayloadMut + Sized,
+{
+    fn result(&self) -> Option<super::Score> {
+        self.result.map(|result| result.into())
     }
 }
 
