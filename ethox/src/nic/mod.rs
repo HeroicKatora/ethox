@@ -22,6 +22,8 @@ pub use self::personality::{
 #[cfg(feature = "sys")]
 pub use self::sys::exports::*;
 
+pub use crate::layer::loss::{Lossy, PrngLoss};
+
 /// A reference to memory holding packet data and a handle.
 ///
 /// The `Payload` is as an interfance into internal library types for packet parsing while the
