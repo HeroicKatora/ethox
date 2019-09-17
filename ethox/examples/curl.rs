@@ -1,13 +1,13 @@
-//! A tcp client example
+//! A simplified curl.
 //!
-//! Connects to a given remote tcp host and sends a single provided message. Any incoming data is
-//! silently discarded without having been copied into a buffer (but no FIN sent).
+//! Connects to a given remote tcp/http host and requests the root page, then prints the response
+//! without headers. Can handle up to 1MB of response data.
 use std::io::{stdout, Write};
 use std::net;
 use structopt::StructOpt;
 
 use ethox::managed::{List, Map, SlotMap, Slice};
-use ethox::nic::{Device, TapInterface};
+use ethox::nic::{Device, RawSocket, Protocol};
 use ethox::layer::{eth, ip, tcp};
 use ethox::wire::{Ipv4Address, Ipv4Cidr, EthernetAddress};
 
@@ -17,40 +17,38 @@ fn main() {
         host,
         hostmac,
         gateway,
-        gatemac,
         server,
         server_port,
-        message,
     } = Config::from_args();
 
     let mut eth = eth::Endpoint::new(hostmac);
 
+    // Buffer space for arp neighbor cache
     let mut neighbors = [eth::Neighbor::default(); 1];
-    let neighbors = {
-        let mut eth_cache = eth::NeighborCache::new(&mut neighbors[..]);
-        eth_cache.fill(gateway.address().into(), gatemac, None).unwrap();
-        eth_cache
-    };
-    let mut ip = [ip::Route::new_ipv4_gateway(gateway.address()); 1];
-    let routes = ip::Routes::import(List::new_full(ip.as_mut().into()));
-    let mut ip = ip::Endpoint::new(Slice::One(host.into()), routes, neighbors);
+    // Buffer space for routes, we only have a single state one.
+    let mut routes = [ip::Route::new_ipv4_gateway(gateway.address()); 1];
+    let mut ip = ip::Endpoint::new(Slice::One(host.into()),
+        ip::Routes::import(List::new_full(routes.as_mut().into())),
+        eth::NeighborCache::new(&mut neighbors[..]));
 
     let mut tcp = tcp::Endpoint::new(
         Map::Pairs(List::new(Slice::One(Default::default()))),
         SlotMap::new(Slice::One(Default::default()), Slice::One(Default::default())),
         tcp::IsnGenerator::from_std_hash(),
     );
+
+    let message = "GET / HTTP/1.0\r\n\r\n";
     let mut tcp_client = tcp::Client::new(
         Ipv4Address::from(server).into(), server_port,
-        tcp::io::Sink::new(), tcp::io::SendFrom::new(message));
+        tcp::io::RecvInto::new(vec![0; 1 << 20]),
+        tcp::io::SendFrom::once(message.as_bytes()));
 
-    let mut interface = TapInterface::new(&name, vec![0; 1 << 14])
-        .expect("Couldn't initialize interface");
+    let mut interface = RawSocket::new(&name, vec![0; 1 << 14])
+        .expect(&format!("Couldn't initialize interface {}", name));
+    *interface.capabilities_mut().tcp_mut() = Protocol::offloaded().into();
 
     let out = stdout();
     let mut out = out.lock();
-
-    out.write_all(b"Started tcp endpoint\n").unwrap();
 
     loop {
         let rx = interface.rx(10, eth.recv(ip.recv(tcp.recv(&mut tcp_client)))).unwrap();
@@ -60,6 +58,13 @@ fn main() {
             break;
         }
     }
+
+    let received = tcp_client.recv().received();
+    let http = String::from_utf8_lossy(received);
+    let header_end = http.find("\r\n\r\n")
+        .expect(&format!("Expected http header end in {}", http));
+    write!(out, "{}", &http[header_end+4..])
+        .unwrap();
 }
 
 #[derive(StructOpt)]
@@ -68,8 +73,6 @@ struct Config {
     host: Ipv4Cidr,
     hostmac: EthernetAddress,
     gateway: Ipv4Cidr,
-    gatemac: EthernetAddress,
     server: net::Ipv4Addr,
     server_port: u16,
-    message: Vec<u8>,
 }

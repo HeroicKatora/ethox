@@ -2,12 +2,12 @@
 // Copyright (C) 2019 Andreas Molzer <andreas.molzer@tum.de>
 //
 // in large parts from `smoltcp` originally distributed under 0-clause BSD
-use std::{mem, io};
+use core::mem;
+#[cfg(feature = "std")]
 use std::os::unix::io::{RawFd, AsRawFd};
-use std::time::Instant;
 
 use libc;
-use super::{ifreq, linux, test_result, FdResult, IoLenResult};
+use super::{ifreq, linux, now, Errno, FdResult, LibcResult, IoLenResult};
 
 use crate::nic::{self, Capabilities, Device, Packet, Personality};
 use crate::nic::common::{EnqueueFlag, PacketInfo};
@@ -33,7 +33,8 @@ pub struct RawSocketDesc {
 pub struct RawSocket<C> {
     inner: RawSocketDesc,
     buffer: Partial<C>,
-    last_err: Option<io::Error>,
+    last_err: Option<Errno>,
+    capabilities: Capabilities,
 }
 
 enum Received {
@@ -42,12 +43,14 @@ enum Received {
     Err(crate::layer::Error),
 }
 
+#[cfg(feature = "std")]
 impl AsRawFd for RawSocketDesc {
     fn as_raw_fd(&self) -> RawFd {
         self.lower
     }
 }
 
+#[cfg(feature = "std")]
 impl<C> AsRawFd for RawSocket<C> {
     fn as_raw_fd(&self) -> RawFd {
         self.inner.as_raw_fd()
@@ -55,7 +58,7 @@ impl<C> AsRawFd for RawSocket<C> {
 }
 
 impl RawSocketDesc {
-    pub fn new(name: &str) -> io::Result<RawSocketDesc> {
+    pub fn new(name: &str) -> Result<RawSocketDesc, Errno> {
         let lower = unsafe {
             libc::socket(
                 libc::AF_PACKET,
@@ -63,7 +66,7 @@ impl RawSocketDesc {
                 linux::ETH_P_ALL.to_be() as i32)
         };
 
-        test_result(FdResult(lower))?;
+        FdResult(lower).errno()?;
 
         Ok(RawSocketDesc {
             lower,
@@ -71,12 +74,12 @@ impl RawSocketDesc {
         })
     }
 
-    pub fn interface_mtu(&mut self) -> io::Result<usize> {
+    pub fn interface_mtu(&mut self) -> Result<usize, Errno> {
         self.ifreq.get_mtu(self.lower)
             .map(|mtu| mtu as usize)
     }
 
-    pub fn bind_interface(&mut self) -> io::Result<()> {
+    pub fn bind_interface(&mut self) -> Result<(), Errno> {
         let sockaddr = libc::sockaddr_ll {
             sll_family:   libc::AF_PACKET as u16,
             sll_protocol: linux::ETH_P_ALL.to_be() as u16,
@@ -94,10 +97,10 @@ impl RawSocketDesc {
                 mem::size_of::<libc::sockaddr_ll>() as u32)
         };
 
-        test_result(FdResult(res))
+        FdResult(res).errno()
     }
 
-    pub fn recv(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+    pub fn recv(&mut self, buffer: &mut [u8]) -> Result<usize, Errno> {
         let len = unsafe {
             libc::recv(
                 self.lower,
@@ -105,11 +108,11 @@ impl RawSocketDesc {
                 buffer.len(),
                 0)
         };
-        test_result(IoLenResult(len))?;
+        IoLenResult(len).errno()?;
         Ok(len as usize)
     }
 
-    pub fn send(&mut self, buffer: &[u8]) -> io::Result<usize> {
+    pub fn send(&mut self, buffer: &[u8]) -> Result<usize, Errno> {
         let len = unsafe {
             libc::send(
                 self.lower,
@@ -117,24 +120,37 @@ impl RawSocketDesc {
                 buffer.len(),
                 0)
         };
-        test_result(IoLenResult(len))?;
+        IoLenResult(len).errno()?;
         Ok(len as usize)
     }
 }
 
 impl<C: PayloadMut> RawSocket<C> {
-    pub fn new(name: &str, buffer: C) -> io::Result<Self> {
+    pub fn new(name: &str, buffer: C) -> Result<Self, Errno> {
         let mut inner = RawSocketDesc::new(name)?;
         inner.bind_interface()?;
         Ok(RawSocket {
             inner,
             buffer: Partial::new(buffer),
             last_err: None,
+            capabilities: Capabilities::no_support(),
         })
     }
 
+    /// Get the currently configured capabilities.
+    pub fn capabilities(&self) -> Capabilities {
+        self.capabilities
+    }
+
+    /// Get a mutable reference to the capability configuration.
+    ///
+    /// Allows disabling of checksum tests.
+    pub fn capabilities_mut(&mut self) -> &mut Capabilities {
+        &mut self.capabilities
+    }
+
     /// Take the last io error returned by the OS.
-    pub fn last_err(&mut self) -> Option<io::Error> {
+    pub fn last_err(&mut self) -> Option<Errno> {
         self.last_err.take()
     }
 
@@ -165,21 +181,21 @@ impl<C: PayloadMut> RawSocket<C> {
                 self.buffer.set_len_unchecked(len);
                 Received::Ok
             },
-            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => Received::NoData,
+            Err(ref err) if err.0 == libc::EWOULDBLOCK => Received::NoData,
             Err(err) => Received::Err(self.store_err(err)),
         }
     }
 
-    fn store_err(&mut self, err: io::Error) -> crate::layer::Error {
+    fn store_err(&mut self, err: Errno) -> crate::layer::Error {
         let as_nic = crate::layer::Error::Illegal;
         self.last_err = Some(err);
         as_nic
     }
 
-    fn current_info() -> PacketInfo {
+    fn current_info(&self) -> PacketInfo {
         PacketInfo {
-            timestamp: Instant::now().into(),
-            capabilities: Capabilities::no_support(),
+            timestamp: now().unwrap(),
+            capabilities: self.capabilities,
         }
     }
 }
@@ -205,7 +221,7 @@ impl<C: PayloadMut> Device for RawSocket<C> {
     fn tx(&mut self, _: usize, mut sender: impl nic::Send<Self::Handle, Self::Payload>)
         -> nic::Result<usize>
     {
-        let mut handle = EnqueueFlag::set_true(Self::current_info());
+        let mut handle = EnqueueFlag::set_true(self.current_info());
         self.recycle();
         sender.send(Packet {
             handle: &mut handle,
@@ -228,11 +244,15 @@ impl<C: PayloadMut> Device for RawSocket<C> {
             Received::NoData => return Ok(0),
         }
 
-        let mut handle = EnqueueFlag::not_possible(Self::current_info());
+        let mut handle = EnqueueFlag::set_true(self.current_info());
         receptor.receive(Packet {
             handle: &mut handle,
             payload: &mut self.buffer,
         });
+
+        if handle.was_sent() {
+            self.send()?;
+        }
 
         Ok(1)
     }

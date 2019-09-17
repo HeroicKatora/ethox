@@ -1,5 +1,6 @@
 // Heads up! Before working on this file you should read, at least,
 // the parts of RFC 1122 that discuss ARP.
+use core::slice;
 use core::ops::Deref;
 
 use crate::managed::Ordered;
@@ -9,11 +10,13 @@ use crate::wire::{EthernetAddress, IpAddress};
 /// A cached neighbor.
 ///
 /// A neighbor mapping translates from a protocol address (IPv4 and IPv6) to a hardware address,
-/// and contains the timestamp past which the mapping should be discarded.
+/// and contains the timestamp past which the mapping should be considered invalid. It also
+/// contains a timestamp at which we should try to update the neighbor mapping by sending out
+/// solicitation requests.
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Neighbor {
     protocol_addr: IpAddress,
-    hardware_addr: EthernetAddress,
+    hardware_addr: Mapping,
     expires_at:    Expiration,
 }
 
@@ -26,16 +29,25 @@ pub enum Answer {
     NotFound,
     /// The neighbor address is not in the cache, or has expired,
     /// and a lookup has been made recently.
-    RateLimited
+    RateLimited,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Mapping {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Mapping {
     /// An address is present.
     Address(EthernetAddress),
 
-    /// We don't have a mapping but are looking for one.
+    /// We don't have a mapping but want to have one.
     LookingFor,
+
+    /// We are currently sending a request.
+    Requesting,
+}
+
+impl Default for Mapping {
+    fn default() -> Self {
+        Mapping::LookingFor
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +59,9 @@ pub enum Error {
 
     /// All other entries that could be evicted live longer.
     ExpiresTooSoon,
+
+    /// Entry could not be found in the storage
+    EntryNotFound,
 }
 
 /// A neighbor cache backed by a map.
@@ -79,6 +94,11 @@ pub struct Cache<'a> {
     silent_until: Instant,
 }
 
+/// Iterator over missing entries.
+pub struct Missing<'a> {
+    inner: slice::Iter<'a, Neighbor>,
+}
+
 /// A part of the neighbor table.
 ///
 /// For lookup purposes only. Even without the additional metadata within the cache itself we can
@@ -95,9 +115,6 @@ pub struct Cache<'a> {
 pub struct Table([Neighbor]);
 
 impl<'a> Cache<'a> {
-    /// Minimum delay between discovery requests, in milliseconds.
-    pub(crate) const SILENT_TIME: Duration = Duration::from_millis(1_000);
-
     /// Neighbor entry lifetime, in milliseconds.
     pub(crate) const ENTRY_LIFETIME: Duration = Duration::from_millis(60_000);
 
@@ -120,7 +137,29 @@ impl<'a> Cache<'a> {
         Cache { storage, silent_until: Instant::from_millis(0) }
     }
 
-    /// Add an entry.
+    /// Add a lookup entry.
+    ///
+    /// Provide the current timestamp or `None` to disable expiration.
+    pub fn fill_looking(
+        &mut self,
+        protocol_addr: IpAddress,
+        timestamp: Option<Instant>,
+    ) -> Result<(), Error> {
+        self.update_or_insert(protocol_addr, Mapping::LookingFor, timestamp)
+    }
+
+    /// Indicate an entry is currently being requested.
+    ///
+    /// This blocks updates to `LookingFor` from occurring until the timeout.
+    pub fn requesting(
+        &mut self,
+        protocol_addr: IpAddress,
+        timestamp: Instant,
+    ) -> Result<(), Error> {
+        self.update_or_insert(protocol_addr, Mapping::Requesting, Some(timestamp))
+    }
+
+    /// Add an entry containing a MAC address.
     ///
     /// Provide the current timestamp or `None` to disable expiration.
     pub fn fill(
@@ -129,8 +168,22 @@ impl<'a> Cache<'a> {
         hardware_addr: EthernetAddress,
         timestamp: Option<Instant>,
     ) -> Result<(), Error> {
+        self.update_or_insert(protocol_addr, Mapping::Address(hardware_addr), timestamp)
+    }
+
+    /// Add an entry.
+    ///
+    /// Provide the current timestamp or `None` to disable expiration.
+    fn update_or_insert(
+        &mut self,
+        protocol_addr: IpAddress,
+        hardware_addr: Mapping,
+        timestamp: Option<Instant>,
+    ) -> Result<(), Error> {
         debug_assert!(protocol_addr.is_unicast());
-        debug_assert!(hardware_addr.is_unicast());
+        if let Mapping::Address(hw_addr) = hardware_addr {
+            debug_assert!(hw_addr.is_unicast());
+        }
 
         let new_neighbor = Neighbor {
             protocol_addr,
@@ -142,21 +195,30 @@ impl<'a> Cache<'a> {
         let exists = self.storage.ordered_slice()
             .binary_search_by_key(&protocol_addr, |neighbor| neighbor.protocol_addr);
         if let Ok(index) = exists {
-            assert!(self.storage[index].protocol_addr == new_neighbor.protocol_addr);
+            let old = self.storage[index];
+            assert_eq!(old.protocol_addr, new_neighbor.protocol_addr);
+
+            if let (Mapping::Requesting, Mapping::LookingFor) = (old.hardware_addr, new_neighbor.hardware_addr) {
+                if old.expires_at >= Expiration::from(timestamp) {
+                    // A not-yet expired request is currently running. Simply do nothing.
+                    return Ok(())
+                }
+            }
+
+            /*
+            println!("Refreshed entry {}: {:?} - expiry: {:?}", 
+                 new_neighbor.protocol_addr,
+                 new_neighbor.hardware_addr,
+                 new_neighbor.expires_at);
+                 */
             let _old = self.storage.replace_at(index, new_neighbor)
                 .expect("Sorting didn't change since we only have one entry per protocol addr");
-            // Why does this not work with current macros?????????
-            /* net_trace!("replaced {} => {} (was {})",
-                protocol_addr,
-                hardware_addr,
-                old_neighbor.hardware_addr);
-            return Ok(()) */
+            return Ok(());
         }
 
         // Not mapped, need to free an entry.
         let free = match self.storage.init() {
             Some(entry) => {
-                // net_trace!("filled {} => {} (was empty)", protocol_addr, hardware_addr);
                 entry
             },
             None => {
@@ -173,31 +235,15 @@ impl<'a> Cache<'a> {
                     .expect("Entry we just found is valid.");
                 self.storage.init()
                     .expect("At least one entry is now free")
-                // net_trace!("removed {} => {}", protocol_addr, hardware_addr);
             },
         };
+
+        debug_assert!(new_neighbor.hardware_addr != Mapping::Requesting);
 
         *free = new_neighbor;
         self.storage.push()
             .expect("There was one to insert");
         Ok(())
-    }
-
-    pub fn lookup(
-        &mut self,
-        protocol_addr: &IpAddress,
-        timestamp: Instant)
-    -> Answer {
-        match self.lookup_pure(protocol_addr, timestamp) {
-            Some(hardware_addr) =>
-                Answer::Found(hardware_addr),
-            None if timestamp < self.silent_until =>
-                Answer::RateLimited,
-            None => {
-                self.silent_until = timestamp + Self::SILENT_TIME;
-                Answer::NotFound
-            }
-        }
     }
 }
 
@@ -212,23 +258,67 @@ impl Table {
 
     pub fn lookup_pure(
         &self,
-        protocol_addr: &IpAddress,
+        protocol_addr: IpAddress,
         timestamp: Instant
     ) -> Option<EthernetAddress> {
+        match self.lookup(protocol_addr, timestamp) {
+            Some(Mapping::Address(addr)) => Some(addr),
+            _ => None,
+        }
+    }
+
+    pub fn lookup(
+        &self,
+        protocol_addr: IpAddress,
+        timestamp: Instant
+    ) -> Option<Mapping> {
         if protocol_addr.is_broadcast() {
-            return Some(EthernetAddress::BROADCAST)
+            return Some(Mapping::Address(EthernetAddress::BROADCAST))
         }
 
         let existing = self
-            .binary_search_by_key(protocol_addr, |neighbor| neighbor.protocol_addr)
+            .binary_search_by_key(&protocol_addr, |neighbor| neighbor.protocol_addr)
             .ok()?;
 
         let entry = &self[existing];
         if Expiration::When(timestamp) >= entry.expires_at {
             return None;
         }
-
+        
         Some(entry.hardware_addr)
+    }
+
+    pub fn missing(&self) -> Missing {
+        Missing {
+            inner: self.0.iter(),
+        }
+    }
+}
+
+impl Neighbor {
+    pub fn protocol_addr(&self) -> IpAddress {
+        self.protocol_addr
+    }
+
+    pub fn hardware_addr(&self) -> Option<EthernetAddress> {
+        match self.hardware_addr {
+            Mapping::Address(addr) => Some(addr),
+            Mapping::LookingFor => None,
+            Mapping::Requesting => None,
+        }
+    }
+
+    pub fn is_alive(&self, ts: Instant) -> bool {
+        Expiration::When(ts) <= self.expires_at
+    }
+
+    pub fn is_expired(&self, ts: Instant) -> bool {
+        !self.is_alive(ts)
+    }
+
+    /// If this address mapping is unknown and should be requested.
+    pub fn looking_for(&self) -> bool {
+        self.hardware_addr == Mapping::LookingFor
     }
 }
 
@@ -248,6 +338,17 @@ impl Deref for Table {
     }
 }
 
+impl Iterator for Missing<'_> {
+    type Item = Neighbor;
+
+    fn next(&mut self) -> Option<Neighbor> {
+        self.inner.by_ref()
+            .filter(|entry| entry.hardware_addr().is_none())
+            .next()
+            .copied()
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -263,19 +364,19 @@ mod test {
         let mut cache_storage = [Default::default(); 3];
         let mut cache = Cache::new(&mut cache_storage[..]);
 
-        assert_eq!(cache.lookup_pure(&MOCK_IP_ADDR_1, Instant::from_millis(0)), None);
-        assert_eq!(cache.lookup_pure(&MOCK_IP_ADDR_2, Instant::from_millis(0)), None);
+        assert_eq!(cache.lookup_pure(MOCK_IP_ADDR_1, Instant::from_millis(0)), None);
+        assert_eq!(cache.lookup_pure(MOCK_IP_ADDR_2, Instant::from_millis(0)), None);
 
         cache.fill(MOCK_IP_ADDR_1, HADDR_A, Some(Instant::from_millis(0)))
             .unwrap();
-        assert_eq!(cache.lookup_pure(&MOCK_IP_ADDR_1, Instant::from_millis(0)), Some(HADDR_A));
-        assert_eq!(cache.lookup_pure(&MOCK_IP_ADDR_2, Instant::from_millis(0)), None);
-        assert_eq!(cache.lookup_pure(&MOCK_IP_ADDR_1, Instant::from_millis(0) + Cache::ENTRY_LIFETIME * 2),
+        assert_eq!(cache.lookup_pure(MOCK_IP_ADDR_1, Instant::from_millis(0)), Some(HADDR_A));
+        assert_eq!(cache.lookup_pure(MOCK_IP_ADDR_2, Instant::from_millis(0)), None);
+        assert_eq!(cache.lookup_pure(MOCK_IP_ADDR_1, Instant::from_millis(0) + Cache::ENTRY_LIFETIME * 2),
                    None);
 
         cache.fill(MOCK_IP_ADDR_1, HADDR_A, Some(Instant::from_millis(0)))
             .unwrap();
-        assert_eq!(cache.lookup_pure(&MOCK_IP_ADDR_2, Instant::from_millis(0)), None);
+        assert_eq!(cache.lookup_pure(MOCK_IP_ADDR_2, Instant::from_millis(0)), None);
     }
 
     #[test]
@@ -285,8 +386,8 @@ mod test {
 
         cache.fill(MOCK_IP_ADDR_1, HADDR_A, Some(Instant::from_millis(0)))
             .unwrap();
-        assert_eq!(cache.lookup_pure(&MOCK_IP_ADDR_1, Instant::from_millis(0)), Some(HADDR_A));
-        assert_eq!(cache.lookup_pure(&MOCK_IP_ADDR_1, Instant::from_millis(0) + Cache::ENTRY_LIFETIME * 2),
+        assert_eq!(cache.lookup_pure(MOCK_IP_ADDR_1, Instant::from_millis(0)), Some(HADDR_A));
+        assert_eq!(cache.lookup_pure(MOCK_IP_ADDR_1, Instant::from_millis(0) + Cache::ENTRY_LIFETIME * 2),
                    None);
     }
 
@@ -297,10 +398,12 @@ mod test {
 
         cache.fill(MOCK_IP_ADDR_1, HADDR_A, Some(Instant::from_millis(0)))
             .unwrap();
-        assert_eq!(cache.lookup_pure(&MOCK_IP_ADDR_1, Instant::from_millis(0)), Some(HADDR_A));
+        assert_eq!(cache.lookup_pure(MOCK_IP_ADDR_1, Instant::from_millis(0)), Some(HADDR_A));
         cache.fill(MOCK_IP_ADDR_1, HADDR_B, Some(Instant::from_millis(0)))
             .unwrap();
-        assert_eq!(cache.lookup_pure(&MOCK_IP_ADDR_1, Instant::from_millis(0)), Some(HADDR_B));
+        assert_eq!(cache.lookup_pure(MOCK_IP_ADDR_1, Instant::from_millis(0)), Some(HADDR_B));
+
+        assert_eq!(cache.len(), 1);
     }
 
     #[test]
@@ -314,13 +417,13 @@ mod test {
             .unwrap();
         cache.fill(MOCK_IP_ADDR_3, HADDR_C, Some(Instant::from_millis(200)))
             .unwrap();
-        assert_eq!(cache.lookup_pure(&MOCK_IP_ADDR_2, Instant::from_millis(1000)), Some(HADDR_B));
-        assert_eq!(cache.lookup_pure(&MOCK_IP_ADDR_4, Instant::from_millis(1000)), None);
+        assert_eq!(cache.lookup_pure(MOCK_IP_ADDR_2, Instant::from_millis(1000)), Some(HADDR_B));
+        assert_eq!(cache.lookup_pure(MOCK_IP_ADDR_4, Instant::from_millis(1000)), None);
 
         cache.fill(MOCK_IP_ADDR_4, HADDR_D, Some(Instant::from_millis(300)))
             .unwrap();
-        assert_eq!(cache.lookup_pure(&MOCK_IP_ADDR_2, Instant::from_millis(1000)), None);
-        assert_eq!(cache.lookup_pure(&MOCK_IP_ADDR_4, Instant::from_millis(1000)), Some(HADDR_D));
+        assert_eq!(cache.lookup_pure(MOCK_IP_ADDR_2, Instant::from_millis(1000)), None);
+        assert_eq!(cache.lookup_pure(MOCK_IP_ADDR_4, Instant::from_millis(1000)), Some(HADDR_D));
     }
 
     #[test]
@@ -334,15 +437,5 @@ mod test {
         // Can still overwrite the entry itself though.
         assert!(cache.fill(MOCK_IP_ADDR_1, HADDR_B, None).is_ok());
         assert!(cache.fill(MOCK_IP_ADDR_2, HADDR_A, None).is_ok());
-    }
-
-    #[test]
-    fn hush() {
-        let mut cache_storage = [Default::default(); 3];
-        let mut cache = Cache::new(&mut cache_storage[..]);
-
-        assert_eq!(cache.lookup(&MOCK_IP_ADDR_1, Instant::from_millis(0)), Answer::NotFound);
-        assert_eq!(cache.lookup(&MOCK_IP_ADDR_1, Instant::from_millis(100)), Answer::RateLimited);
-        assert_eq!(cache.lookup(&MOCK_IP_ADDR_1, Instant::from_millis(2000)), Answer::NotFound);
     }
 }

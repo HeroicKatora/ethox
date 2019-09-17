@@ -5,4 +5,9 @@ members = [
 ]
 
 [profile.release]
+opt-level = 3
 lto = true
+codegen-units = 1
+# We should properly handle every issue with errors.
+# This reduces compiled size.
+panic = "abort"

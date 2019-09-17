@@ -10,10 +10,15 @@
 // * `mod.rs`
 // * `raw_socket.rs`
 // * `tap_interface.rs`
-use std::{mem, ptr, io};
+use core::mem;
+#[cfg(feature = "std")]
+use std::{io, ptr};
+#[cfg(feature = "std")]
 use std::os::unix::io::RawFd;
 
 use libc;
+use crate::time::Instant;
+#[cfg(feature = "std")]
 use crate::time::Duration;
 
 #[cfg(target_os = "linux")]
@@ -33,16 +38,21 @@ pub mod exports {
     pub use super::tap_interface::{TapInterface, TapInterfaceDesc};
     #[cfg(target_os = "linux")]
     pub use super::raw_socket::{RawSocket, RawSocketDesc};
+    #[cfg(feature = "std")]
+    pub use super::wait as sys_wait;
+    pub use super::Errno;
 }
 
+#[cfg(feature = "std")]
 /// Wait until given file descriptor becomes readable, but no longer than given timeout.
-pub fn wait(fd: RawFd, duration: Option<Duration>) -> io::Result<()> {
+pub fn wait(fd: RawFd, duration: Option<Duration>) -> Result<(), Errno> {
     let mut readfds;
 
     unsafe {
-        readfds = mem::uninitialized::<libc::fd_set>();
-        libc::FD_ZERO(&mut readfds);
-        libc::FD_SET(fd, &mut readfds);
+        let mut readfds_init = mem::MaybeUninit::<libc::fd_set>::uninit();
+        libc::FD_ZERO(readfds_init.as_mut_ptr());
+        libc::FD_SET(fd, readfds_init.as_mut_ptr());
+        readfds = readfds_init.assume_init();
     }
 
     let mut timeout = libc::timeval { tv_sec: 0, tv_usec: 0 };
@@ -64,8 +74,16 @@ pub fn wait(fd: RawFd, duration: Option<Duration>) -> io::Result<()> {
             timeout_ptr)
     };
 
-    test_result(FdResult(res))
+    FdResult(res).errno()
 }
+
+/// An errno value.
+///
+/// This is used as the error representation of raw libc calls. It can be converted into a
+/// `std::io::Error` when the `std` feature is enabled, where it will consequently have much more
+/// extensive error information.
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct Errno(pub libc::c_int);
 
 #[derive(Clone, Copy)]
 struct FdResult(pub libc::c_int);
@@ -73,19 +91,43 @@ struct FdResult(pub libc::c_int);
 #[derive(Clone, Copy)]
 struct IoLenResult(pub libc::ssize_t);
 
+#[derive(Clone, Copy)]
+struct ClockResult(pub libc::c_int);
+
 type IoctlResult = FdResult;
 #[allow(non_snake_case)] // Emulate type alias also importing constructor.
 fn IoctlResult(val: libc::c_int) -> IoctlResult { FdResult(val) }
 
-trait LibcResult: Copy {
-    fn is_fail(self) -> bool;
+/// Base for an if ioctl request.
+///
+/// Contains the name of the interface.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct ifreq {
+    ifr_name: [libc::c_char; libc::IF_NAMESIZE],
 }
 
-fn test_result(ret: impl LibcResult) -> io::Result<()> {
-    if ret.is_fail() {
-        Err(io::Error::last_os_error()) 
-    } else {
-        Ok(())
+/// Trait for interpreting integer return values.
+///
+/// Failure signals may vary between:
+/// * `-1`
+/// * arbitrary negative values
+/// * non-zero
+trait LibcResult: Copy {
+    fn is_fail(self) -> bool;
+
+    fn errno(self) -> Result<(), Errno> {
+        if self.is_fail() {
+            Err(Errno::new())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl Errno {
+    pub fn new() -> Errno {
+        Errno(unsafe { *libc::__errno_location() })
     }
 }
 
@@ -101,13 +143,17 @@ impl LibcResult for IoLenResult {
     }
 }
 
-/// Base for an if ioctl request.
-///
-/// Contains the name of the interface.
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-struct ifreq {
-    ifr_name: [libc::c_char; libc::IF_NAMESIZE],
+impl LibcResult for ClockResult {
+    fn is_fail(self) -> bool {
+        self.0 == -1
+    }
+}
+
+#[cfg(feature = "std")]
+impl From<Errno> for io::Error {
+    fn from(err: Errno) -> io::Error {
+        io::Error::from_raw_os_error(err.0 as i32)
+    }
 }
 
 impl ifreq {
@@ -124,3 +170,15 @@ impl ifreq {
     }
 }
 
+fn now() -> Result<Instant, Errno> {
+   let ts = unsafe {
+       let mut ts = mem::MaybeUninit::<libc::timespec>::uninit();
+       let res = libc::clock_gettime(libc::CLOCK_MONOTONIC, ts.as_mut_ptr());
+
+       ClockResult(res).errno()?;
+
+       ts.assume_init()
+   };
+
+   Ok(Instant::from_millis(ts.tv_sec*1000 + ts.tv_nsec/1000_000))
+}

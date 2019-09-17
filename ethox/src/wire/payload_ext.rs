@@ -33,7 +33,7 @@ pub trait PayloadMutExt: PayloadMut {
     /// ## Example
     ///
     /// ```rust
-    /// # #[cfg(feature = "std")] {
+    /// # #[cfg(feature = "alloc")] {
     /// # use ethox::wire::{PayloadMutExt, ReframePayload};
     /// const PAYLOAD: &[u8] = b"xxxx";
     /// let mut packet = b"******"[..].to_vec();
@@ -109,6 +109,14 @@ pub trait PayloadMutExt: PayloadMut {
         }
 
         Ok(())
+    }
+
+    fn memset(&mut self, offset: usize, length: usize, value: u8) {
+        let slice = self.payload_mut().as_mut_slice();
+
+        for i in &mut slice[offset..offset + length] {
+            *i = value;
+        }
     }
 }
 

@@ -21,6 +21,10 @@ pub use core::time::Duration;
 /// * A value of `0` is inherently arbitrary.
 /// * A value less than `0` indicates a time before the starting
 ///   point.
+///
+/// Instants from different sources should not be mixed as their reference points may be different
+/// and thus yield surprising durations. They may not even advance at the same rate or be steady at
+/// all.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Instant {
     pub millis: i64,
@@ -77,11 +81,33 @@ impl Instant {
 }
 
 #[cfg(feature = "std")]
+/// Convert from a standard time.
+///
+/// Note that this conversion is not completely trivial. Although there is no defined epoch, all
+/// timestamps converted in this manner will be based on the same reference timestamp. The standard
+/// library further guarantees that the timestamps are in fact monotonically increasing. This comes
+/// at a performance price of one `Once` (in addition to the possible `Mutex` in the standard
+/// library in the `Instant::now()` call).
 impl From<::std::time::Instant> for Instant {
     fn from(other: ::std::time::Instant) -> Instant {
-        // FIXME:
-        unimplemented!("This is broken. Elapsed is relative to creation of the Instant, not some fixed point.");
-        let elapsed = other.elapsed();
+        use ::std::sync::Once;
+        use ::core::mem::MaybeUninit;
+        static mut FIRST: MaybeUninit<::std::time::Instant> = MaybeUninit::uninit();
+        static ONCE: Once = Once::new();
+
+        ONCE.call_once(|| {
+            unsafe {
+                // SAFETY: by the Once, we are the first thread accessing this variable. That is,
+                // no other thread is already trying to read it and all other threads are blocked
+                // and will never attempt to write to it.
+                FIRST.as_mut_ptr().write(::std::time::Instant::now());
+            }
+        });
+
+        // SAFETY: this was initialized before by one `call_once`.
+        let relative = unsafe { FIRST.assume_init() };
+
+        let elapsed = other - relative;
         Instant::from_millis((elapsed.as_secs() * 1_000) as i64 + (elapsed.subsec_nanos() / 1_000_000) as i64)
     }
 }

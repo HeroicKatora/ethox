@@ -1,11 +1,11 @@
-use crate::layer::{Result, Error, FnHandler};
-use crate::time::Instant;
-use crate::wire::{EthernetAddress, EthernetFrame, IpAddress,  Payload, PayloadMut};
+use core::marker::PhantomData;
+
+use crate::layer::FnHandler;
+use crate::wire::{EthernetAddress, EthernetFrame, Payload, PayloadMut};
 use crate::nic;
 
 use super::{Recv, Send};
 use super::packet::{self, Handle};
-use super::neighbor::{Cache};
 
 pub struct Endpoint<'a> {
     /// Our own address.
@@ -13,11 +13,8 @@ pub struct Endpoint<'a> {
     /// We ignored any packets with mismatching destination.
     addr: EthernetAddress,
 
-    /// Internal neighbor cache.
-    ///
-    /// Upper layer protocols, usually ARP, are also allowed to update the table of associated
-    /// entires.
-    neighbors: Cache<'a>,
+    /// TODO: figure out if we need any dynamically sized, non-owned data.
+    data: PhantomData<&'a ()>,
 }
 
 /// An endpoint borrowed for receiving.
@@ -44,12 +41,10 @@ struct EthEndpoint<'a, 'e> {
 }
 
 impl<'a> Endpoint<'a> {
-    pub fn new<C>(addr: EthernetAddress, neighbors: C) -> Self 
-        where C: Into<Cache<'a>>,
-    {
+    pub fn new(addr: EthernetAddress) -> Self {
         Endpoint {
             addr,
-            neighbors: neighbors.into(),
+            data: PhantomData,
         }
     }
 
@@ -77,20 +72,13 @@ impl<'a> Endpoint<'a> {
 
     fn accepts(&self, dst_addr: EthernetAddress) -> bool {
         // TODO: broadcast and multicast
-        self.addr == dst_addr
+        self.addr == dst_addr || dst_addr.is_broadcast()
     }
 }
 
 impl packet::Endpoint for EthEndpoint<'_, '_> {
     fn src_addr(&mut self) -> EthernetAddress {
         self.inner.addr
-    }
-
-    fn resolve(&mut self, addr: IpAddress, time: Instant) -> Result<EthernetAddress> {
-        // TODO: should we automatically try to send an ARP request?  And if so, should lookup be
-        // used instead.
-        self.inner.neighbors.lookup_pure(&addr, time)
-            .ok_or(Error::Unreachable)
     }
 }
 
@@ -151,7 +139,7 @@ mod tests {
     use super::*;
     use crate::managed::Slice;
     use crate::nic::{external::External, Device};
-    use crate::layer::eth::{Init, NeighborCache};
+    use crate::layer::eth::Init;
     use crate::wire::{EthernetAddress, EthernetProtocol};
 
     const MAC_ADDR_1: EthernetAddress = EthernetAddress([0, 1, 2, 3, 4, 5]);
@@ -189,7 +177,7 @@ mod tests {
 
     #[test]
     fn simple() {
-        let mut endpoint = Endpoint::new(MAC_ADDR_1, NeighborCache::new(&mut [][..]));
+        let mut endpoint = Endpoint::new(MAC_ADDR_1);
         let mut nic = External::new_send(Slice::One(vec![0; 1024]));
 
         let sent = nic.tx(

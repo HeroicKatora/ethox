@@ -80,9 +80,12 @@ struct EthRoute {
 
 /// The interface to the endpoint.
 pub(crate) trait Endpoint{
+    /// Get the ip to use on a link by providing the subnet in which it should be routed.
     fn local_ip(&self, subnet: IpSubnet) -> Option<IpAddress>;
-
+    /// Find a Route a destination at the current time.
     fn route(&self, dst_addr: IpAddress, time: Instant) -> Option<Route>;
+    /// Resolve an address. If `look` is true, try to actively lookup it up later.
+    fn resolve(&mut self, _: IpAddress, _: Instant, look: bool) -> Result<EthernetAddress>;
 }
 
 impl<'a> Handle<'a> {
@@ -97,7 +100,7 @@ impl<'a> Handle<'a> {
     }
 
     /// Get the hardware info for that packet.
-    pub fn info(&self) -> &Info {
+    pub fn info(&self) -> &dyn Info {
         self.eth.info()
     }
 
@@ -113,13 +116,24 @@ impl<'a> Handle<'a> {
         self.endpoint.local_ip(subnet)
     }
 
+    /// Try to initialize the destination from an upper layer protocol address.
+    ///
+    /// Failure to satisfy the request is clearly signalled. Use the result to initialize the
+    /// representation to a valid eth frame.
+    pub fn resolve(&mut self, dst_addr: IpAddress)
+        -> Result<EthernetAddress>
+    {
+        let time = self.info().timestamp();
+        self.endpoint.resolve(dst_addr, time, true)
+    }
+
     fn route_to(&mut self, dst_addr: IpAddress) -> Result<EthRoute> {
         let now = self.eth.info().timestamp();
         let Route { next_hop, src_addr } = self.endpoint
             .route(dst_addr, now)
             .ok_or(Error::Unreachable)?;
+        let next_mac = self.resolve(next_hop)?;
         let src_mac = self.eth.src_addr();
-        let next_mac = self.eth.resolve(next_hop)?;
 
         Ok(EthRoute {
             src_mac,

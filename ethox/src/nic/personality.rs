@@ -1,5 +1,5 @@
 // FIXME: make most of these methods `const` as soon as possible.
-use crate::wire::{Checksum, IpRepr, UdpChecksum};
+use crate::wire::{Checksum, IpRepr, UdpChecksum, TcpChecksum};
 
 /// A general description of a device.
 ///
@@ -21,6 +21,7 @@ pub struct Capabilities {
     ipv4: Protocol,
     icmpv4: Protocol,
     udp: Udp,
+    tcp: Tcp,
 }
 
 /// The extent of support for a specific protocol.
@@ -42,6 +43,18 @@ pub struct Protocol {
 /// It is possible to create one `From` a `Protocol` instance as `Udp` is a specialization.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Udp {
+    inner: Protocol,
+}
+
+/// A specialized instance of `Protocol` for Tcp.
+///
+/// This is a different instance since the checksumming behaviour of network cards is much more
+/// convoluted here. Until requirements for real cards are evaluated this will stay a wrapper with
+/// mostly no additional methods.
+///
+/// It is possible to create one `From` a `Protocol` instance as `Udp` is a specialization.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Tcp {
     inner: Protocol,
 }
 
@@ -75,6 +88,7 @@ impl Capabilities {
             ipv4: Protocol::no_support(),
             icmpv4: Protocol::no_support(),
             udp: Udp::no_support(),
+            tcp: Tcp::no_support(),
         }
     }
 
@@ -97,6 +111,14 @@ impl Capabilities {
     pub fn udp_mut(&mut self) -> &mut Udp {
         &mut self.udp
     }
+
+    pub fn tcp(&self) -> &Tcp {
+        &self.tcp
+    }
+
+    pub fn tcp_mut(&mut self) -> &mut Tcp {
+        &mut self.tcp
+    }
 }
 
 impl Protocol {
@@ -104,6 +126,18 @@ impl Protocol {
         Protocol {
             send: Checksum::Manual,
             receive: Checksum::Manual,
+        }
+    }
+
+    /// Expect the underlying nic to do all work automatically.
+    ///
+    /// This is very unlikely to actually happen (partial checksums or offset are likely required)
+    /// but in specialize links it may be pre-determined knowledge that both sides ignore checksums
+    /// entirely.
+    pub fn offloaded() -> Self {
+        Protocol {
+            send: Checksum::Ignored,
+            receive: Checksum::Ignored,
         }
     }
 
@@ -162,10 +196,57 @@ impl Udp {
     }
 }
 
-/// `Protocol` is a simplified version.
+impl Tcp {
+    pub fn no_support() -> Self {
+        Tcp {
+            inner: Protocol::no_support(),
+        }
+    }
+
+    /// Create the `UdpChecksum` instance necessary for sending a header.
+    ///
+    /// The enum `UdpChecksum` controls when and how the checksum is filled in by the `wire`
+    /// portion of the library. This creates an instance which corresponds to the requirements of
+    /// the nic.
+    pub fn tx_checksum(&self, ip: IpRepr) -> TcpChecksum {
+        match self.inner.tx_checksum() {
+            Checksum::Manual => TcpChecksum::Manual {
+                src_addr: ip.src_addr(),
+                dst_addr: ip.dst_addr(),
+            },
+            Checksum::Ignored => TcpChecksum::Ignored,
+        }
+    }
+
+    /// Create the `UdpChecksum` instance necessary for receiving a header.
+    ///
+    /// The enum `UdpChecksum` controls when and how the checksum is filled in by the `wire`
+    /// portion of the library. This creates an instance which corresponds to the requirements of
+    /// the nic.
+    pub fn rx_checksum(&self, ip: IpRepr) -> TcpChecksum {
+        match self.inner.rx_checksum() {
+            Checksum::Manual => TcpChecksum::Manual {
+                src_addr: ip.src_addr(),
+                dst_addr: ip.dst_addr(),
+            },
+            Checksum::Ignored => TcpChecksum::Ignored,
+        }
+    }
+}
+
+/// `Protocol` may be a simplified version in the future.
 impl From<Protocol> for Udp {
     fn from(inner: Protocol) -> Self {
         Udp {
+            inner,
+        }
+    }
+}
+
+/// `Protocol` may be a simplified version in the future.
+impl From<Protocol> for Tcp {
+    fn from(inner: Protocol) -> Self {
+        Tcp {
             inner,
         }
     }

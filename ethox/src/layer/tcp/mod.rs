@@ -99,7 +99,8 @@ pub use packet::{
     RecvBuf,
     SendBuf,
     Sending,
-    Stray,};
+    Stray,
+    UserSignals};
 
 pub use socket::{
     Client};
