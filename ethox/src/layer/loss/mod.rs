@@ -3,7 +3,7 @@
 //! The loss layer is a simple wrapper around another layer which simulates a lossy connection.
 //! This works by dropping ingress packets or canceling the sending of egress packets.
 use crate::nic;
-use crate::wire::{Payload, PayloadMut};
+use crate::wire::Payload;
 
 /// Simple pseudo-random loss.
 ///
