@@ -83,15 +83,15 @@ impl PrngLoss {
     }
 
     /// Determine the fate for the next packet.
-    pub fn next(&mut self) -> bool {
+    pub fn next_pass(&mut self) -> bool {
         let in_window = self.count < self.threshold;
-        let fate = Some(self.roll()) <= self.lossrate;
+        let fate_drop = Some(self.roll()) <= self.lossrate;
 
         let ncount = self.count.checked_sub(1)
             .unwrap_or(self.reset);
         self.count = ncount;
 
-        fate & in_window
+        !in_window || !fate_drop
     }
 
     /// Generate the next value of the prng.
@@ -152,7 +152,7 @@ where
     I: nic::Recv<LossyHandle<H>, P>,
 {
     fn receive(&mut self, packet: nic::Packet<H, P>) {
-        if !self.1.next() {
+        if !self.1.next_pass() {
             return;
         }
 
@@ -196,7 +196,7 @@ where
 
 impl<H: nic::Handle + ?Sized> nic::Handle for LossyHandle<H> {
     fn queue(&mut self) -> crate::layer::Result<()> {
-        if unsafe { &mut *self.prng }.next() {
+        if unsafe { &mut *self.prng }.next_pass() {
             unsafe { &mut *self.handle }.queue()
         } else {
             Ok(())
@@ -238,7 +238,7 @@ where
     I: eth::Recv<P>,
 {
     fn receive(&mut self, packet: eth::InPacket<P>) {
-        if !self.1.next() {
+        if !self.1.next_pass() {
             return;
         }
 
@@ -284,7 +284,7 @@ where
     I: ip::Recv<P>,
 {
     fn receive(&mut self, packet: ip::InPacket<P>) {
-        if !self.1.next() {
+        if !self.1.next_pass() {
             return;
         }
 
@@ -333,14 +333,14 @@ mod tests {
         // Drops one out of 10 packets.
         let mut prng = PrngLoss::pulsed(1, 10);
         let count = (0..100)
-            .filter(|_| prng.next())
+            .filter(|_| !prng.next_pass())
             .count();
         assert_eq!(count, 10);
 
         // Drops all packets.
         prng = PrngLoss::pulsed(1, 1);
         let count = (0..100)
-            .filter(|_| prng.next())
+            .filter(|_| !prng.next_pass())
             .count();
         assert_eq!(count, 100);
 
@@ -348,7 +348,7 @@ mod tests {
         prng = PrngLoss::pulsed(1, 10);
         prng.lossrate = Some(!0 >> 1);
         let count = (0..100)
-            .filter(|_| prng.next())
+            .filter(|_| !prng.next_pass())
             .count();
         assert!(count <= 10);
     }
