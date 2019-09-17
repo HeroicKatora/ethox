@@ -27,7 +27,7 @@ pub struct PrngLoss {
     pub prng: Xoroshiro256,
 }
 
-pub struct Lossy<I>(pub I, pub PrngLoss);
+pub struct Lossy<'a, I>(pub I, pub &'a mut PrngLoss);
 
 /// A handle wrapper that sometimes doesn't queue packets.
 ///
@@ -62,8 +62,8 @@ impl PrngLoss {
     }
 
     /// Wrap a layer to make it lossy.
-    pub fn lossy<I>(&self, layer: I) -> Lossy<I> {
-        Lossy(layer, self.clone())
+    pub fn lossy<I>(&mut self, layer: I) -> Lossy<I> {
+        Lossy(layer, self)
     }
 
     /// Simulate burst losses as pulses.
@@ -145,7 +145,7 @@ impl<H: ?Sized> LossyHandle<H> {
     }
 }
 
-impl<H, P, I> nic::Recv<H, P> for Lossy<I>
+impl<H, P, I> nic::Recv<H, P> for Lossy<'_, I>
 where
     H: nic::Handle + ?Sized,
     P: Payload + ?Sized,
@@ -160,7 +160,7 @@ where
         let mut handle_mem = core::mem::MaybeUninit::uninit();
         let handle = LossyHandle::new(
             &mut handle_mem,
-            &mut self.1,
+            &mut *self.1,
             handle);
 
         let packet = nic::Packet {
@@ -172,7 +172,7 @@ where
     }
 }
 
-impl<H, P, I> nic::Send<H, P> for Lossy<I>
+impl<H, P, I> nic::Send<H, P> for Lossy<'_, I>
 where
     H: nic::Handle + ?Sized,
     P: Payload + ?Sized,
@@ -184,7 +184,7 @@ where
         let mut handle_mem = core::mem::MaybeUninit::uninit();
         let handle = LossyHandle::new(
             &mut handle_mem,
-            &mut self.1,
+            &mut *self.1,
             handle);
 
         self.0.send(nic::Packet {
@@ -208,7 +208,7 @@ impl<H: nic::Handle + ?Sized> nic::Handle for LossyHandle<H> {
     }
 }
 
-impl<D> nic::Device for Lossy<D>
+impl<D> nic::Device for Lossy<'_, D>
 where
     D: nic::Device,
 {
@@ -222,23 +222,17 @@ where
     fn tx(&mut self, max: usize, sender: impl nic::Send<Self::Handle, Self::Payload>)
         -> crate::layer::Result<usize>
     {
-        let mut sender = Lossy(sender, self.1);
-        let result = self.0.tx(max, &mut sender);
-        self.1 = sender.1;
-        result
+        self.0.tx(max, Lossy(sender, self.1))
     }
 
     fn rx(&mut self, max: usize, receptor: impl nic::Recv<Self::Handle, Self::Payload>)
         -> crate::layer::Result<usize>
     {
-        let mut sender = Lossy(receptor, self.1);
-        let result = self.0.rx(max, &mut sender);
-        self.1 = sender.1;
-        result
+        self.0.rx(max, Lossy(receptor, self.1))
     }
 }
 
-impl<P, I> eth::Recv<P> for Lossy<I>
+impl<P, I> eth::Recv<P> for Lossy<'_, I>
 where
     P: Payload,
     I: eth::Recv<P>,
@@ -263,7 +257,7 @@ where
     }
 }
 
-impl<P, I> eth::Send<P> for Lossy<I>
+impl<P, I> eth::Send<P> for Lossy<'_, I>
 where
     P: Payload,
     I: eth::Send<P>,
@@ -284,7 +278,7 @@ where
     }
 }
 
-impl<P, I> ip::Recv<P> for Lossy<I>
+impl<P, I> ip::Recv<P> for Lossy<'_, I>
 where
     P: Payload,
     I: ip::Recv<P>,
@@ -309,7 +303,7 @@ where
     }
 }
 
-impl<P, I> ip::Send<P> for Lossy<I>
+impl<P, I> ip::Send<P> for Lossy<'_, I>
 where
     P: Payload,
     I: ip::Send<P>,
