@@ -3,7 +3,7 @@
 //! The loss layer is a simple wrapper around another layer which simulates a lossy connection.
 //! This works by dropping ingress packets or canceling the sending of egress packets.
 use crate::nic;
-use crate::layer::eth;
+use crate::layer::{eth, ip};
 use crate::wire::Payload;
 
 /// Simple pseudo-random loss.
@@ -279,6 +279,52 @@ where
             .wrap(|inner| LossyHandle::new(
                 &mut handle_mem, loss, inner));
         let packet = eth::RawPacket { handle, payload, };
+
+        self.0.send(packet);
+    }
+}
+
+impl<P, I> ip::Recv<P> for Lossy<I>
+where
+    P: Payload,
+    I: ip::Recv<P>,
+{
+    fn receive(&mut self, packet: ip::InPacket<P>) {
+        if !self.1.next() {
+            return;
+        }
+
+        let mut handle_mem = core::mem::MaybeUninit::uninit();
+        let loss = &mut self.1;
+
+        // Reconstruct packet with change handle.
+        let ip::InPacket { mut handle, packet } = packet;
+        let handle = handle
+            .borrow_mut()
+            .wrap(|inner| LossyHandle::new(
+                &mut handle_mem, loss, inner));
+        let packet = ip::InPacket { handle, packet, };
+
+        self.0.receive(packet)
+    }
+}
+
+impl<P, I> ip::Send<P> for Lossy<I>
+where
+    P: Payload,
+    I: ip::Send<P>,
+{
+    fn send(&mut self, packet: ip::RawPacket<P>) {
+        let mut handle_mem = core::mem::MaybeUninit::uninit();
+        let loss = &mut self.1;
+
+        // Reconstruct packet with changed handle.
+        let ip::RawPacket { mut handle, payload } = packet;
+        let handle = handle
+            .borrow_mut()
+            .wrap(|inner| LossyHandle::new(
+                &mut handle_mem, loss, inner));
+        let packet = ip::RawPacket { handle, payload, };
 
         self.0.send(packet);
     }
