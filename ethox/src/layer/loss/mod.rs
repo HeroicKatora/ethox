@@ -3,6 +3,7 @@
 //! The loss layer is a simple wrapper around another layer which simulates a lossy connection.
 //! This works by dropping ingress packets or canceling the sending of egress packets.
 use crate::nic;
+use crate::layer::eth;
 use crate::wire::Payload;
 
 /// Simple pseudo-random loss.
@@ -234,6 +235,52 @@ where
         let result = self.0.rx(max, &mut sender);
         self.1 = sender.1;
         result
+    }
+}
+
+impl<P, I> eth::Recv<P> for Lossy<I>
+where
+    P: Payload,
+    I: eth::Recv<P>,
+{
+    fn receive(&mut self, packet: eth::InPacket<P>) {
+        if !self.1.next() {
+            return;
+        }
+
+        let mut handle_mem = core::mem::MaybeUninit::uninit();
+        let loss = &mut self.1;
+
+        // Reconstruct packet with change handle.
+        let eth::InPacket { mut handle, frame } = packet;
+        let handle = handle
+            .borrow_mut()
+            .wrap(|inner| LossyHandle::new(
+                &mut handle_mem, loss, inner));
+        let packet = eth::InPacket { handle, frame, };
+
+        self.0.receive(packet)
+    }
+}
+
+impl<P, I> eth::Send<P> for Lossy<I>
+where
+    P: Payload,
+    I: eth::Send<P>,
+{
+    fn send(&mut self, packet: eth::RawPacket<P>) {
+        let mut handle_mem = core::mem::MaybeUninit::uninit();
+        let loss = &mut self.1;
+
+        // Reconstruct packet with changed handle.
+        let eth::RawPacket { mut handle, payload } = packet;
+        let handle = handle
+            .borrow_mut()
+            .wrap(|inner| LossyHandle::new(
+                &mut handle_mem, loss, inner));
+        let packet = eth::RawPacket { handle, payload, };
+
+        self.0.send(packet);
     }
 }
 
