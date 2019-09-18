@@ -22,6 +22,8 @@ pub use self::personality::{
 #[cfg(feature = "sys")]
 pub use self::sys::exports::*;
 
+pub use crate::layer::loss::{Lossy, PrngLoss};
+
 /// A reference to memory holding packet data and a handle.
 ///
 /// The `Payload` is as an interfance into internal library types for packet parsing while the
@@ -124,6 +126,34 @@ impl<F, H: Handle + ?Sized, P: Payload + ?Sized> Send<H, P> for FnHandler<F>
 {
     fn send(&mut self, packet: Packet<H, P>) {
         (self.0)(packet)
+    }
+}
+
+impl<F, H: Handle + ?Sized, P: Payload + ?Sized> Recv<H, P> for &'_ mut F
+    where F: Recv<H, P>
+{
+    fn receive(&mut self, packet: Packet<H, P>) {
+        (**self).receive(packet)
+    }
+
+    fn receivev<'a>(&mut self, packets: impl IntoIterator<Item=Packet<'a, H, P>>)
+        where P: 'a, H: 'a
+    {
+        (**self).receivev(packets)
+    }
+}
+
+impl<F, H: Handle + ?Sized, P: Payload + ?Sized> Send<H, P> for &'_ mut F
+    where F: Send<H, P>
+{
+    fn send(&mut self, packet: Packet<H, P>) {
+        (**self).send(packet)
+    }
+
+    fn sendv<'a>(&mut self, packets: impl IntoIterator<Item=Packet<'a, H, P>>)
+        where P: 'a, H: 'a
+    {
+        (**self).sendv(packets)
     }
 }
 
