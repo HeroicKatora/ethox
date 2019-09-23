@@ -133,8 +133,8 @@ where
                     },
                     // TODO: error handling.
                     Err(crate::layer::Error::Exhausted) => return,
-                    Err(other) => {
-                        dbg!(other);
+                    Err(_other) => {
+                        // TODO: error debgugging.
                         self.state = ClientState::Finished;
                         return;
                     },
