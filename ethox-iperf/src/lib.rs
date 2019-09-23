@@ -1,3 +1,8 @@
+#![cfg_attr(feature = "bench", feature(test))]
+#[cfg(feature = "bench")]
+extern crate test;
+
+mod pattern;
 mod score;
 
 pub mod config;

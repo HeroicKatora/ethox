@@ -17,3 +17,8 @@ path = "src/lib.rs"
 [[bin]]
 name = "iperf3"
 path = "bin/main.rs"
+
+[features]
+default = []
+# Nightly feature for internal benchmarks
+bench = []

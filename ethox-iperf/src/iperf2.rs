@@ -1,6 +1,6 @@
 //! A very simple udp iperf protocol.
 //!
-//! For udp, tHe client (sender) simply floods the server with packets of client-side specified
+//! For udp, the client (sender) simply floods the server with packets of client-side specified
 //! length and bandwidth. A few bytes of metdata are provided in it, the rest is filled with the
 //! repeating pattern `0123456789`. Technically, the implementation would wait for a single ack
 //! packet from the server on the reverse path but it is not important for giving results. The
@@ -224,12 +224,8 @@ impl Connection {
 
     /// Fill the necessary part of the packet.
     fn fill(&mut self, packet: &mut [u8], time: Instant, count: u32) {
-        static FILL_PATTERN: &[u8] = b"0123456789";
         assert!(packet.len() >= 20);
-
-        packet
-            .chunks_mut(10)
-            .for_each(|chunk| chunk.copy_from_slice(&FILL_PATTERN[..chunk.len()]));
+        crate::pattern::init(packet, 0);
 
         let secs = time.secs() as u32;
         let millis = time.millis() as u32;
@@ -332,17 +328,12 @@ impl tcp::SendBuf for PatternBuffer {
 
     fn fill(&mut self, buf: &mut [u8], begin: TcpSeqNumber) {
         const HEAD: [u8; 4] = [0x80, 0x00, 0x00, 0x00];
-        const DIGIT: [u8; 10] = *b"0123456789";
 
         let prev = self.at.expect("Fill must not be called before isn indication");
         let relative = begin - prev;
 
         let offset = (self.acked + relative) % 10;
-
-        buf.iter_mut().fold(offset, |pattern, byte| {
-            *byte = DIGIT[pattern];
-            (pattern + 1) % 10
-        });
+        crate::pattern::init(buf, offset);
 
         // The first 4 byte are special.
         if let Some(head) = 4usize.checked_sub(relative + self.acked) {
