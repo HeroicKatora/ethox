@@ -132,12 +132,17 @@ where
                         open
                     },
                     // TODO: error handling.
-                    Err(_) => return self.state = ClientState::Finished,
+                    Err(crate::layer::Error::Exhausted) => return,
+                    Err(other) => {
+                        dbg!(other);
+                        self.state = ClientState::Finished;
+                        return;
+                    },
                 }
             },
             ClientState::InStack { key } => {
                 match packet.attach(key) {
-                    Ok(open) =>open,
+                    Ok(open) => open,
                     // TODO: error handling.
                     Err(_) => return self.state = ClientState::Finished,
                 }
