@@ -11,7 +11,7 @@
 use core::{fmt, mem};
 
 use ethox::layer::{ip, tcp, udp, Error};
-use ethox::time::Instant;
+use ethox::time::{Duration, Instant};
 use ethox::wire::{Ipv4Subnet, PayloadMut, TcpSeqNumber};
 use ethox::managed::{Map, Partial, SlotMap};
 
@@ -86,9 +86,17 @@ pub struct Result {
     pub j: u32, // 00 00 00 09
 }
 
-/// The result is **not** sent by the remote.
+/// A locall created result, **not** sent by the remote.
+///
+/// There is no result communication for the TCP iperf2 instantiation. (It could, if the Linux
+/// stack were to support half-closed streams in a nice manner, like this stack). But since the
+/// protocol layer intrisically tracks most of the necessary data we can restore it on the client
+/// side.
 #[derive(Clone, Copy)]
 pub(crate) struct TcpResult {
+    pub data_len: u32,
+    pub duration: Duration,
+    pub packet_count: u32,
 }
 
 impl Iperf {
@@ -121,11 +129,11 @@ impl IperfTcp {
     fn generate_client(client: &IperfClient)
         -> tcp::Client<tcp::io::Sink, PatternBuffer>
     {
-        let remote = unimplemented!();
-        let port = unimplemented!();
+        let remote = client.host.into();
+        let port = client.port;
         let sink = tcp::io::Sink::default();
         let pattern = PatternBuffer {
-            len: unimplemented!(),
+            len: client.bytes,
             acked: 0,
             at: None,
         };
@@ -255,13 +263,27 @@ impl<P: PayloadMut> ip::Recv<P> for Iperf {
 
 impl<P: PayloadMut> ip::Send<P> for IperfTcp {
     fn send(&mut self, packet: ip::RawPacket<P>) {
-        unimplemented!()
+        if !self.client.is_closed() {
+            self.tcp.send(&mut self.client)
+                .send(packet)
+        }
+
+        if self.result.is_none() {
+            self.result = Some(TcpResult {
+                data_len: unimplemented!(),
+                duration: unimplemented!(),
+                packet_count: unimplemented!(),
+            });
+        }
     }
 }
 
 impl<P: PayloadMut> ip::Recv<P> for IperfTcp {
     fn receive(&mut self, packet: ip::InPacket<P>) {
-        unimplemented!()
+        if !self.client.is_closed() {
+            self.tcp.recv(&mut self.client)
+                .receive(packet)
+        }
     }
 }
 

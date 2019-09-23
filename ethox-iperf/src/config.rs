@@ -13,7 +13,6 @@ pub enum Iperf3Config {
 pub struct IperfClient {
     pub host: net::Ipv4Addr,
     pub port: u16,
-
     #[structopt(short = "n")]
     pub bytes: usize,
     #[structopt(short = "l")]

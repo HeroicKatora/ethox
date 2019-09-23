@@ -43,7 +43,11 @@ impl From<iperf2::Result> for Score {
 
 impl From<iperf2::TcpResult> for Score {
     fn from(result: iperf2::TcpResult) -> Score {
-        unimplemented!()
+        Score {
+            data_len: result.data_len.into(),
+            time: result.duration,
+            packet_count: result.packet_count,
+        }
     }
 }
 
