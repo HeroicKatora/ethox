@@ -278,15 +278,15 @@ impl Iperf3 {
 impl Config {
     pub fn new(from: &Client) -> Self {
         let Client {
-            bytes,
-            length,
+            buffer_bytes,
+            total_bytes,
             ..
         } = *from;
-        assert!(length >= 12, "Udp block size too small, must be at least 12");
+        assert!(buffer_bytes >= 12, "Udp block size too small, must be at least 12");
         // TODO: for tcp length is something entirely different.
         Config {
-            block_size: length,
-            remaining: bytes,
+            block_size: buffer_bytes,
+            remaining: total_bytes,
         }
     }
 }

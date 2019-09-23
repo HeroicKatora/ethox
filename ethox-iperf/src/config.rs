@@ -29,10 +29,10 @@ pub struct IperfClient {
 pub struct Client {
     pub host: net::Ipv4Addr,
     pub port: u16,
-    #[structopt(short = "n")]
-    pub bytes: usize,
     #[structopt(short = "l")]
-    pub length: usize,
+    pub buffer_bytes: usize,
+    #[structopt(short = "n")]
+    pub total_bytes: usize,
 }
 
 #[derive(Clone, StructOpt)]

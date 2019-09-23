@@ -5,7 +5,7 @@
 //!
 //! Prepend the ethox configuration to the usual iperf options. Call example:
 //!
-//! * `iperf3 tap0 10.0.0.1/24 ab:ff:ff:ff:ff:ff 10.0.0.2/24 -c 10.0.0.2 5001 -l 10000 -n 2470`
+//! * `iperf3 tap0 10.0.0.1/24 ab:ff:ff:ff:ff:ff 10.0.0.2/24 -c 10.0.0.2 5001 -n 10000 -l 1470`
 pub use ethox_iperf::{config, iperf2};
 
 use std::io::{stdout, Write};

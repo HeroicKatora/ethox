@@ -137,7 +137,7 @@ impl IperfTcp {
         let port = client.port;
         let sink = tcp::io::Sink::default();
         let pattern = PatternBuffer {
-            len: client.length,
+            len: client.total_bytes,
             acked: 0,
             at: None,
         };
@@ -162,8 +162,8 @@ impl Connection {
     fn new(config: &Client) -> Self {
         let Client {
             host: _, port: _,
-            bytes: packet_size,
-            length: remaining,
+            buffer_bytes: packet_size,
+            total_bytes: remaining,
         } = config;
         let packet_size = *packet_size;
         let remaining = *remaining;
@@ -190,7 +190,7 @@ impl Connection {
             src_port: 50020,
             dst_addr: config.host.into(),
             dst_port: config.port,
-            payload: config.bytes,
+            payload: config.buffer_bytes,
         }
     }
 
