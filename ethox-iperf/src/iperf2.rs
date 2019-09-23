@@ -26,6 +26,8 @@ pub struct IperfTcp {
     client: tcp::Client<tcp::io::Sink, PatternBuffer>,
     tcp: tcp::Endpoint<'static>,
     result: Option<TcpResult>,
+    first_sent: Option<Instant>,
+    last_time: Option<Instant>,
 }
 
 struct Connection {
@@ -123,6 +125,8 @@ impl IperfTcp {
             client: Self::generate_client(config),
             tcp: Self::generate_tcp(config),
             result: None,
+            first_sent: None,
+            last_time: None,
         }
     }
 
@@ -269,9 +273,11 @@ impl<P: PayloadMut> ip::Send<P> for IperfTcp {
         }
 
         if self.result.is_none() {
+            let first = self.first_sent.unwrap();
+            let last = self.last_time.unwrap();
             self.result = Some(TcpResult {
                 data_len: unimplemented!(),
-                duration: unimplemented!(),
+                duration: last - first,
                 packet_count: unimplemented!(),
             });
         }
