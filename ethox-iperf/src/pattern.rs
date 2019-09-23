@@ -7,7 +7,7 @@
 /// The `offset` is the offset in the sequence, module 10.
 #[inline]
 pub fn init(mut buf: &mut [u8], offset: usize) {
-    const DIGIT: [u8; 10] = *b"0123456789";
+    const DIGIT: &[u8] = include_bytes!("pattern.txt");
 
     assert!(offset < 10, "Invalid offset");
     // Align the buffer.
@@ -22,7 +22,7 @@ pub fn init(mut buf: &mut [u8], offset: usize) {
         buf = &mut buf[10 - offset..];
     }
 
-    buf.chunks_mut(10)
+    buf.chunks_mut(DIGIT.len())
         .for_each(|chunk| chunk.copy_from_slice(&DIGIT[..chunk.len()]));
 }
 
