@@ -1,5 +1,5 @@
 use crate::layer::{Error, Result, eth};
-use crate::nic::Info;
+use crate::nic::{self, Info};
 use crate::time::Instant;
 use crate::wire::{Checksum, EthernetAddress, EthernetFrame, EthernetProtocol};
 use crate::wire::{Reframe, Payload, PayloadMut, PayloadResult, payload};
@@ -98,6 +98,13 @@ impl<'a> Handle<'a> {
             eth: handle,
             endpoint,
         }
+    }
+
+    pub(crate) fn wrap(self,
+        wrap: impl FnOnce(&'a mut dyn nic::Handle) -> &'a mut dyn nic::Handle,
+    ) -> Self {
+        let eth = self.eth.wrap(wrap);
+        Handle { eth, endpoint: self.endpoint }
     }
 
     /// Get the hardware info for that packet.

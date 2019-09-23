@@ -59,6 +59,13 @@ impl<'a> Handle<'a> {
         Handle { nic_handle, endpoint, }
     }
 
+    pub(crate) fn wrap(self,
+        wrap: impl FnOnce(&'a mut dyn nic::Handle) -> &'a mut dyn nic::Handle,
+    ) -> Self {
+        let nic_handle = wrap(self.nic_handle);
+        Handle { nic_handle, endpoint: self.endpoint }
+    }
+
     /// Proof to the compiler that we can shorten the lifetime arbitrarily.
     pub fn borrow_mut(&mut self) -> Handle {
         Handle {
