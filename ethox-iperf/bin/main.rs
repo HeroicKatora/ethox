@@ -32,19 +32,32 @@ fn main() {
         ip::Routes::import(List::new_full(routes.as_mut().into())),
         eth::NeighborCache::new(&mut neighbors[..]));
 
-    let iperf = match &config.iperf3 {
-        config::Iperf3Config::Client(client) => iperf2::Iperf::new(client),
-    };
-
     out.write_all(b"[+] Configured layers, communicating").unwrap();
 
-    let result = ethox_iperf::client(
-        &mut interface,
-        10,
-        &mut eth,
-        &mut ip,
-        iperf,
-    );
+    let result = match &config.iperf3 {
+        config::Iperf3Config::Client(
+            config::IperfClient { kind: config::ClientKind::Udp, client
+        }) => {
+            ethox_iperf::client(
+                &mut interface,
+                10,
+                &mut eth,
+                &mut ip,
+                iperf2::Iperf::new(client),
+            )
+        },
+        config::Iperf3Config::Client(
+            config::IperfClient { kind: config::ClientKind::Tcp, client
+        }) => {
+            ethox_iperf::client(
+                &mut interface,
+                10,
+                &mut eth,
+                &mut ip,
+                iperf2::IperfTcp::new(client),
+            )
+        },
+    };
 
     out.write_all(b"[+] Done").unwrap();
     write!(out, "{}", result).unwrap();

@@ -15,7 +15,7 @@ use ethox::time::{Duration, Instant};
 use ethox::wire::{Ipv4Subnet, PayloadMut, TcpSeqNumber};
 use ethox::managed::{Map, Partial, SlotMap};
 
-use super::config::IperfClient;
+use super::config::Client;
 
 pub struct Iperf {
     connection: Connection,
@@ -102,7 +102,7 @@ pub(crate) struct TcpResult {
 }
 
 impl Iperf {
-    pub fn new(config: &IperfClient) -> Self {
+    pub fn new(config: &Client) -> Self {
         Iperf {
             connection: Connection::new(config),
             udp: Self::generate_udp(config),
@@ -113,14 +113,14 @@ impl Iperf {
         self.connection.result
     }
 
-    fn generate_udp(_: &IperfClient) -> udp::Endpoint<'static> {
+    fn generate_udp(_: &Client) -> udp::Endpoint<'static> {
         // We only need a single connection entry.
         udp::Endpoint::new(vec![Default::default()])
     }
 }
 
 impl IperfTcp {
-    pub fn new(config: &IperfClient) -> Self {
+    pub fn new(config: &Client) -> Self {
         IperfTcp {
             client: Self::generate_client(config),
             tcp: Self::generate_tcp(config),
@@ -130,7 +130,7 @@ impl IperfTcp {
         }
     }
 
-    fn generate_client(client: &IperfClient)
+    fn generate_client(client: &Client)
         -> tcp::Client<tcp::io::Sink, PatternBuffer>
     {
         let remote = client.host.into();
@@ -145,7 +145,7 @@ impl IperfTcp {
         tcp::Client::new(remote, port, sink, pattern)
     }
 
-    fn generate_tcp(_: &IperfClient) -> tcp::Endpoint<'static> {
+    fn generate_tcp(_: &Client) -> tcp::Endpoint<'static> {
         let isn = tcp::IsnGenerator::from_std_hash();
         // We only need a single connection entry.
         tcp::Endpoint::new(
@@ -156,8 +156,8 @@ impl IperfTcp {
 }
 
 impl Connection {
-    fn new(config: &IperfClient) -> Self {
-        let IperfClient {
+    fn new(config: &Client) -> Self {
+        let Client {
             host: _, port: _,
             bytes: packet_size,
             length: remaining,
@@ -179,7 +179,7 @@ impl Connection {
         }
     }
 
-    fn generate_udp_init(config: &IperfClient) -> udp::Init {
+    fn generate_udp_init(config: &Client) -> udp::Init {
         udp::Init {
             source: ip::Source::Mask {
                 subnet: Ipv4Subnet::ANY.into(),
@@ -270,9 +270,15 @@ impl<P: PayloadMut> ip::Send<P> for IperfTcp {
         if !self.client.is_closed() {
             self.tcp.send(&mut self.client)
                 .send(packet)
+        } else {
+            self.result.get_or_insert_with(|| TcpResult {
+                data_len: 0,
+                duration: Instant::from_millis(0) - Instant::from_millis(0),
+                packet_count: 0,
+            });
         }
 
-        if self.result.is_none() {
+        if self.result.is_none() && false {
             let first = self.first_sent.unwrap();
             let last = self.last_time.unwrap();
             self.result = Some(TcpResult {

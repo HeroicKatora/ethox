@@ -10,7 +10,23 @@ pub enum Iperf3Config {
 }
 
 #[derive(Clone, StructOpt)]
+pub enum ClientKind {
+    #[structopt(name = "--udp")]
+    Udp,
+    #[structopt(name = "--tcp")]
+    Tcp,
+}
+
+#[derive(Clone, StructOpt)]
 pub struct IperfClient {
+    #[structopt(flatten)]
+    pub kind: ClientKind,
+    #[structopt(flatten)]
+    pub client: Client,
+}
+
+#[derive(Clone, StructOpt)]
+pub struct Client {
     pub host: net::Ipv4Addr,
     pub port: u16,
     #[structopt(short = "n")]
@@ -19,7 +35,7 @@ pub struct IperfClient {
     pub length: usize,
 }
 
-#[derive(StructOpt)]
+#[derive(Clone, StructOpt)]
 pub struct Config {
     pub tap: String,
     pub host: Ipv4Cidr,
