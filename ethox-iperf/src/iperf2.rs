@@ -137,7 +137,7 @@ impl IperfTcp {
         let port = client.port;
         let sink = tcp::io::Sink::default();
         let pattern = PatternBuffer {
-            len: client.bytes,
+            len: client.length,
             acked: 0,
             at: None,
         };
@@ -149,8 +149,11 @@ impl IperfTcp {
         let isn = tcp::IsnGenerator::from_std_hash();
         // We only need a single connection entry.
         tcp::Endpoint::new(
-            Map::Pairs(Partial::new(vec![].into())),
-            SlotMap::new(vec![].into(), vec![].into()),
+            Map::Pairs(Partial::new(
+                vec![Default::default()].into())),
+            SlotMap::new(
+                vec![Default::default()].into(),
+                vec![Default::default()].into()),
             isn)
     }
 }
