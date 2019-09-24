@@ -34,8 +34,8 @@ where
     Nic::Handle: Sized,
 {
     loop {
-        nic.rx(burst, eth.recv(ip.recv(&mut client))).unwrap();
-        nic.tx(burst, eth.send(ip.send(&mut client))).unwrap();
+        let _ = nic.rx(burst, eth.recv(ip.recv(&mut client)));
+        let _ = nic.tx(burst, eth.send(ip.send(&mut client)));
 
         if let Some(result) = client.result() {
             return result;

@@ -18,7 +18,7 @@ pub fn init(mut buf: &mut [u8], offset: usize) {
             return;
         }
 
-        buf[..10 - offset].copy_from_slice(&DIGIT[offset..]);
+        buf[..10 - offset].copy_from_slice(&DIGIT[offset..10]);
         buf = &mut buf[10 - offset..];
     }
 
