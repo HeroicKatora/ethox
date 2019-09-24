@@ -580,7 +580,7 @@ impl Connection {
                 signals.answer = Some(InnerRepr {
                     flags: TcpFlags::RST,
                     seq_number: ack,
-                    ack_number: None,
+                    ack_number: Some(segment.seq_number),
                     window_len: 0,
                     window_scale: None,
                     max_seg_size: None,
@@ -920,6 +920,7 @@ impl Connection {
 
         // There is nothing to send but we may need to ack anyways.
         if self.should_ack() || Expiration::When(time) >= self.ack_timer {
+            self.rearm_ack_timer(time);
             return Some(self.segment_ack_all(entry.four_tuple()));
         }
 
@@ -939,14 +940,14 @@ impl Connection {
             _ => unreachable!(),
         };
 
-        self.retransmission_timer = time + self.retransmission_timeout;
+        self.rearm_retransmission_timer(time);
         Some(Segment {
             repr: self.send_open(ack, entry.four_tuple()),
             range: 0..0,
         })
     }
 
-    fn fast_retransmit(&mut self, available: u32, time: Instant, entry: EntryKey)
+    fn fast_retransmit(&mut self, available: u32, _: Instant, entry: EntryKey)
         -> Option<Segment>
     {
         // TODO: flow control, adjust window
@@ -956,7 +957,7 @@ impl Connection {
     fn timeout_retransmit(&mut self, available: u32, time: Instant, entry: EntryKey)
         -> Option<Segment>
     {
-        self.retransmission_timer = time + self.retransmission_timeout;
+        self.rearm_retransmission_timer(time);
         self.segment_retransmit(available, entry.four_tuple())
     }
 
@@ -976,9 +977,19 @@ impl Connection {
             .min(u32::from(self.sender_maximum_segment_size))
             .min(available);
 
+        if to_send == 0 {
+            return None;
+        }
+
+        let range = 0..usize::try_from(to_send).unwrap();
+
+        let mut repr = self.repr_ack_all(tuple);
+        repr.seq_number = self.send.unacked;
+        repr.payload_len = to_send as u16;
+
         Some(Segment {
-            repr: self.repr_ack_all(tuple),
-            range: 0..usize::try_from(to_send).unwrap(),
+            repr,
+            range,
         })
     }
 
@@ -1079,6 +1090,17 @@ impl Connection {
     /// for delayed acks.
     fn should_ack(&self) -> bool {
         self.recv.acked < self.recv.next
+    }
+
+    fn rearm_ack_timer(&mut self, time: Instant) {
+        self.ack_timer = match self.ack_timer {
+            Expiration::When(_) => Expiration::When(time + self.ack_timeout),
+            Expiration::Never => Expiration::Never,
+        }
+    }
+
+    fn rearm_retransmission_timer(&mut self, time: Instant) {
+        self.retransmission_timer = time + self.retransmission_timeout;
     }
 
     pub(crate) fn change_state(&mut self, new: State) {
