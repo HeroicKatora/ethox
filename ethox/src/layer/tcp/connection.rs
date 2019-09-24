@@ -865,13 +865,13 @@ impl Connection {
             // Fast retransmit?
             //
             // this would be a return path but just don't do anything atm.
-            return self.fast_retransmit(time, entry);
+            return self.fast_retransmit(byte_window, time, entry);
         }
 
         if self.retransmission_timer < time {
             // Choose segments to retransmit, in contrast to `fast_retransmit` this may influence
             // multiple next packets.
-            return self.start_timeout_retransmit(time, entry);
+            return self.timeout_retransmit(byte_window, time, entry);
         }
 
         // That's funny. Even if we have sent a FIN, the other side could decrease their window
@@ -946,22 +946,40 @@ impl Connection {
         })
     }
 
-    fn fast_retransmit(&mut self, _time: Instant, entry: EntryKey)
+    fn fast_retransmit(&mut self, available: u32, time: Instant, entry: EntryKey)
         -> Option<Segment>
     {
-        // See: https://tools.ietf.org/html/rfc5681#section-3.2
-        // Retransmit the first unacknowledged segment.
-        Some(Segment {
-            repr: self.repr_ack_all(entry.four_tuple()),
-            range: unimplemented!(),
-        })
+        // TODO: flow control, adjust window
+        self.segment_retransmit(available, entry.four_tuple())
     }
 
-    fn start_timeout_retransmit(&mut self, _time: Instant, _entry: EntryKey)
+    fn timeout_retransmit(&mut self, available: u32, time: Instant, entry: EntryKey)
         -> Option<Segment>
     {
-        return None;
-        unimplemented!()
+        self.retransmission_timer = time + self.retransmission_timeout;
+        self.segment_retransmit(available, entry.four_tuple())
+    }
+
+    fn segment_retransmit(&mut self, available: u32, tuple: FourTuple) -> Option<Segment> {
+        // See: https://tools.ietf.org/html/rfc5681#section-3.2
+        // Retransmit the first unacknowledged segment. We can however also retransmit as much
+        // bytes as we'd like starting at the first unacked segment. This is more efficient if that
+        // was for some reason shorter than the mss.
+        let in_flight = self.send.in_flight();
+
+        // That was a third duplicate ack but there is no data actually missing.
+        if in_flight == 0 {
+            return None;
+        }
+
+        let to_send = self.send.window()
+            .min(u32::from(self.sender_maximum_segment_size))
+            .min(available);
+
+        Some(Segment {
+            repr: self.repr_ack_all(tuple),
+            range: 0..usize::try_from(to_send).unwrap(),
+        })
     }
 
     fn ensure_closed_ack(&mut self, tuple: FourTuple) -> Option<Segment> {
