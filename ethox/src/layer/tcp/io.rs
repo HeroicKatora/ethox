@@ -5,6 +5,7 @@
 use core::borrow::{Borrow, BorrowMut};
 use core::convert::TryFrom;
 
+use crate::alloc::vec::Vec;
 use crate::wire::TcpSeqNumber;
 use crate::storage::assembler::{Assembler, Contig};
 
@@ -103,6 +104,16 @@ impl<B: Borrow<[u8]>> SendFrom<B> {
         self.fin = true;
     }
 
+    /// Number of bytes already acked by the other TCP.
+    pub fn sent_bytes(&self) -> usize {
+        self.consumed
+    }
+
+    /// Number of bytes in the retransmit region.
+    pub fn retransmit_bytes(&self) -> usize {
+        self.sent - self.consumed
+    }
+
     /// Get a reference to the data in the retransmit buffer.
     ///
     /// No mutable variant since you should not change this data. It's of course not compliant with
@@ -121,6 +132,35 @@ impl<B: Borrow<[u8]>> SendFrom<B> {
         where B: BorrowMut<[u8]>
     {
         &mut self.data.borrow_mut()[self.sent..]
+    }
+
+    /// Mark sent data as having been removed from the start of the buffer.
+    ///
+    /// Note: this does not remove the data itself.
+    ///
+    /// ## Usage
+    pub fn bump_external(&mut self, amount: usize) {
+        self.consumed = self.consumed.checked_sub(amount)
+            .expect("Tried bumping send buffer into sent region");
+        self.sent -= amount;
+    }
+}
+
+impl SendFrom<Vec<u8>> {
+    /// Remove some sent data from the start of the buffer.
+    ///
+    /// Runtime is linear in the length of the vector.
+    pub fn bump_to(&mut self, at: usize) {
+        // First bump_external as bounds check.
+        self.bump_external(at);
+        self.data.drain(..at).for_each(drop);
+    }
+
+    /// Remove all sent data from the start of the buffer.
+    ///
+    /// Runtime is linear in the length of the vector.
+    pub fn bump(&mut self) {
+        self.bump_to(self.consumed)
     }
 }
 
@@ -144,6 +184,38 @@ impl<B: BorrowMut<[u8]>> RecvInto<B> {
 
     pub fn received(&self) -> &[u8] {
         &self.buffer.borrow()[..self.mark]
+    }
+
+    /// Mark bytes as having been fully removed from the underlying buffer.
+    ///
+    /// Note: this does not remove the data itself.
+    ///
+    /// Call this after having fully read the start of the received message sequence to free buffer
+    /// space.  This decreases the start index of the available region for receiving more data and
+    /// may increase the indicated window size.
+    pub fn bump_external(&mut self, amount: usize) {
+        self.mark = self.mark.checked_sub(amount)
+            .expect("Tried bumping receive buffer into unreceived region");
+    }
+}
+
+impl RecvInto<Vec<u8>> {
+    /// Remove some sent data from the start of the buffer.
+    ///
+    /// Runtime is linear in the length of the vector.
+    pub fn bump_to(&mut self, at: usize) {
+        // First bump_external as bounds check.
+        self.bump_external(at);
+        self.buffer.drain(..at).for_each(drop);
+    }
+
+    /// Remove all received data from the start of the buffer.
+    ///
+    /// You should have read the data first.
+    ///
+    /// Runtime is linear in the length of the vector.
+    pub fn bump(&mut self) {
+        self.bump_to(self.mark)
     }
 }
 

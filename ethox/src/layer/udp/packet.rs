@@ -25,6 +25,7 @@ pub struct Handle<'a> {
     // Nothing more, there is no logic here.
 }
 
+#[derive(Copy, Clone, Debug)]
 pub struct Init {
     pub source: ip::Source,
     pub src_port: u16,

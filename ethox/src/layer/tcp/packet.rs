@@ -538,8 +538,11 @@ fn control_answer<'a, P: PayloadMut>(
         payload: ip_payload_len,
     })?.into_incoming();
 
+    // FIXME: make initialization nicer.
     let raw_packet = TcpPacket::new_unchecked(&mut packet, answer.clone());
     answer.emit(raw_packet);
+    let mut raw_packet = TcpPacket::new_unchecked(&mut packet, answer.clone());
+    raw_packet.fill_checksum(ip_repr.src_addr(), ip_repr.dst_addr());
 
     ip::OutPacket::new_unchecked(handle, packet)
         .send()

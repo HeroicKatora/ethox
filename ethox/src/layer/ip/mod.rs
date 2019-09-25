@@ -43,3 +43,19 @@ pub trait Send<P: Payload> {
 }
 
 pub(crate) use endpoint::Routing;
+
+impl<P: Payload, E> Recv<P> for &'_ mut E
+    where E: Recv<P>
+{
+    fn receive(&mut self, frame: InPacket<P>) {
+        (**self).receive(frame)
+    }
+}
+
+impl<P: Payload, E> Send<P> for &'_ mut E
+    where E: Send<P>
+{
+    fn send(&mut self, frame: RawPacket<P>) {
+        (**self).send(frame)
+    }
+}

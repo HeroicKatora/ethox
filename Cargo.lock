@@ -30,7 +30,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ethox-iperf3"
+name = "ethox-iperf"
 version = "0.0.1-wip"
 dependencies = [
  "ethox 0.0.1-wip",

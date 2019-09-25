@@ -1,7 +1,7 @@
 [workspace]
 members = [
 	"ethox",
-	"ethox-iperf3",
+	"ethox-iperf",
 ]
 
 [profile.release]
