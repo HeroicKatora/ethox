@@ -8,19 +8,14 @@
 //! * `iperf3 tap0 10.0.0.1/24 ab:ff:ff:ff:ff:ff 10.0.0.2/24 -c 10.0.0.2 5001 -n 10000 -l 1470`
 pub use ethox_iperf::{config, iperf2};
 
-use std::io::{stdout, Write};
-
 use ethox::managed::{List, Slice};
-use ethox::nic::TapInterface;
+use ethox::nic::RawSocket;
 use ethox::layer::{eth, ip};
 
 fn main() {
     let config = config::Config::from_args();
 
-    let out = stdout();
-    let mut out = out.lock();
-
-    let mut interface = TapInterface::new(&config.tap, vec![0; 1 << 14])
+    let mut interface = RawSocket::new(&config.tap, vec![0; 1 << 14])
         .expect("Couldn't initialize interface");
 
     let mut eth = eth::Endpoint::new(config.hostmac);
@@ -32,7 +27,7 @@ fn main() {
         ip::Routes::import(List::new_full(routes.as_mut().into())),
         eth::NeighborCache::new(&mut neighbors[..]));
 
-    out.write_all(b"[+] Configured layers, communicating").unwrap();
+    println!("[+] Configured layers, communicating");
 
     let result = match &config.iperf3 {
         config::Iperf3Config::Client(
@@ -59,6 +54,6 @@ fn main() {
         },
     };
 
-    out.write_all(b"[+] Done").unwrap();
-    write!(out, "{}", result).unwrap();
+    println!("[+] Done\n");
+    println!("{}", result);
 }

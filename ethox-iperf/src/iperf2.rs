@@ -281,9 +281,9 @@ impl<P: PayloadMut> ip::Send<P> for IperfTcp {
             let first = self.first_sent.unwrap();
             let last = self.last_time.unwrap();
             self.result = Some(TcpResult {
-                data_len: unimplemented!(),
+                data_len: self.client.send().len as u32,
                 duration: last - first,
-                packet_count: unimplemented!(),
+                packet_count: 0,
             });
         }
     }
