@@ -40,6 +40,20 @@ struct Connection {
     /// Bytes to send. When lower than `packet_size`, we permit a single packet that is too small.
     remaining: usize,
 
+    /// Number of sent packets.
+    packet_count: u32,
+
+    /// Shape traffic to target bandwidth.
+    target_rate: Option<SendRate>,
+
+    /// Result we got from the server.
+    result: Option<Result>,
+
+    /// Time of the last sent packet.
+    last_time: Instant,
+}
+
+struct SendRate {
     /// Bandwidth target.
     bytes_per_sec: usize,
 
@@ -48,14 +62,8 @@ struct Connection {
     /// This represents partially sent packets at a certain timestamp.
     wrapping_part_bytes: usize,
 
-    /// Number of sent packets.
-    packet_count: u32,
-
-    /// Time of the last packet.
+    /// Time of the last sent packet.
     last_time: Instant,
-
-    /// Result we got from the server.
-    result: Option<Result>,
 }
 
 /// A 'TCP-buffer' for the iperf pattern.
@@ -174,11 +182,11 @@ impl Connection {
             send_init: Self::generate_udp_init(config),
             packet_size,
             remaining,
-            bytes_per_sec: usize::max_value(),
-            wrapping_part_bytes: 0,
+            // FIXME: support traffic shaping
+            target_rate: None,
             packet_count: 0,
-            last_time: Instant::from_millis(0),
             result: None,
+            last_time: Instant::from_millis(0),
         }
     }
 
@@ -196,30 +204,22 @@ impl Connection {
 
     /// If we were to send a full-sized packet now, would we exceed our bandwidth target?
     fn should_send(&self, now: Instant) -> bool {
-        let allowed = self.allowed_bytes(now);
-        allowed >= self.packet_size as u128
+        if let Some(rate) = &self.target_rate {
+            let allowed = rate.allowed_bytes(now);
+            allowed >= self.packet_size as u128
+        } else {
+            true
+        }
     }
 
-    /// Called after a packet has been sent.
     fn update_sent(&mut self, now: Instant) {
-        let allowed = self.allowed_bytes(now);
-        self.wrapping_part_bytes = allowed
-            .saturating_sub(self.packet_size as u128)
-            as usize;
+        if let Some(rate) = &mut self.target_rate {
+            rate.update_sent(self.packet_size, now);
+        }
+
         self.remaining = self.remaining
             .saturating_sub(self.packet_size);
-        self.last_time = now;
         self.packet_count += 1;
-    }
-
-    /// Allowed bandwidth use until the timestamp.
-    fn allowed_bytes(&self, now: Instant) -> u128 {
-        let diff_millis = (now - self.last_time).as_millis();
-        let new_bytes = diff_millis
-            .saturating_mul(self.bytes_per_sec as u128)
-            / 1_000_000;
-        let part = self.wrapping_part_bytes as u128;
-        new_bytes + part
     }
 
     /// Fill the necessary part of the packet.
@@ -246,11 +246,34 @@ impl Connection {
     }
 }
 
+impl SendRate {
+    /// Called after a packet has been sent.
+    fn update_sent(&mut self, sent: usize, now: Instant) {
+        let allowed = self.allowed_bytes(now);
+        self.wrapping_part_bytes = allowed
+            .saturating_sub(sent as u128)
+            as usize;
+        self.last_time = now;
+    }
+
+    /// Allowed bandwidth use until the timestamp.
+    fn allowed_bytes(&self, now: Instant) -> u128 {
+        let diff_millis = (now - self.last_time).as_millis();
+        let new_bytes = diff_millis
+            .saturating_mul(self.bytes_per_sec as u128)
+            / 1_000_000;
+        let part = self.wrapping_part_bytes as u128;
+        new_bytes + part
+    }
+}
+
 impl<P: PayloadMut> ip::Send<P> for Iperf {
     fn send(&mut self, packet: ip::RawPacket<P>) {
-        self.udp
-            .send(&mut self.connection)
-            .send(packet)
+        if self.connection.remaining > 0 {
+            self.udp
+                .send(&mut self.connection)
+                .send(packet)
+        }
     }
 }
 
