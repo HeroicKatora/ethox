@@ -3,11 +3,27 @@ use core::slice::SliceIndex;
 
 use crate::wire::{Reframe, Payload, PayloadError, PayloadMut, payload};
 
-/// Refer to a part of some storage.
+/// Refer to a part of some container.
 ///
 /// Useful to create a dynamically sized storage over a statically sized backing buffer. This
 /// covers both byte buffers, such as packets, or general type buffers to be used similar to a
 /// vector.
+///
+/// # Usage
+///
+/// Use a slice as a backing storage, logically initializing it gradually. Contrary to `Vec` the
+/// methods `push` and `pop` return a mutable reference to their element after they have succeeded
+/// instead of operating on values. They only change the logical length when called.
+///
+/// ```
+/// let mut elements = [0; 16];
+/// let mut storage = Partial::new(&mut elements);
+///
+/// for el in some_iterator {
+///     // Note that this drops an instance. That may be undesired.
+///     *storage.push().unwrap() = el;
+/// }
+/// ```
 ///
 /// This is useful as a generic payload representation as well. Resizing it is as simple as setting
 /// the current length unless the request can not be fulfilled with the current buffer size. Only
@@ -118,9 +134,14 @@ impl<C, T> Partial<C>
     }
 
     /// Insert the next element at some position.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if the `pos` is larger than the current length.
     pub fn insert_at(&mut self, pos: usize) -> Option<&mut T> {
         // All of the current slice until end is rotated.
-        let rotation = self.end.wrapping_sub(pos);
+        let rotation = self.end.checked_sub(pos)
+            .expect("Index out of bounds");
         // How to swallow the new element
         let new_end = self.end.checked_add(1)?;
         // Rotate the slice.
@@ -246,7 +267,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn partial() {
+    fn normal_operation() {
         const SIZE: usize = 4;
         let mut slice = [0; SIZE];
         let mut partial = Partial::new(&mut slice[..]);
@@ -266,5 +287,47 @@ mod tests {
         // Now we can no longer access any element.
         assert_eq!(partial.get(0), None);
         assert_eq!(partial.get_mut(0), None);
+    }
+
+    #[test]
+    fn inserts() {
+        const SIZE: usize = 4;
+        let mut slice = [0; SIZE];
+        let mut partial = Partial::new(&mut slice[..]);
+
+        // Assigns the eventual index.
+        *partial.insert_at(0).unwrap() = 2;
+        *partial.insert_at(0).unwrap() = 0;
+        *partial.insert_at(1).unwrap() = 1;
+        *partial.insert_at(3).unwrap() = 3;
+
+        assert!(partial.insert_at(0).is_none());
+        assert!(partial.insert_at(1).is_none());
+        assert!(partial.insert_at(2).is_none());
+        assert!(partial.insert_at(3).is_none());
+        assert!(partial.insert_at(4).is_none());
+
+        assert_eq!(partial.as_slice(), [0, 1, 2, 3]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn insert_at_invalid() {
+        let mut slice = [0; 1];
+        let mut partial = Partial::new(&mut slice[..]);
+        // Out of logical bounds.
+        partial.insert_at(1);
+    }
+
+    #[test]
+    #[should_panic]
+    fn insert_at_oob() {
+        let mut slice = [0; 1];
+        let mut partial = Partial::new(&mut slice[..]);
+        assert!(partial.push().is_some());
+        assert!(partial.len() == 1);
+        // Out of physical bounds.
+        let _x = partial.insert_at(2);
+        eprintln!("Found a place but shouldn't have: {:?}", _x);
     }
 }
