@@ -60,6 +60,9 @@ pub struct IpEndpoint<'a, 'data> {
 impl<'a> Endpoint<'a> {
     /// Construct a new endpoint handling messages to the specified addresses.
     ///
+    /// The neighbors buffer for ARP can be built from an empty slice if it is not needed. This
+    /// will however stall send operations indeterminately.
+    ///
     /// # Panics
     /// This method will panic if one of the addresses assigned to the interface is not a unicast
     /// address.

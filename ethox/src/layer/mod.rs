@@ -80,6 +80,47 @@
 //! actual representation of parsed packet data needs to be separated from the additional data
 //! provided by each layer endpoint (which should be implementable by a user as well). The
 //! functionality that provides the packet representation is called `Payload` and `PayloadMut`.
+//!
+//! ## Things that do not work yet – Future work
+//!
+//! The same instantiation of a layer can not be simply used at multiple points in the callback
+//! tree of handlers. Most layer endpoints mutably borrow their persistent state in their send and
+//! receive implementations. There are multiple possible ways of avoiding the problem:
+//!
+//! * Internal mutability and dynamic borrow checking with `RefCell`. The current layers do not
+//! need to lend their state to a specific packet. Instead, each method offered by its packet
+//! representation mutates some aspects in a local context. The same would also be possible with a
+//! shared reference to a `RefCell<_>` of the internal state by calling [`RefCell::borrow_mut`].
+//!   Note that it would be possible but mildly hazardous to store the so created `RefMut` within
+//! the packet given to the upper layer. Such a layer is not re-entrant. If the upper layer is a
+//! tunnel of sorts that unpacks an encapsulated lower layer packet then the reentry will fail to
+//! again borrow from the `RefCell`.
+//!   A relevant application of this might be an ip layer used in a wireguard implementation.
+//!
+//! * Sharding. Split the state into independent fragments, each receiving and sending packets
+//! independently. The splitting function can be based on ip subnet or on a hash for example.
+//!
+//! * Buffer received packets which is definitely the least preferred option.
+//!
+//! ## Things that do not work – Restrictions
+//!
+//! ## Previous design choices and Things that need to be thought over
+//!
+//! TODO: these are somewhat raw thoughts. Expand with justification.
+//!
+//! How packet buffers are behind a reference, instead of owning a buffer like in some other
+//! zerocopy network stacks. There are some points to make either way but Rust's type system gives
+//! the former choice a sane interface even when the original pointer is placed within structures.
+//! It also works better with the trait design. You can still own the packet buffer but it requires
+//! an explicit method on behalf of the specific nic.
+//!
+//! Receiving not taking an acknowledgement, dropping packets afterwards if they are not used to
+//! answer. This also drops some packet buffers where filtered packets could be deinitialized and
+//! reused as raw packets immediately.
+//!
+//! The limited vectorization support and duplicate device handles in nic batched rx/tx. Especially
+//! for sending there are overheads in route lookup etc. that could be avoided by batching packet.
+//! Might also save on capability information and timestamp queries.
 
 pub mod arp;
 pub mod eth;

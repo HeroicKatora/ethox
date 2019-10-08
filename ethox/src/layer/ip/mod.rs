@@ -1,8 +1,20 @@
 //! The ip layer.
 //!
-//! While there is a possible distinction between ip4 and ip6 traffic, the layer implementation
-//! tries to offer several abstractions that make this distinction less noticable. At least it
-//! might some day.
+//! Abstract a way to control the routing layer for data protocol on top. This also accepts some
+//! ancillary other protocols beside IPv4 and IPv6 to support address configuration management.
+//! Currently, this means ARP for IPv4.
+//!
+//! There is a possible distinction between ip4 and ip6 traffic by matching the enum [`IpPacket`]
+//! into its variants, however the layer implementation tries to offer several abstractions that
+//! make this distinction transparent. It hence uses a common, comparable representation for ip
+//! addresses ([`IpAddress`]) and a unified [`Init`] structure. This generally enables the layer to
+//! transparently dispatch into the desired underlying layer.
+//!
+//! It does **not yet** provide transparent fragment reassembly.
+//!
+//! [`Init`]: struct.Init.html
+//! [`IpAddress`]: ../../wire/enum.IpAddress.html
+//! [`IpPacket`]: enum.IpPacket.html
 use crate::wire::Payload;
 
 mod endpoint;
