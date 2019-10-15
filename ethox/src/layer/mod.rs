@@ -1,5 +1,9 @@
 //! The process logic of protocol layers.
 //!
+//! This is not a strict OSI stack but rather a group of logical modules to provide a set of
+//! intertwined protocols. For example note that the `arp` functionality is also integrated into
+//! the `ip` layer as it is required for using the ethernet layer below.
+//!
 //! ## Layering
 //!
 //! Each protocol layer is split into two parts; the packet logic contained in `wire` and the
@@ -37,7 +41,14 @@
 //!
 //! ## Sending
 //!
-//! [WIP]
+//! Layers that are capable of send operations (in the sense of packet sending, not logical streams
+//! such as TCP) provide a trait that processes Raw packet representations. Initialize the empty
+//! packet buffer with data of the layer -- destination address in the case of ip -- and some
+//! metadata about the payload that you want to emplace -- most often just the length. Then the RAw
+//! packet is converted into an Out packet which offers methods to set the payload while having an
+//! initialized and immutable header structure. Finally after inserting the desired payload,
+//! request to send the Out packet which will finalize header fields such as checksums and queue
+//! the packet buffer in the underlying NIC.
 //!
 //! ## Answering
 //!
