@@ -48,7 +48,8 @@ pub struct Client {
 
 #[derive(Clone, StructOpt)]
 pub struct Server {
-    pub host: net::Ipv4Addr,
+    #[structopt(short = "B")]
+    pub host: Option<net::Ipv4Addr>,
     pub port: u16,
 }
 

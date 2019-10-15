@@ -66,7 +66,10 @@ struct ServerConnection {
     /// Init for sending the ack packet back.
     send_init: udp::Init,
 
-    /// The maximally observed  pcket number.
+    /// Maximum observed length of packets, assumed to be the length of almost all.
+    packet_size: usize,
+
+    /// The maximally observed packet number.
     max: u32,
 
     /// Number of received packet.
@@ -139,6 +142,7 @@ pub(crate) struct TcpResult {
 /// The result of a server.
 #[derive(Clone, Copy)]
 pub(crate) struct ServerResult {
+    pub packet_size: u32,
     pub packet_count: u32,
     pub total_count: u32,
 }
@@ -296,7 +300,24 @@ impl Server {
 impl ServerConnection {
     pub fn new(config: &config::Server) -> Self {
         let config::Server { host, port } = config;
-        unimplemented!()
+        let source = host.map(|ip| ip::Source::Exact(ip.into()))
+            .unwrap_or_else(|| ip::Source::Mask {
+                subnet: Ipv4Subnet::ANY.into(),
+            });
+
+        ServerConnection {
+            send_init: udp::Init {
+                source: source,
+                src_port: *port,
+                dst_addr: Default::default(),
+                dst_port: 0,
+                payload: 20 + mem::size_of::<Result>(),
+            },
+            packet_size: 0,
+            count: 0,
+            max: 0,
+            result: None,
+        }
     }
 
     fn fill_report(&self, payload: &mut [u8]) {
@@ -314,8 +335,37 @@ impl ServerConnection {
         };
     }
 
+    /// Register a valid udp packet as having arrived.
+    ///
+    /// Panics if the validity invariant of length has not been checked prior.
+    fn register(&mut self, payload: &[u8]) {
+        use core::convert::TryFrom;
+        assert!(payload.len() >= 20);
+
+        let id_bytes = <[u8;4]>::try_from(&payload[0..4]).unwrap();
+        let id = u32::from_be_bytes(id_bytes);
+        let last = payload[0] & 0x80 != 0;
+
+        // HACKY: we don't check that all packets but the last have maximum length but we just
+        // assume that this setting was supplied and traffic shaping is not done by reducing
+        // datagram lengths but by delayed packets.
+        self.packet_size = self.packet_size.max(payload.len());
+        self.max = self.max.max(id);
+        self.count += 1;
+
+        if last {
+            self.result = Some(ServerResult {
+                packet_size: u32::try_from(self.packet_size)
+                    .unwrap_or_else(|_| u32::max_value()),
+                packet_count: self.count,
+                total_count: self.max,
+            });
+        }
+    }
+
     fn error_shutdown(&mut self) {
         self.result = Some(ServerResult {
+            packet_size: 0,
             packet_count: self.count,
             total_count: self.max,
         })
@@ -568,10 +618,28 @@ impl<P: PayloadMut> udp::Send<P> for ServerConnection {
 
 impl<P: PayloadMut> udp::Recv<P> for ServerConnection {
     fn receive(&mut self, packet: udp::Packet<P>) {
-        let udp::Packet { packet, handle } = packet;
+        let udp::Packet { packet, handle: _ } = packet;
+
+        let ip_hdr = packet.get_ref().repr();
+        let udp_hdr = packet.repr();
+
+        if self.send_init.dst_port == 0 {
+            // TODO: should we check validity before accepting?
+            self.send_init.dst_addr = ip_hdr.src_addr();
+            self.send_init.dst_port = udp_hdr.src_port;
+        } else if self.send_init.dst_addr != ip_hdr.src_addr()
+            || self.send_init.dst_port != udp_hdr.src_port
+        {
+            // This packet was not from the original client we accepted.
+            return;
+        }
 
         let payload = packet.payload_slice();
-        unimplemented!()
+        if payload.len() <= 20 {
+            return;
+        }
+
+        self.register(payload);
     }
 }
 
