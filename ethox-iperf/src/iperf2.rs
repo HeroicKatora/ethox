@@ -77,6 +77,9 @@ struct ServerConnection {
 
     /// The server side result.
     result: Option<ServerResult>,
+    
+    /// The timestamp of the first packet that was received.
+    begin_ts: Instant,
 }
 
 struct SendRate {
@@ -145,6 +148,7 @@ pub(crate) struct ServerResult {
     pub packet_size: u32,
     pub packet_count: u32,
     pub total_count: u32,
+    pub duration: Duration,
 }
 
 impl Iperf {
@@ -317,6 +321,7 @@ impl ServerConnection {
             count: 0,
             max: 0,
             result: None,
+            begin_ts: Instant::from_millis(0),
         }
     }
 
@@ -338,7 +343,7 @@ impl ServerConnection {
     /// Register a valid udp packet as having arrived.
     ///
     /// Panics if the validity invariant of length has not been checked prior.
-    fn register(&mut self, payload: &[u8]) {
+    fn register(&mut self, payload: &[u8], time: Instant) {
         use core::convert::TryFrom;
         assert!(payload.len() >= 20);
 
@@ -359,6 +364,7 @@ impl ServerConnection {
                     .unwrap_or_else(|_| u32::max_value()),
                 packet_count: self.count,
                 total_count: self.max,
+                duration: time - self.begin_ts,
             });
         }
     }
@@ -368,6 +374,7 @@ impl ServerConnection {
             packet_size: 0,
             packet_count: self.count,
             total_count: self.max,
+            duration: Duration::from_millis(0),
         })
     }
 }
@@ -618,7 +625,7 @@ impl<P: PayloadMut> udp::Send<P> for ServerConnection {
 
 impl<P: PayloadMut> udp::Recv<P> for ServerConnection {
     fn receive(&mut self, packet: udp::Packet<P>) {
-        let udp::Packet { packet, handle: _ } = packet;
+        let udp::Packet { packet, handle, } = packet;
 
         let ip_hdr = packet.get_ref().repr();
         let udp_hdr = packet.repr();
@@ -627,6 +634,7 @@ impl<P: PayloadMut> udp::Recv<P> for ServerConnection {
             // TODO: should we check validity before accepting?
             self.send_init.dst_addr = ip_hdr.src_addr();
             self.send_init.dst_port = udp_hdr.src_port;
+            self.begin_ts = handle.info().timestamp();
         } else if self.send_init.dst_addr != ip_hdr.src_addr()
             || self.send_init.dst_port != udp_hdr.src_port
         {
@@ -639,7 +647,7 @@ impl<P: PayloadMut> udp::Recv<P> for ServerConnection {
             return;
         }
 
-        self.register(payload);
+        self.register(payload, handle.info().timestamp());
     }
 }
 

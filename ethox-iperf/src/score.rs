@@ -55,9 +55,7 @@ impl From<iperf2::ServerResult> for Score {
     fn from(result: iperf2::ServerResult) -> Score {
         Score {
             data_len: result.packet_size.into(),
-            // FIXME: proper time measurements? Measuring with real iperf relies on the server side
-            // to fix the effective data rate etc. so it should be captured on server side as well.
-            time: Duration::from_millis(0),
+            time: result.duration,
             packet_count: result.packet_count,
         }
     }
