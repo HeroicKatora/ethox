@@ -8,7 +8,7 @@
 //!
 //! There is no control channel as for iperf3. This may have negative impact on the accuracy of the
 //! measurement but greatly simplifies the independent implementation for udp.
-use core::{fmt, mem};
+use core::{fmt, mem, ptr};
 
 use ethox::layer::{ip, tcp, udp, Error};
 use ethox::time::{Duration, Instant};
@@ -108,7 +108,7 @@ struct PatternBuffer {
 ///
 /// Annotations on members are example values observed in real world usage of the original iperf
 /// using pcap/Wireshark.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
 pub struct Result {
     pub a: u32, // 00 00 00 00
@@ -278,12 +278,15 @@ impl ServerConnection {
         // We prepared this packet, so assert is correct.
         assert_eq!(payload.len(), 20 + mem::size_of::<Result>());
 
-        let mem_result = &mut payload[20..][..mem::size_of::<Result>()];
-        mem_result.iter_mut().for_each(|b| *b = 0);
-        // FIXME: this is not guaranteed to be aligned!!
-        let be_result = unsafe { &mut *(mem_result.as_mut_ptr() as *mut Result) };
+        let be_result = Result {
+            packet_count: u32::to_be(self.count),
+            .. Result::default()
+        };
 
-        be_result.packet_count = u32::to_be(self.count);
+        let mem_result = &mut payload[20..][..mem::size_of::<Result>()];
+        unsafe {
+            ptr::write_unaligned(mem_result.as_mut_ptr() as *mut Result, be_result)
+        };
     }
 
     fn error_shutdown(&mut self) {
@@ -488,8 +491,9 @@ impl<P: PayloadMut> udp::Recv<P> for Connection {
         }
 
         let mem_result = &payload[20..][..mem::size_of::<Result>()];
-        // FIXME: this is not guaranteed to be aligned!!
-        let be_result = unsafe { &*(mem_result.as_ptr() as *const Result) };
+        let be_result = unsafe {
+            ptr::read_unaligned(mem_result.as_ptr() as *const Result)
+        };
 
         self.result = Some(Result {
             a: u32::from_be(be_result.a),
