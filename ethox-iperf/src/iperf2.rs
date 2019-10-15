@@ -372,7 +372,7 @@ impl tcp::SendBuf for PatternBuffer {
     }
 }
 
-impl<P: PayloadMut> udp::Send<P> for &'_ mut Connection {
+impl<P: PayloadMut> udp::Send<P> for Connection {
     fn send(&mut self, packet: udp::RawPacket<P>) {
         let ts = packet.handle.info().timestamp();
 
@@ -408,7 +408,7 @@ impl<P: PayloadMut> udp::Send<P> for &'_ mut Connection {
     }
 }
 
-impl<P: PayloadMut> udp::Recv<P> for &'_ mut Connection {
+impl<P: PayloadMut> udp::Recv<P> for Connection {
     fn receive(&mut self, packet: udp::Packet<P>) {
         let repr = packet.packet.repr();
         if repr.dst_port != self.send_init.src_port {
