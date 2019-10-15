@@ -42,3 +42,29 @@ where
         }
     }
 }
+
+/// Just a clone of `client` for now but should be logically used for server.
+pub fn server<Nic>(
+    nic: &mut Nic,
+    burst: usize,
+    eth: &mut ethox::layer::eth::Endpoint,
+    ip: &mut ethox::layer::ip::Endpoint,
+    mut client: impl Client<Nic>,
+) -> Score
+where
+    Nic: ethox::nic::Device,
+    Nic::Payload: ethox::wire::PayloadMut + Sized,
+    Nic::Handle: Sized,
+{
+    // FIXME:
+    // * reset after a client instead of terminate
+    // * accept more than one client
+    loop {
+        let _ = nic.rx(burst, eth.recv(ip.recv(&mut client)));
+        let _ = nic.tx(burst, eth.send(ip.send(&mut client)));
+
+        if let Some(result) = client.result() {
+            return result;
+        }
+    }
+}

@@ -51,6 +51,16 @@ impl From<iperf2::TcpResult> for Score {
     }
 }
 
+impl From<iperf2::ServerResult> for Score {
+    fn from(result: iperf2::ServerResult) -> Score {
+        Score {
+            data_len: unimplemented!(),
+            time: unimplemented!(),
+            packet_count: result.packet_count,
+        }
+    }
+}
+
 impl fmt::Display for Score {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         // Emulate the iperf style:

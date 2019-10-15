@@ -31,7 +31,7 @@ fn main() {
 
     let result = match &config.iperf3 {
         config::Iperf3Config::Client(
-            config::IperfClient { kind: config::ClientKind::Udp, client
+            config::IperfClient { kind: config::Transport::Udp, client
         }) => {
             ethox_iperf::client(
                 &mut interface,
@@ -42,7 +42,7 @@ fn main() {
             )
         },
         config::Iperf3Config::Client(
-            config::IperfClient { kind: config::ClientKind::Tcp, client
+            config::IperfClient { kind: config::Transport::Tcp, client
         }) => {
             ethox_iperf::client(
                 &mut interface,
@@ -52,6 +52,18 @@ fn main() {
                 iperf2::IperfTcp::new(client),
             )
         },
+        config::Iperf3Config::Server(
+            config::IperfServer { kind: config::Transport::Udp, server }
+        ) => {
+            ethox_iperf::server(
+                &mut interface,
+                10,
+                &mut eth,
+                &mut ip,
+                iperf2::Server::new(server),
+            )
+        }
+        _ => unimplemented!("Tcp server is not yet implemented!"),
     };
 
     println!("[+] Done\n");

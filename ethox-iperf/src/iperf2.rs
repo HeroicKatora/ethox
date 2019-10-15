@@ -15,7 +15,7 @@ use ethox::time::{Duration, Instant};
 use ethox::wire::{Ipv4Subnet, PayloadMut, TcpSeqNumber};
 use ethox::managed::{Map, Partial, SlotMap};
 
-use super::config::Client;
+use super::config;
 
 pub struct Iperf {
     connection: Connection,
@@ -73,7 +73,7 @@ struct ServerConnection {
     count: u32,
 
     /// The server side result.
-    result: Option<()>,
+    result: Option<ServerResult>,
 }
 
 struct SendRate {
@@ -123,7 +123,7 @@ pub struct Result {
     pub j: u32, // 00 00 00 09
 }
 
-/// A locall created result, **not** sent by the remote.
+/// A locally created result, **not** sent by the remote.
 ///
 /// There is no result communication for the TCP iperf2 instantiation. (It could, if the Linux
 /// stack were to support half-closed streams in a nice manner, like this stack). But since the
@@ -136,8 +136,15 @@ pub(crate) struct TcpResult {
     pub packet_count: u32,
 }
 
+/// The result of a server.
+#[derive(Clone, Copy)]
+pub(crate) struct ServerResult {
+    pub packet_count: u32,
+    pub total_count: u32,
+}
+
 impl Iperf {
-    pub fn new(config: &Client) -> Self {
+    pub fn new(config: &config::Client) -> Self {
         Iperf {
             connection: Connection::new(config),
             udp: Self::generate_udp(config),
@@ -148,14 +155,14 @@ impl Iperf {
         self.connection.result
     }
 
-    fn generate_udp(_: &Client) -> udp::Endpoint<'static> {
+    fn generate_udp(_: &config::Client) -> udp::Endpoint<'static> {
         // We only need a single connection entry.
         udp::Endpoint::new(vec![Default::default()])
     }
 }
 
 impl IperfTcp {
-    pub fn new(config: &Client) -> Self {
+    pub fn new(config: &config::Client) -> Self {
         IperfTcp {
             client: Self::generate_client(config),
             tcp: Self::generate_tcp(config),
@@ -165,7 +172,7 @@ impl IperfTcp {
         }
     }
 
-    fn generate_client(client: &Client)
+    fn generate_client(client: &config::Client)
         -> tcp::Client<tcp::io::Sink, PatternBuffer>
     {
         let remote = client.host.into();
@@ -180,7 +187,7 @@ impl IperfTcp {
         tcp::Client::new(remote, port, sink, pattern)
     }
 
-    fn generate_tcp(_: &Client) -> tcp::Endpoint<'static> {
+    fn generate_tcp(_: &config::Client) -> tcp::Endpoint<'static> {
         let isn = tcp::IsnGenerator::from_std_hash();
         // We only need a single connection entry.
         tcp::Endpoint::new(
@@ -194,8 +201,8 @@ impl IperfTcp {
 }
 
 impl Connection {
-    fn new(config: &Client) -> Self {
-        let Client {
+    fn new(config: &config::Client) -> Self {
+        let config::Client {
             host: _, port: _,
             buffer_bytes: packet_size,
             total_bytes: remaining,
@@ -217,7 +224,7 @@ impl Connection {
         }
     }
 
-    fn generate_udp_init(config: &Client) -> udp::Init {
+    fn generate_udp_init(config: &config::Client) -> udp::Init {
         udp::Init {
             source: ip::Source::Mask {
                 subnet: Ipv4Subnet::ANY.into(),
@@ -273,7 +280,25 @@ impl Connection {
     }
 }
 
+impl Server {
+    pub fn new(config: &config::Server) -> Self {
+        Server {
+            connection: ServerConnection::new(config),
+            udp: Self::generate_udp(config),
+        }
+    }
+
+    fn generate_udp(_: &config::Server) -> udp::Endpoint<'static> {
+        udp::Endpoint::new(vec![Default::default()])
+    }
+}
+
 impl ServerConnection {
+    pub fn new(config: &config::Server) -> Self {
+        let config::Server { host, port } = config;
+        unimplemented!()
+    }
+
     fn fill_report(&self, payload: &mut [u8]) {
         // We prepared this packet, so assert is correct.
         assert_eq!(payload.len(), 20 + mem::size_of::<Result>());
@@ -290,7 +315,10 @@ impl ServerConnection {
     }
 
     fn error_shutdown(&mut self) {
-        unimplemented!()
+        self.result = Some(ServerResult {
+            packet_count: self.count,
+            total_count: self.max,
+        })
     }
 }
 
@@ -407,6 +435,16 @@ where
 {
     fn result(&self) -> Option<super::Score> {
         self.result.map(|result| result.into())
+    }
+}
+
+impl<Nic> super::Client<Nic> for Server
+where
+    Nic: ethox::nic::Device,
+    Nic::Payload: PayloadMut + Sized,
+{
+    fn result(&self) -> Option<super::Score> {
+        self.connection.result.clone().map(|result| result.into())
     }
 }
 
