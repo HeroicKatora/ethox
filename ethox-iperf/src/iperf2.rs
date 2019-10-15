@@ -30,6 +30,14 @@ pub struct IperfTcp {
     last_time: Option<Instant>,
 }
 
+/// An iperf2 udp server instance.
+///
+/// Only supports a single connection to a client, then must be restarted.
+pub struct Server {
+    connection: ServerConnection,
+    udp: udp::Endpoint<'static>,
+}
+
 struct Connection {
     /// The init parameters for udp.
     send_init: udp::Init,
@@ -51,6 +59,21 @@ struct Connection {
 
     /// Time of the last sent packet.
     last_time: Instant,
+}
+
+/// Tracks the state of a unique perf connection to a client.
+struct ServerConnection {
+    /// Init for sending the ack packet back.
+    send_init: udp::Init,
+
+    /// The maximally observed  pcket number.
+    max: u32,
+
+    /// Number of received packet.
+    count: u32,
+
+    /// The server side result.
+    result: Option<()>,
 }
 
 struct SendRate {
@@ -81,6 +104,10 @@ struct PatternBuffer {
     at: Option<TcpSeqNumber>,
 }
 
+/// The result memory representation.
+///
+/// Annotations on members are example values observed in real world usage of the original iperf
+/// using pcap/Wireshark.
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct Result {
@@ -246,6 +273,24 @@ impl Connection {
     }
 }
 
+impl ServerConnection {
+    fn fill_report(&self, payload: &mut [u8]) {
+        // We prepared this packet, so assert is correct.
+        assert_eq!(payload.len(), 20 + mem::size_of::<Result>());
+
+        let mem_result = &mut payload[20..][..mem::size_of::<Result>()];
+        mem_result.iter_mut().for_each(|b| *b = 0);
+        // FIXME: this is not guaranteed to be aligned!!
+        let be_result = unsafe { &mut *(mem_result.as_mut_ptr() as *mut Result) };
+
+        be_result.packet_count = u32::to_be(self.count);
+    }
+
+    fn error_shutdown(&mut self) {
+        unimplemented!()
+    }
+}
+
 impl SendRate {
     /// Called after a packet has been sent.
     fn update_sent(&mut self, sent: usize, now: Instant) {
@@ -280,6 +325,27 @@ impl<P: PayloadMut> ip::Send<P> for Iperf {
 impl<P: PayloadMut> ip::Recv<P> for Iperf {
     fn receive(&mut self, packet: ip::InPacket<P>) {
         if self.connection.remaining == 0 && self.connection.result.is_none() {
+            self.udp
+                .recv(&mut self.connection)
+                .receive(packet)
+        }
+    }
+}
+
+impl<P: PayloadMut> ip::Send<P> for Server {
+    fn send(&mut self, packet: ip::RawPacket<P>) {
+        if self.connection.result.is_some() {
+            self.udp
+                .send(&mut self.connection)
+                .send(packet)
+        }
+    }
+}
+
+impl<P: PayloadMut> ip::Recv<P> for Server {
+    fn receive(&mut self, packet: ip::InPacket<P>) {
+        // While we did not yet receive the last packet.
+        if self.connection.result.is_none() {
             self.udp
                 .recv(&mut self.connection)
                 .receive(packet)
@@ -422,6 +488,7 @@ impl<P: PayloadMut> udp::Recv<P> for Connection {
         }
 
         let mem_result = &payload[20..][..mem::size_of::<Result>()];
+        // FIXME: this is not guaranteed to be aligned!!
         let be_result = unsafe { &*(mem_result.as_ptr() as *const Result) };
 
         self.result = Some(Result {
@@ -436,6 +503,33 @@ impl<P: PayloadMut> udp::Recv<P> for Connection {
             i: u32::from_be(be_result.i),
             j: u32::from_be(be_result.j),
         });
+    }
+}
+
+impl<P: PayloadMut> udp::Send<P> for ServerConnection {
+    fn send(&mut self, packet: udp::RawPacket<P>) {
+        let mut packet = match packet.prepare(self.send_init.clone()) {
+            Ok(packet) => packet,
+            // May simply require an arp lookup.
+            Err(Error::Unreachable) => return,
+            Err(_) => return self.error_shutdown(),
+        };
+
+        self.fill_report(packet.packet.payload_mut_slice());
+
+        match packet.send() {
+            Ok(()) => (),
+            Err(_) => return self.error_shutdown(),
+        }
+    }
+}
+
+impl<P: PayloadMut> udp::Recv<P> for ServerConnection {
+    fn receive(&mut self, packet: udp::Packet<P>) {
+        let udp::Packet { packet, handle } = packet;
+
+        let payload = packet.payload_slice();
+        unimplemented!()
     }
 }
 
