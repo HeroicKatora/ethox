@@ -80,6 +80,9 @@ struct ServerConnection {
     
     /// The timestamp of the first packet that was received.
     begin_ts: Instant,
+
+    /// We wait with termination until we sent the result.
+    result_sent: bool,
 }
 
 struct SendRate {
@@ -165,7 +168,7 @@ impl Iperf {
 
     fn generate_udp(_: &config::Client) -> udp::Endpoint<'static> {
         // We only need a single connection entry.
-        udp::Endpoint::new(vec![Default::default()])
+        udp::Endpoint::new(vec![Connection::UDP_SRC_PORT])
     }
 }
 
@@ -209,6 +212,8 @@ impl IperfTcp {
 }
 
 impl Connection {
+    const UDP_SRC_PORT: u16 = 50020;
+
     fn new(config: &config::Client) -> Self {
         let config::Client {
             host: _, port: _,
@@ -237,7 +242,7 @@ impl Connection {
             source: ip::Source::Mask {
                 subnet: Ipv4Subnet::ANY.into(),
             },
-            src_port: 50020,
+            src_port: Connection::UDP_SRC_PORT,
             dst_addr: config.host.into(),
             dst_port: config.port,
             payload: config.buffer_bytes,
@@ -296,8 +301,8 @@ impl Server {
         }
     }
 
-    fn generate_udp(_: &config::Server) -> udp::Endpoint<'static> {
-        udp::Endpoint::new(vec![Default::default()])
+    fn generate_udp(config: &config::Server) -> udp::Endpoint<'static> {
+        udp::Endpoint::new(vec![config.port])
     }
 }
 
@@ -322,6 +327,7 @@ impl ServerConnection {
             max: 0,
             result: None,
             begin_ts: Instant::from_millis(0),
+            result_sent: false,
         }
     }
 
@@ -422,7 +428,7 @@ impl<P: PayloadMut> ip::Recv<P> for Iperf {
 
 impl<P: PayloadMut> ip::Send<P> for Server {
     fn send(&mut self, packet: ip::RawPacket<P>) {
-        if self.connection.result.is_some() {
+        if self.connection.result.is_some() && !self.connection.result_sent {
             self.udp
                 .send(&mut self.connection)
                 .send(packet)
@@ -501,6 +507,10 @@ where
     Nic::Payload: PayloadMut + Sized,
 {
     fn result(&self) -> Option<super::Score> {
+        if !self.connection.result_sent {
+            return None;
+        }
+
         self.connection.result.clone().map(|result| result.into())
     }
 }
@@ -581,7 +591,7 @@ impl<P: PayloadMut> udp::Recv<P> for Connection {
 
         let payload = packet.packet.payload_slice();
 
-        if payload.len() <= 20 + mem::size_of::<Result>() {
+        if payload.len() < 20 + mem::size_of::<Result>() {
             return;
         }
 
@@ -617,7 +627,7 @@ impl<P: PayloadMut> udp::Send<P> for ServerConnection {
         self.fill_report(packet.packet.payload_mut_slice());
 
         match packet.send() {
-            Ok(()) => (),
+            Ok(()) => self.result_sent = true,
             Err(_) => return self.error_shutdown(),
         }
     }
