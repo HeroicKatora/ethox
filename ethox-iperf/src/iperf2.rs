@@ -69,6 +69,9 @@ struct ServerConnection {
     /// Maximum observed length of packets, assumed to be the length of almost all.
     packet_size: usize,
 
+    /// Number of bytes transferred.
+    received_bytes: usize,
+
     /// The maximally observed packet number.
     max: u32,
 
@@ -77,7 +80,7 @@ struct ServerConnection {
 
     /// The server side result.
     result: Option<ServerResult>,
-    
+
     /// The timestamp of the first packet that was received.
     begin_ts: Instant,
 
@@ -119,7 +122,7 @@ struct PatternBuffer {
 /// using pcap/Wireshark.
 #[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
-pub struct Result {
+pub struct WireResult {
     pub a: u32, // 00 00 00 00
     pub data_len: u32, // 00 02 0a 8a - total data
     pub delta_s: u32, // 00 00 00 01 - delta t (s)
@@ -132,13 +135,23 @@ pub struct Result {
     pub j: u32, // 00 00 00 09
 }
 
+/// The local udp result merging local state and server sent result data.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Result {
+    pub data_len: u32,
+    pub delta_s: u32,
+    pub delta_ms: u32,
+    pub packet_count: u32,
+    pub total_count: u32,
+}
+
 /// A locally created result, **not** sent by the remote.
 ///
 /// There is no result communication for the TCP iperf2 instantiation. (It could, if the Linux
 /// stack were to support half-closed streams in a nice manner, like this stack). But since the
 /// protocol layer intrisically tracks most of the necessary data we can restore it on the client
 /// side.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct TcpResult {
     pub data_len: u32,
     pub duration: Duration,
@@ -146,10 +159,11 @@ pub(crate) struct TcpResult {
 }
 
 /// The result of a server.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct ServerResult {
     pub packet_size: u32,
     pub packet_count: u32,
+    pub received_bytes: u64,
     pub total_count: u32,
     pub duration: Duration,
 }
@@ -160,10 +174,6 @@ impl Iperf {
             connection: Connection::new(config),
             udp: Self::generate_udp(config),
         }
-    }
-
-    pub fn result(&self) -> Option<Result> {
-        self.connection.result
     }
 
     fn generate_udp(_: &config::Client) -> udp::Endpoint<'static> {
@@ -323,6 +333,7 @@ impl ServerConnection {
                 payload: 20 + mem::size_of::<Result>(),
             },
             packet_size: 0,
+            received_bytes: 0,
             count: 0,
             max: 0,
             result: None,
@@ -335,14 +346,14 @@ impl ServerConnection {
         // We prepared this packet, so assert is correct.
         assert_eq!(payload.len(), 20 + mem::size_of::<Result>());
 
-        let be_result = Result {
+        let be_result = WireResult {
             packet_count: u32::to_be(self.count),
-            .. Result::default()
+            .. WireResult::default()
         };
 
-        let mem_result = &mut payload[20..][..mem::size_of::<Result>()];
+        let mem_result = &mut payload[20..][..mem::size_of::<WireResult>()];
         unsafe {
-            ptr::write_unaligned(mem_result.as_mut_ptr() as *mut Result, be_result)
+            ptr::write_unaligned(mem_result.as_mut_ptr() as *mut WireResult, be_result)
         };
     }
 
@@ -352,6 +363,7 @@ impl ServerConnection {
     fn register(&mut self, payload: &[u8], time: Instant) {
         use core::convert::TryFrom;
         assert!(payload.len() >= 20);
+        self.received_bytes = self.received_bytes.saturating_add(payload.len());
 
         let id_bytes = <[u8;4]>::try_from(&payload[0..4]).unwrap();
         let id = u32::from_be_bytes(id_bytes);
@@ -370,6 +382,8 @@ impl ServerConnection {
                     .unwrap_or_else(|_| u32::max_value()),
                 packet_count: self.count,
                 total_count: self.max,
+                received_bytes: u64::try_from(self.received_bytes)
+                    .unwrap_or_else(|_| u64::max_value()),
                 duration: time - self.begin_ts,
             });
         }
@@ -380,6 +394,7 @@ impl ServerConnection {
             packet_size: 0,
             packet_count: self.count,
             total_count: self.max,
+            received_bytes: 0,
             duration: Duration::from_millis(0),
         })
     }
@@ -487,7 +502,7 @@ where
     Nic::Payload: PayloadMut + Sized,
 {
     fn result(&self) -> Option<super::Score> {
-        Iperf::result(self).map(|result| result.into())
+        self.connection.result.clone().map(|result| result.into())
     }
 }
 
@@ -591,16 +606,16 @@ impl<P: PayloadMut> udp::Recv<P> for Connection {
 
         let payload = packet.packet.payload_slice();
 
-        if payload.len() < 20 + mem::size_of::<Result>() {
+        if payload.len() < 20 + mem::size_of::<WireResult>() {
             return;
         }
 
-        let mem_result = &payload[20..][..mem::size_of::<Result>()];
+        let mem_result = &payload[20..][..mem::size_of::<WireResult>()];
         let be_result = unsafe {
-            ptr::read_unaligned(mem_result.as_ptr() as *const Result)
+            ptr::read_unaligned(mem_result.as_ptr() as *const WireResult)
         };
 
-        self.result = Some(Result {
+        let wire_result = WireResult {
             a: u32::from_be(be_result.a),
             data_len: u32::from_be(be_result.data_len),
             delta_s: u32::from_be(be_result.delta_s),
@@ -611,6 +626,14 @@ impl<P: PayloadMut> udp::Recv<P> for Connection {
             h: u32::from_be(be_result.h),
             i: u32::from_be(be_result.i),
             j: u32::from_be(be_result.j),
+        };
+
+        self.result = Some(Result {
+            data_len: wire_result.data_len,
+            delta_s: wire_result.delta_s,
+            delta_ms: wire_result.delta_ms,
+            packet_count: wire_result.packet_count,
+            total_count: self.packet_count,
         });
     }
 }

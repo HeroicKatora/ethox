@@ -5,9 +5,14 @@ use ethox::time::Duration;
 
 /// The result of running the benchmark.
 pub struct Score {
+    /// The amount of data transferred from all arrived packets.
     pub(crate) data_len: u64,
+    /// Duration from first to last packet to acknowledged.
     pub(crate) time: ethox::time::Duration,
+    /// Number of successful packets that arrived.
     pub(crate) packet_count: u32,
+    /// The number of packets that were sent.
+    pub(crate) total_count: u32,
 }
 
 impl Score {
@@ -20,12 +25,11 @@ impl Score {
     }
 
     fn elapsed_secs(&self) -> f32 {
-        self.time.as_millis() as f32 / 1000.0
+        self.time.as_millis() as f32/1000.0
     }
 
     fn loss_rate(&self) -> f32 {
-        // FIXME
-        (0 as f32)/(self.packet_count as f32)
+        (self.packet_count as f32)/(self.total_count as f32)
     }
 }
 
@@ -37,16 +41,19 @@ impl From<iperf2::Result> for Score {
                 u64::from(result.delta_s) * 1000 +
                 u64::from(result.delta_ms)),
             packet_count: result.packet_count,
+            total_count: result.total_count,
         }
     }
 }
 
 impl From<iperf2::TcpResult> for Score {
     fn from(result: iperf2::TcpResult) -> Score {
+        // FIXME: should report total/vs. non-retransmit packets
         Score {
             data_len: result.data_len.into(),
             time: result.duration,
             packet_count: result.packet_count,
+            total_count: result.packet_count,
         }
     }
 }
@@ -54,9 +61,10 @@ impl From<iperf2::TcpResult> for Score {
 impl From<iperf2::ServerResult> for Score {
     fn from(result: iperf2::ServerResult) -> Score {
         Score {
-            data_len: result.packet_size.into(),
+            data_len: result.received_bytes,
             time: result.duration,
             packet_count: result.packet_count,
+            total_count: result.total_count,
         }
     }
 }
