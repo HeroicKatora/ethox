@@ -8,7 +8,7 @@ use crate::wire::{EthernetAddress, EthernetFrame, EthernetProtocol, EthernetRepr
 /// The contents were inspected and could be handled up to the eth layer.
 pub struct In<'a, P: Payload> {
     /// A reference to the ethernet endpoint state.
-    pub handle: Controller<'a>,
+    pub control: Controller<'a>,
     /// The valid ethernet frame inside the buffer.
     pub frame: EthernetFrame<&'a mut P>,
 }
@@ -19,14 +19,14 @@ pub struct In<'a, P: Payload> {
 /// grabbing the mutable slice for example.
 #[must_use = "You need to call `send` explicitely on an OutPacket, otherwise no packet is sent."]
 pub struct Out<'a, P: Payload> {
-    handle: Controller<'a>,
+    control: Controller<'a>,
     frame: EthernetFrame<&'a mut P>,
 }
 
 /// A buffer into which a packet can be placed.
 pub struct Raw<'a, P: Payload> {
     /// A reference to the ethernet endpoint state.
-    pub handle: Controller<'a>,
+    pub control: Controller<'a>,
     /// A mutable reference to the payload buffer.
     pub payload: &'a mut P,
 }
@@ -104,6 +104,11 @@ impl<'a> Controller<'a> {
     pub fn src_addr(&mut self) -> EthernetAddress {
         self.endpoint.src_addr()
     }
+
+    /// Try to send the packet associated with this controller.
+    pub fn send(&mut self) -> Result<()> {
+        self.nic_handle.queue()
+    }
 }
 
 impl<'a, P: Payload> In<'a, P> {
@@ -113,7 +118,7 @@ impl<'a, P: Payload> In<'a, P> {
     pub fn deinit(self) -> Raw<'a, P>
         where P: PayloadMut,
     {
-        Raw::new(self.handle, self.frame.into_inner())
+        Raw::new(self.control, self.frame.into_inner())
     }
 }
 
@@ -123,7 +128,7 @@ impl<'a, P: PayloadMut> In<'a, P> {
     /// If the length is changed then the longest slice at the end that fits into both
     /// representations is regarded as the payload of the packet.
     pub fn reinit(self, init: Init) -> Result<Out<'a, P>> {
-        let In { handle, frame } = self;
+        let In { control, frame } = self;
         let new_len = ethernet_frame::buffer_len(init.payload);
         let new_repr = EthernetRepr {
             src_addr: init.src_addr,
@@ -152,7 +157,7 @@ impl<'a, P: PayloadMut> In<'a, P> {
         let frame = EthernetFrame::new_unchecked(raw_buffer, new_repr);
 
         Ok(Out {
-            handle,
+            control,
             frame,
         })
     }
@@ -165,16 +170,16 @@ impl<'a, P: Payload> Out<'a, P> {
     /// initialized packet and its contents have not changed. Some changes are fine as well and
     /// nothing will cause unsafety but panics or dropped packets are to be expected.
     pub fn new_unchecked(
-        handle: Controller<'a>,
+        control: Controller<'a>,
         frame: EthernetFrame<&'a mut P>) -> Self
     {
-        Out{ handle, frame, }
+        Out{ control, frame, }
     }
 
     /// Unwrap the contained control handle and initialized ethernet frame.
     pub fn into_incoming(self) -> In<'a, P> {
-        let Out { handle, frame } = self;
-        In { handle, frame }
+        let Out { control, frame } = self;
+        In { control, frame }
     }
 
     /// Deconstruct the initialized frame into a raw buffer.
@@ -182,13 +187,13 @@ impl<'a, P: Payload> Out<'a, P> {
     /// Pairing this with `new_unchecked` allows modifying the frame or handle in nearly arbitrary
     /// ways while explicitely warning that it is a bad idea to transmit arbitrary frames.
     pub fn into_raw(self) -> Raw<'a, P> {
-        let Out { handle, frame } = self;
-        Raw { handle, payload: frame.into_inner() }
+        let Out { control, frame } = self;
+        Raw { control, payload: frame.into_inner() }
     }
     
     /// Try to send that packet.
-    pub fn send(self) -> Result<()> {
-        self.handle.nic_handle.queue()
+    pub fn send(mut self) -> Result<()> {
+        self.control.send()
     }
 }
 
@@ -204,10 +209,10 @@ impl<'a, P: PayloadMut> Out<'a, P> {
 
 impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
     pub(crate) fn new(
-        handle: Controller<'a>,
+        control: Controller<'a>,
         payload: &'a mut P) -> Self
     {
-        Raw { handle, payload, }
+        Raw { control, payload, }
     }
 
     /// Initialize the raw packet buffer to a valid ethernet frame.
@@ -215,7 +220,7 @@ impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
         let mut payload = self.payload;
         let repr = init.initialize(&mut payload)?;
         Ok(Out {
-            handle: self.handle,
+            control: self.control,
             frame: EthernetFrame::new_unchecked(payload, repr),
         })
     }

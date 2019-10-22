@@ -162,8 +162,8 @@ where
     P: PayloadMut,
     H: Recv<P>,
 {
-    fn receive(&mut self, ip::InPacket { handle, packet }: ip::InPacket<P>) {
-        let capabilities = handle.info().capabilities();
+    fn receive(&mut self, ip::InPacket { control, packet }: ip::InPacket<P>) {
+        let capabilities = control.info().capabilities();
 
         let icmp = match packet {
             ip::IpPacket::V4(packet) => {
@@ -181,8 +181,8 @@ where
             _ => return,
         };
 
-        let handle = Controller::new(handle);
-        let packet = In::new(handle, icmp);
+        let control = Controller::new(control);
+        let packet = In::new(control, icmp);
 
         let how_to_handle = match self.endpoint.handle_internally(packet) {
             Ok(handling) => handling,
@@ -205,9 +205,9 @@ where
     T: Send<P>,
 {
     fn send(&mut self, packet: ip::RawPacket<P>) {
-        let ip::RawPacket { handle: mut eth_handle, payload } = packet;
-        let handle = Controller::new(eth_handle.borrow_mut());
-        let packet = Raw { handle, payload };
+        let ip::RawPacket { control: mut eth_handle, payload } = packet;
+        let control = Controller::new(eth_handle.borrow_mut());
+        let packet = Raw { control, payload };
 
         self.handler.send(packet)
     }

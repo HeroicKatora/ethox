@@ -120,7 +120,7 @@ impl EndpointRef<'_, '_> {
         self.update(
             source_hardware_addr,
             IpAddress::Ipv4(source_protocol_addr),
-            packet.handle.info().timestamp());
+            packet.control.info().timestamp());
 
         // TODO: handle incoming gratuitous ARP ?
 
@@ -139,7 +139,7 @@ impl EndpointRef<'_, '_> {
 
     /// Send oustanding arp requests.
     fn send_oustanding<P: PayloadMut>(&mut self, raw: Raw<P>) -> Result<()> {
-        let ts = raw.handle.info().timestamp();
+        let ts = raw.control.info().timestamp();
 
         // Search through the missing arp entries:
         let unresolved = self.inner.neighbors
@@ -172,7 +172,7 @@ impl EndpointRef<'_, '_> {
 
         let mut raw = raw;
 
-        let src = raw.handle.inner.src_addr();
+        let src = raw.control.inner.src_addr();
         let prepared = raw.prepare(Init::EthernetIpv4Request {
             source_hardware_addr: src,
             target_hardware_addr: EthernetAddress::BROADCAST,
@@ -202,7 +202,7 @@ impl EndpointRef<'_, '_> {
 impl<P> eth::Recv<P> for Receiver<'_, '_>
     where P: PayloadMut,
 {
-    fn receive(&mut self, eth::InPacket { handle, frame }: eth::InPacket<P>) {
+    fn receive(&mut self, eth::InPacket { control, frame }: eth::InPacket<P>) {
         let packet = match frame.repr().ethertype {
             EthernetProtocol::Arp => match ArpPacket::new_checked(frame) {
                 Ok(packet) => packet,
@@ -211,8 +211,8 @@ impl<P> eth::Recv<P> for Receiver<'_, '_>
             _ => return,
         };
 
-        let handle = Controller::new(handle);
-        let packet = In::new(handle, packet);
+        let control = Controller::new(control);
+        let packet = In::new(control, packet);
 
         if let Err(_) = self.endpoint.handle_internally(packet) {
             // TODO: log error
@@ -225,12 +225,12 @@ impl<P> eth::Send<P> for Sender<'_, '_>
 {
     fn send(&mut self, packet: eth::RawPacket<P>) {
         let eth::RawPacket {
-            handle: mut eth_handle,
+            control: mut eth_handle,
             payload,
         } = packet;
 
-        let handle = Controller::new(eth_handle.borrow_mut());
-        let packet = Raw::new(handle, payload);
+        let control = Controller::new(eth_handle.borrow_mut());
+        let packet = Raw::new(control, payload);
 
         if let Err(_) = self.endpoint.send_oustanding(packet) {
             // TODO: log error

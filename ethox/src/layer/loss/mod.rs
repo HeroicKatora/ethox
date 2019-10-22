@@ -263,12 +263,12 @@ where
         let loss = &mut self.1;
 
         // Reconstruct packet with change handle.
-        let eth::InPacket { mut handle, frame } = packet;
-        let handle = handle
+        let eth::InPacket { mut control, frame } = packet;
+        let control = control
             .borrow_mut()
             .wrap(|inner| LossyHandle::new(
                 &mut handle_mem, loss, inner));
-        let packet = eth::InPacket { handle, frame, };
+        let packet = eth::InPacket { control, frame, };
 
         self.0.receive(packet)
     }
@@ -284,12 +284,12 @@ where
         let loss = &mut self.1;
 
         // Reconstruct packet with changed handle.
-        let eth::RawPacket { mut handle, payload } = packet;
-        let handle = handle
+        let eth::RawPacket { mut control, payload } = packet;
+        let control = control
             .borrow_mut()
             .wrap(|inner| LossyHandle::new(
                 &mut handle_mem, loss, inner));
-        let packet = eth::RawPacket { handle, payload, };
+        let packet = eth::RawPacket { control, payload, };
 
         self.0.send(packet);
     }
@@ -309,12 +309,12 @@ where
         let loss = &mut self.1;
 
         // Reconstruct packet with change handle.
-        let ip::InPacket { mut handle, packet } = packet;
-        let handle = handle
+        let ip::InPacket { mut control, packet } = packet;
+        let control = control
             .borrow_mut()
             .wrap(|inner| LossyHandle::new(
                 &mut handle_mem, loss, inner));
-        let packet = ip::InPacket { handle, packet, };
+        let packet = ip::InPacket { control, packet, };
 
         self.0.receive(packet)
     }
@@ -330,12 +330,12 @@ where
         let loss = &mut self.1;
 
         // Reconstruct packet with changed handle.
-        let ip::RawPacket { mut handle, payload } = packet;
-        let handle = handle
+        let ip::RawPacket { mut control, payload } = packet;
+        let control = control
             .borrow_mut()
             .wrap(|inner| LossyHandle::new(
                 &mut handle_mem, loss, inner));
-        let packet = ip::RawPacket { handle, payload, };
+        let packet = ip::RawPacket { control, payload, };
 
         self.0.send(packet);
     }

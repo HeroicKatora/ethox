@@ -122,8 +122,8 @@ where
             return
         }
 
-        let handle = Controller::new(packet.handle, &mut self.endpoint);
-        let packet = packet::In { handle, frame };
+        let control = Controller::new(packet.handle, &mut self.endpoint);
+        let packet = packet::In { control, frame };
         self.handler.receive(packet)
     }
 }
@@ -135,8 +135,8 @@ where
     T: Send<P>,
 {
     fn send(&mut self, nic::Packet { handle, payload }: nic::Packet<H, P>) {
-        let handle = Controller::new(handle, &mut self.endpoint);
-        let packet = packet::Raw { handle, payload };
+        let control = Controller::new(handle, &mut self.endpoint);
+        let packet = packet::Raw { control, payload };
         self.handler.send(packet)
     }
 }
@@ -177,7 +177,7 @@ mod tests {
          0x00, 0xff];
 
     fn simple_send<P: Payload + PayloadMut>(mut frame: packet::Raw<P>) {
-        let src_addr = frame.handle.src_addr();
+        let src_addr = frame.control.src_addr();
         let init = Init {
             src_addr,
             dst_addr: MAC_ADDR_1,

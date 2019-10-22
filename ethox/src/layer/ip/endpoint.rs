@@ -245,8 +245,8 @@ where
     P: PayloadMut,
     T: Recv<P>,
 {
-    fn receive(&mut self, eth::InPacket { mut handle, frame }: eth::InPacket<P>) {
-        let capabilities = handle.info().capabilities();
+    fn receive(&mut self, eth::InPacket { mut control, frame }: eth::InPacket<P>) {
+        let capabilities = control.info().capabilities();
         let packet = match frame.repr().ethertype {
             EthernetProtocol::Ipv4 => {
                 match Ipv4Packet::new_checked(frame, capabilities.ipv4().rx_checksum()) {
@@ -262,7 +262,7 @@ where
             },
             EthernetProtocol::Arp => {
                 return self.endpoint.into_arp_receiver().receive(
-                    eth::InPacket { handle, frame, });
+                    eth::InPacket { control, frame, });
             }
             _ => return,
         };
@@ -271,8 +271,8 @@ where
             return
         }
 
-        let handle = Controller::new(handle.borrow_mut(), &mut self.endpoint);
-        let packet = packet::In { handle, packet };
+        let control = Controller::new(control.borrow_mut(), &mut self.endpoint);
+        let packet = packet::In { control, packet };
         self.handler.receive(packet)
     }
 }
@@ -288,9 +288,9 @@ where
             return self.endpoint.into_arp_sender().send(packet);
         }
 
-        let eth::RawPacket { handle: mut eth_handle, payload } = packet;
-        let handle = Controller::new(eth_handle.borrow_mut(), &mut self.endpoint);
-        let packet = packet::Raw { handle, payload };
+        let eth::RawPacket { control: mut eth_handle, payload } = packet;
+        let control = Controller::new(eth_handle.borrow_mut(), &mut self.endpoint);
+        let packet = packet::Raw { control, payload };
 
         self.handler.send(packet)
     }

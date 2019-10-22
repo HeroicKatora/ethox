@@ -495,10 +495,10 @@ where
     H: super::Recv<P>,
 {
     fn receive(&mut self, ip_packet: ip::InPacket<P>) {
-        let ip::InPacket { mut handle, packet } = ip_packet;
+        let ip::InPacket { mut control, packet } = ip_packet;
 
         let repr = packet.repr();
-        let capabilities = handle.info().capabilities();
+        let capabilities = control.info().capabilities();
         let checksum = capabilities.tcp().rx_checksum(repr);
 
         let packet = match TcpPacket::new_checked(packet, checksum) {
@@ -507,7 +507,7 @@ where
             Err(_) => return (),
         };
 
-        let arrived = match In::from_arriving(self.endpoint.inner, handle.borrow_mut(), packet) {
+        let arrived = match In::from_arriving(self.endpoint.inner, control.borrow_mut(), packet) {
             Ok(arrived) => arrived,
 
             // TODO: error logging.
@@ -524,10 +524,10 @@ where
     H: super::Send<P>,
 {
     fn send(&mut self, ip_raw: ip::RawPacket<P>) {
-        let ip::RawPacket { mut handle, payload } = ip_raw;
+        let ip::RawPacket { mut control, payload } = ip_raw;
 
         let raw = Raw {
-            ip: ip::RawPacket { handle: handle.borrow_mut(), payload },
+            ip: ip::RawPacket { control: control.borrow_mut(), payload },
             endpoint: self.endpoint.inner,
         };
 

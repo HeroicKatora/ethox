@@ -8,7 +8,7 @@ use crate::wire::{IpAddress, IpProtocol, UdpChecksum, UdpPacket, UdpRepr, udp_pa
 /// An incoming UDP packet.
 pub struct Packet<'a, P: Payload> {
     /// A reference to the UDP endpoint state.
-    pub handle: Controller<'a>,
+    pub control: Controller<'a>,
     /// The valid packet inside the buffer.
     pub packet: UdpPacket<ip::IpPacket<'a, P>>,
 }
@@ -16,7 +16,7 @@ pub struct Packet<'a, P: Payload> {
 /// A buffer for an outgoing UDP packet.
 pub struct RawPacket<'a, P: Payload> {
     /// A reference to the UDP endpoint state.
-    pub handle: Controller<'a>,
+    pub control: Controller<'a>,
     /// A mutable reference to the payload buffer.
     pub payload: &'a mut P,
 }
@@ -79,10 +79,10 @@ pub struct Init {
 
 impl<'a> Controller<'a> {
     pub(crate) fn new(
-        handle: ip::Controller<'a>,
+        control: ip::Controller<'a>,
     ) -> Self {
         Controller {
-            inner: handle,
+            inner: control,
         }
     }
 
@@ -101,11 +101,11 @@ impl<'a> Controller<'a> {
 
 impl<'a, P: Payload> Packet<'a, P> {
     pub(crate) fn new(
-        handle: Controller<'a>,
+        control: Controller<'a>,
         packet: UdpPacket<ip::IpPacket<'a, P>>)
     -> Self {
         Packet {
-            handle,
+            control,
             packet,
         }
     }
@@ -119,6 +119,11 @@ impl<'a, P: Payload> Packet<'a, P> {
         self.deinit().prepare(init)
     }
 
+    /// Get the hardware info for that packet.
+    pub fn info(&self) -> &dyn Info {
+        self.control.info()
+    }
+
     /// Unwrap the raw packet buffer.
     ///
     /// This does not modify the contents of the buffer but it will drop the state derived from
@@ -126,7 +131,7 @@ impl<'a, P: Payload> Packet<'a, P> {
     pub fn deinit(self) -> RawPacket<'a, P>
         where P: PayloadMut,
     {
-        RawPacket::new(self.handle, self.packet.into_inner().into_raw())
+        RawPacket::new(self.control, self.packet.into_inner().into_raw())
     }
 
     /// Called last after having initialized the payload.
@@ -135,12 +140,12 @@ impl<'a, P: Payload> Packet<'a, P> {
     pub fn send(mut self) -> Result<()>
         where P: PayloadMut,
     {
-        let capabilities = self.handle.info().capabilities();
+        let capabilities = self.control.info().capabilities();
         let ip_repr = self.packet.get_ref().repr();
         let checksum = capabilities.udp().tx_checksum(ip_repr);
         self.packet.fill_checksum(checksum);
         let lower = ip::OutPacket::new_unchecked(
-            self.handle.inner,
+            self.control.inner,
             self.packet.into_inner());
         lower.send()
     }
@@ -148,19 +153,24 @@ impl<'a, P: Payload> Packet<'a, P> {
 
 impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
     pub(crate) fn new(
-        handle: Controller<'a>,
+        control: Controller<'a>,
         payload: &'a mut P,
     ) -> Self {
         RawPacket {
-            handle,
+            control,
             payload,
         }
+    }
+
+    /// Get the hardware info for that packet.
+    pub fn info(&self) -> &dyn Info {
+        self.control.info()
     }
 
     /// Initialize to a valid ip packet.
     pub fn prepare(self, init: Init) -> Result<Packet<'a, P>> {
         let lower = ip::RawPacket::new(
-            self.handle.inner,
+            self.control.inner,
             self.payload);
 
         let packet_len = init.payload
@@ -175,14 +185,14 @@ impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
         };
 
         let prepared = lower.prepare(lower_init)?;
-        let ip::InPacket { handle, mut packet } = prepared.into_incoming();
+        let ip::InPacket { control, mut packet } = prepared.into_incoming();
         let repr = init.initialize(&mut packet)?;
 
-        // Reconstruct the handle.
-        let handle = Controller::new(handle);
+        // Reconstruct the control.
+        let control = Controller::new(control);
 
         Ok(Packet {
-            handle,
+            control,
             packet: UdpPacket::new_unchecked(packet, repr),
         })
     }
