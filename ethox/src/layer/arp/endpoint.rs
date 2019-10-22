@@ -8,7 +8,7 @@ use crate::wire::{ArpPacket, ArpRepr, ArpOperation, EthernetAddress, EthernetPro
 use crate::time::Instant;
 use crate::layer::ip;
 
-use super::packet::{Handle, In, Init, Raw};
+use super::packet::{Controller, In, Init, Raw};
 use super::neighbor::Cache;
 
 /// The persistent data of an arp layer.
@@ -211,7 +211,7 @@ impl<P> eth::Recv<P> for Receiver<'_, '_>
             _ => return,
         };
 
-        let handle = Handle::new(handle);
+        let handle = Controller::new(handle);
         let packet = In::new(handle, packet);
 
         if let Err(_) = self.endpoint.handle_internally(packet) {
@@ -229,7 +229,7 @@ impl<P> eth::Send<P> for Sender<'_, '_>
             payload,
         } = packet;
 
-        let handle = Handle::new(eth_handle.borrow_mut());
+        let handle = Controller::new(eth_handle.borrow_mut());
         let packet = Raw::new(handle, payload);
 
         if let Err(_) = self.endpoint.send_oustanding(packet) {

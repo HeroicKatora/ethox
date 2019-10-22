@@ -5,7 +5,7 @@ use crate::wire::{EthernetAddress, EthernetFrame, Payload, PayloadMut};
 use crate::nic;
 
 use super::{Recv, Send};
-use super::packet::{self, Handle};
+use super::packet::{self, Controller};
 
 /// An ethernet endpoint, logical part of a device.
 ///
@@ -122,7 +122,7 @@ where
             return
         }
 
-        let handle = Handle::new(packet.handle, &mut self.endpoint);
+        let handle = Controller::new(packet.handle, &mut self.endpoint);
         let packet = packet::In { handle, frame };
         self.handler.receive(packet)
     }
@@ -135,7 +135,7 @@ where
     T: Send<P>,
 {
     fn send(&mut self, nic::Packet { handle, payload }: nic::Packet<H, P>) {
-        let handle = Handle::new(handle, &mut self.endpoint);
+        let handle = Controller::new(handle, &mut self.endpoint);
         let packet = packet::Raw { handle, payload };
         self.handler.send(packet)
     }

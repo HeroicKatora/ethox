@@ -43,7 +43,7 @@ pub struct Raw<'a, P: Payload> {
 /// [`RawPacket`]: struct.RawPacket.html
 /// [`OutPacket`]: struct.OutPacket.html
 pub struct Controller<'a> {
-    eth: eth::Handle<'a>,
+    eth: eth::Controller<'a>,
     endpoint: &'a mut dyn Endpoint,
 }
 
@@ -116,7 +116,7 @@ pub(crate) trait Endpoint{
 
 impl<'a> Controller<'a> {
     pub(crate) fn new(
-        handle: eth::Handle<'a>,
+        handle: eth::Controller<'a>,
         endpoint: &'a mut dyn Endpoint,
     ) -> Self {
         Controller {

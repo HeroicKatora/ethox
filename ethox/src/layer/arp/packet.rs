@@ -9,21 +9,21 @@ use crate::wire::{Payload, PayloadMut};
 /// An incoming packet.
 pub struct In<'a, P: Payload> {
     /// A reference to the ARP endpoint state.
-    pub handle: Handle<'a>,
+    pub handle: Controller<'a>,
     /// The valid packet inside the buffer.
     pub packet: ArpPacket<EthernetFrame<&'a mut P>>,
 }
 
 /// An outgoing packet as prepared by the arp layer.
 pub struct Out<'a, P: Payload> {
-    handle: Handle<'a>,
+    handle: Controller<'a>,
     packet: ArpPacket<EthernetFrame<&'a mut P>>,
 }
 
 /// A buffer into which a packet can be placed.
 pub struct Raw<'a, P: Payload> {
     /// A reference to the ARP endpoint state.
-    pub handle: Handle<'a>,
+    pub handle: Controller<'a>,
     /// A mutable reference to the payload buffer.
     pub payload: &'a mut P,
 }
@@ -34,8 +34,8 @@ pub struct Raw<'a, P: Payload> {
 /// This is not really useful on its own but should instead be used either within a `In` or a
 /// `Raw`. Some of the methods offered there will access the non-public members of this struct to
 /// fulfill their task.
-pub struct Handle<'a> {
-    pub(crate) inner: eth::Handle<'a>,
+pub struct Controller<'a> {
+    pub(crate) inner: eth::Controller<'a>,
 }
 
 /// Initializer for a packet.
@@ -54,9 +54,9 @@ pub enum Init {
     },
 }
 
-impl<'a> Handle<'a> {
-    pub(crate) fn new(handle: eth::Handle<'a>) -> Self {
-        Handle { inner: handle }
+impl<'a> Controller<'a> {
+    pub(crate) fn new(handle: eth::Controller<'a>) -> Self {
+        Controller { inner: handle }
     }
 
     /// Get the hardware info for that packet.
@@ -65,15 +65,15 @@ impl<'a> Handle<'a> {
     }
 
     /// Proof to the compiler that we can shorten the lifetime arbitrarily.
-    pub fn borrow_mut(&mut self) -> Handle {
-        Handle {
+    pub fn borrow_mut(&mut self) -> Controller {
+        Controller {
             inner: self.inner.borrow_mut(),
         }
     }
 }
 
 impl<'a, P: Payload> In<'a, P> {
-    pub(crate) fn new(handle: Handle<'a>, packet: ArpPacket<EthernetFrame<&'a mut P>>) -> Self {
+    pub(crate) fn new(handle: Controller<'a>, packet: ArpPacket<EthernetFrame<&'a mut P>>) -> Self {
         In { handle, packet }
     }
 
@@ -131,7 +131,7 @@ impl<'a, P: PayloadMut> In<'a, P> {
             arp_packet::new_unchecked_mut(frame.payload_mut_slice()),
         );
 
-        let handle = Handle::new(handle);
+        let handle = Controller::new(handle);
 
         Ok(Out {
             handle,
@@ -155,7 +155,7 @@ impl<'a, P: Payload> Out<'a, P> {
 }
 
 impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
-    pub(crate) fn new(handle: Handle<'a>, payload: &'a mut P) -> Self {
+    pub(crate) fn new(handle: Controller<'a>, payload: &'a mut P) -> Self {
         Raw { handle, payload }
     }
 
@@ -175,7 +175,7 @@ impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
         let repr = init.initialize(&mut frame)?;
 
         // Reconstruct the handle.
-        let handle = Handle::new(handle);
+        let handle = Controller::new(handle);
 
         Ok(Out {
             handle,

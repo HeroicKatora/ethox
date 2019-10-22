@@ -21,4 +21,4 @@ pub use neighbor::{
     Table as NeighborTable,
 };
 
-pub use packet::{Handle, In as InPacket, Init, Out as OutPacket, Raw as RawPacket};
+pub use packet::{Controller, In as InPacket, Init, Out as OutPacket, Raw as RawPacket};
