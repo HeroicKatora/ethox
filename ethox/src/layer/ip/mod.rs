@@ -62,7 +62,7 @@ pub use endpoint::{
 };
 
 pub use packet::{
-    Handle,
+    Controller,
     Init,
     IpPacket,
     V4Packet,

@@ -27,7 +27,7 @@ pub struct RawPacket<'a, P: Payload> {
 /// `RawPacket`. Some of the methods offered there will access the non-public members of this
 /// struct to fulfill their task.
 pub struct Handle<'a> {
-    pub(crate) inner: ip::Handle<'a>,
+    pub(crate) inner: ip::Controller<'a>,
     // Nothing more, there is no logic here.
 }
 
@@ -79,7 +79,7 @@ pub struct Init {
 
 impl<'a> Handle<'a> {
     pub(crate) fn new(
-        handle: ip::Handle<'a>,
+        handle: ip::Controller<'a>,
     ) -> Self {
         Handle {
             inner: handle,

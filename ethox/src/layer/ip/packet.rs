@@ -10,7 +10,7 @@ use crate::wire::{IpAddress, IpSubnet, IpProtocol, IpRepr, Ipv4Packet, Ipv6Packe
 /// The contents were inspected and could be handled up to the ip layer.
 pub struct In<'a, P: Payload> {
     /// A reference to the IP endpoint state.
-    pub handle: Handle<'a>,
+    pub handle: Controller<'a>,
     /// The valid packet inside the buffer.
     pub packet: IpPacket<'a, P>,
 }
@@ -21,14 +21,14 @@ pub struct In<'a, P: Payload> {
 /// grabbing the mutable slice for example.
 #[must_use = "You need to call `send` explicitely on an OutPacket, otherwise no packet is sent."]
 pub struct Out<'a, P: Payload> {
-    handle: Handle<'a>,
+    handle: Controller<'a>,
     packet: IpPacket<'a, P>,
 }
 
 /// A buffer into which a packet can be placed.
 pub struct Raw<'a, P: Payload> {
     /// A reference to the IP endpoint state.
-    pub handle: Handle<'a>,
+    pub handle: Controller<'a>,
     /// A mutable reference to the payload buffer.
     pub payload: &'a mut P,
 }
@@ -42,7 +42,7 @@ pub struct Raw<'a, P: Payload> {
 /// [`InPacket`]: struct.InPacket.html
 /// [`RawPacket`]: struct.RawPacket.html
 /// [`OutPacket`]: struct.OutPacket.html
-pub struct Handle<'a> {
+pub struct Controller<'a> {
     eth: eth::Handle<'a>,
     endpoint: &'a mut dyn Endpoint,
 }
@@ -114,12 +114,12 @@ pub(crate) trait Endpoint{
     fn resolve(&mut self, _: IpAddress, _: Instant, look: bool) -> Result<EthernetAddress>;
 }
 
-impl<'a> Handle<'a> {
+impl<'a> Controller<'a> {
     pub(crate) fn new(
         handle: eth::Handle<'a>,
         endpoint: &'a mut dyn Endpoint,
     ) -> Self {
-        Handle {
+        Controller {
             eth: handle,
             endpoint,
         }
@@ -129,7 +129,7 @@ impl<'a> Handle<'a> {
         wrap: impl FnOnce(&'a mut dyn nic::Handle) -> &'a mut dyn nic::Handle,
     ) -> Self {
         let eth = self.eth.wrap(wrap);
-        Handle { eth, endpoint: self.endpoint }
+        Controller { eth, endpoint: self.endpoint }
     }
 
     /// Get the hardware info for that packet.
@@ -138,8 +138,8 @@ impl<'a> Handle<'a> {
     }
 
     /// Proof to the compiler that we can shorten the lifetime arbitrarily.
-    pub fn borrow_mut(&mut self) -> Handle {
-        Handle {
+    pub fn borrow_mut(&mut self) -> Controller {
+        Controller {
             eth: self.eth.borrow_mut(),
             endpoint: self.endpoint,
         }
@@ -204,7 +204,7 @@ impl<'a, P: PayloadMut> In<'a, P> {
         let repr = init.initialize(route.src_addr, &mut frame)?;
 
         // Reconstruct the handle.
-        let handle = Handle::new(handle, self.handle.endpoint);
+        let handle = Controller::new(handle, self.handle.endpoint);
 
         Ok(Out {
             handle,
@@ -220,7 +220,7 @@ impl<'a, P: Payload> Out<'a, P> {
     /// initialized packet and its contents have not changed. Some changes are fine as well and
     /// nothing will cause unsafety but panics or dropped packets are to be expected.
     pub fn new_unchecked(
-        handle: Handle<'a>,
+        handle: Controller<'a>,
         packet: IpPacket<'a, P>) -> Self
     {
         Out { handle, packet, }
@@ -273,13 +273,17 @@ impl<'a, P: PayloadMut> Out<'a, P> {
 
 impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
     pub(crate) fn new(
-        handle: Handle<'a>,
+        handle: Controller<'a>,
         payload: &'a mut P,
     ) -> Self {
         Raw {
             handle,
             payload,
         }
+    }
+
+    pub fn handle(&self) -> &Controller<'a> {
+        &self.handle
     }
 
     /// Initialize to a valid ip packet.
@@ -296,7 +300,7 @@ impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
         let repr = init.initialize(route.src_addr, &mut frame)?;
 
         // Reconstruct the handle.
-        let handle = Handle::new(handle, self.handle.endpoint);
+        let handle = Controller::new(handle, self.handle.endpoint);
 
         Ok(Out {
             handle,

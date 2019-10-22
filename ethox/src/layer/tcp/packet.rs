@@ -146,7 +146,7 @@ pub struct Closing<'a> {
 ///
 /// Similar to a `Stray` packet but we retain which connection was closed.
 pub struct Closed<'a, P: PayloadMut> {
-    ip: ip::Handle<'a>,
+    ip: ip::Controller<'a>,
     endpoint: &'a mut dyn Endpoint,
     previous: SlotKey,
     tcp: TcpPacket<ip::IpPacket<'a, P>>,
@@ -159,7 +159,7 @@ pub struct Closed<'a, P: PayloadMut> {
 /// On the receiving path it is recommended to call `read` sometimes to ensure the remote is not
 /// stalled indefinitely.
 pub struct Open<'a, P: PayloadMut> {
-    ip: ip::Handle<'a>,
+    ip: ip::Controller<'a>,
     operator: Operator<'a>,
     signals: UserSignals,
     packet: OpenPacket<'a, P>,
@@ -167,7 +167,7 @@ pub struct Open<'a, P: PayloadMut> {
 
 /// A valid tcp packet not belonging to a connection.
 pub struct Stray<'a, P: PayloadMut> {
-    ip: ip::Handle<'a>,
+    ip: ip::Controller<'a>,
     endpoint: &'a mut dyn Endpoint,
     tcp: TcpPacket<ip::IpPacket<'a, P>>,
 }
@@ -228,7 +228,7 @@ impl<'a, P: PayloadMut> In<'a, P> {
     /// Handle an incoming TCP packet returning a representation indicating appropriate options.
     pub fn from_arriving(
         endpoint: &'a mut dyn Endpoint,
-        ip_control: ip::Handle<'a>,
+        ip_control: ip::Controller<'a>,
         tcp: TcpPacket<ip::IpPacket<'a, P>>,
     ) -> Result<Self, crate::layer::Error> {
         let (mut operator, tcp) = match Unhandled::try_open(endpoint, tcp) {
@@ -544,7 +544,7 @@ impl UserSignals {
 fn control_answer<'a, P: PayloadMut>(
     tcp: TcpPacket<ip::IpPacket<'a, P>>,
     answer: TcpRepr,
-    ip: ip::Handle<'a>,
+    ip: ip::Controller<'a>,
 ) -> Result<(), crate::layer::Error> {
     assert_eq!(answer.payload_len, 0, "Control answer can not handle data");
 

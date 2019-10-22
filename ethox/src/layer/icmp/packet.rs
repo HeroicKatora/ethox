@@ -40,7 +40,7 @@ pub struct Raw<'a, P: Payload> {
 /// `Raw`. Some of the methods offered there will access the non-public members of this struct to
 /// fulfill their task.
 pub struct Handle<'a> {
-    pub(crate) inner: ip::Handle<'a>,
+    pub(crate) inner: ip::Controller<'a>,
 }
 
 /// A helper struct for packet initialization.
@@ -73,7 +73,7 @@ pub enum Init {
 
 impl<'a> Handle<'a> {
     pub(crate) fn new(
-        handle: ip::Handle<'a>,
+        handle: ip::Controller<'a>,
     ) -> Self {
         Handle {
             inner: handle,

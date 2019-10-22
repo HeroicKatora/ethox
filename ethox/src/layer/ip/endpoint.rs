@@ -6,7 +6,7 @@ use crate::wire::{IpAddress, IpCidr, IpSubnet, Ipv4Packet, Ipv6Packet};
 use crate::time::Instant;
 
 use super::{Recv, Send};
-use super::packet::{self, IpPacket, Handle, Route};
+use super::packet::{self, Controller, IpPacket, Route};
 use super::route::Routes;
 
 /// Handles IP connection states.
@@ -271,7 +271,7 @@ where
             return
         }
 
-        let handle = Handle::new(handle.borrow_mut(), &mut self.endpoint);
+        let handle = Controller::new(handle.borrow_mut(), &mut self.endpoint);
         let packet = packet::In { handle, packet };
         self.handler.receive(packet)
     }
@@ -289,7 +289,7 @@ where
         }
 
         let eth::RawPacket { handle: mut eth_handle, payload } = packet;
-        let handle = Handle::new(eth_handle.borrow_mut(), &mut self.endpoint);
+        let handle = Controller::new(eth_handle.borrow_mut(), &mut self.endpoint);
         let packet = packet::Raw { handle, payload };
 
         self.handler.send(packet)
