@@ -8,7 +8,7 @@ use crate::wire::{IpAddress, IpProtocol, UdpChecksum, UdpPacket, UdpRepr, udp_pa
 /// An incoming UDP packet.
 pub struct Packet<'a, P: Payload> {
     /// A reference to the UDP endpoint state.
-    pub handle: Handle<'a>,
+    pub handle: Controller<'a>,
     /// The valid packet inside the buffer.
     pub packet: UdpPacket<ip::IpPacket<'a, P>>,
 }
@@ -16,7 +16,7 @@ pub struct Packet<'a, P: Payload> {
 /// A buffer for an outgoing UDP packet.
 pub struct RawPacket<'a, P: Payload> {
     /// A reference to the UDP endpoint state.
-    pub handle: Handle<'a>,
+    pub handle: Controller<'a>,
     /// A mutable reference to the payload buffer.
     pub payload: &'a mut P,
 }
@@ -26,7 +26,7 @@ pub struct RawPacket<'a, P: Payload> {
 /// This is not really useful on its own but should instead be used either within a `Packet` or a
 /// `RawPacket`. Some of the methods offered there will access the non-public members of this
 /// struct to fulfill their task.
-pub struct Handle<'a> {
+pub struct Controller<'a> {
     pub(crate) inner: ip::Controller<'a>,
     // Nothing more, there is no logic here.
 }
@@ -77,11 +77,11 @@ pub struct Init {
     pub payload: usize,
 }
 
-impl<'a> Handle<'a> {
+impl<'a> Controller<'a> {
     pub(crate) fn new(
         handle: ip::Controller<'a>,
     ) -> Self {
-        Handle {
+        Controller {
             inner: handle,
         }
     }
@@ -92,8 +92,8 @@ impl<'a> Handle<'a> {
     }
 
     /// Proof to the compiler that we can shorten the lifetime arbitrarily.
-    pub fn borrow_mut(&mut self) -> Handle {
-        Handle {
+    pub fn borrow_mut(&mut self) -> Controller {
+        Controller {
             inner: self.inner.borrow_mut(),
         }
     }
@@ -101,7 +101,7 @@ impl<'a> Handle<'a> {
 
 impl<'a, P: Payload> Packet<'a, P> {
     pub(crate) fn new(
-        handle: Handle<'a>,
+        handle: Controller<'a>,
         packet: UdpPacket<ip::IpPacket<'a, P>>)
     -> Self {
         Packet {
@@ -130,6 +130,8 @@ impl<'a, P: Payload> Packet<'a, P> {
     }
 
     /// Called last after having initialized the payload.
+    ///
+    /// Finalizes and queues the packet.
     pub fn send(mut self) -> Result<()>
         where P: PayloadMut,
     {
@@ -146,7 +148,7 @@ impl<'a, P: Payload> Packet<'a, P> {
 
 impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
     pub(crate) fn new(
-        handle: Handle<'a>,
+        handle: Controller<'a>,
         payload: &'a mut P,
     ) -> Self {
         RawPacket {
@@ -177,7 +179,7 @@ impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
         let repr = init.initialize(&mut packet)?;
 
         // Reconstruct the handle.
-        let handle = Handle::new(handle);
+        let handle = Controller::new(handle);
 
         Ok(Packet {
             handle,

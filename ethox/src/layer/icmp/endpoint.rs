@@ -1,7 +1,7 @@
 use crate::layer::{ip, FnHandler, Result};
 use crate::wire::{Error, Icmpv4Repr, Icmpv4Packet, IpProtocol, Payload, PayloadMut};
 
-use super::packet::{Handle, In, Raw};
+use super::packet::{Controller, In, Raw};
 use super::{Recv, Send};
 
 /// The default handler type when none has been configured.
@@ -181,7 +181,7 @@ where
             _ => return,
         };
 
-        let handle = Handle::new(handle);
+        let handle = Controller::new(handle);
         let packet = In::new(handle, icmp);
 
         let how_to_handle = match self.endpoint.handle_internally(packet) {
@@ -206,7 +206,7 @@ where
 {
     fn send(&mut self, packet: ip::RawPacket<P>) {
         let ip::RawPacket { handle: mut eth_handle, payload } = packet;
-        let handle = Handle::new(eth_handle.borrow_mut());
+        let handle = Controller::new(eth_handle.borrow_mut());
         let packet = Raw { handle, payload };
 
         self.handler.send(packet)

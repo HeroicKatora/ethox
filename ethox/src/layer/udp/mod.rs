@@ -19,7 +19,7 @@ pub use endpoint::{
 };
 
 pub use packet::{
-    Handle,
+    Controller,
     Init,
     Packet,
     RawPacket,

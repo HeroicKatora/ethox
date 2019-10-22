@@ -11,7 +11,7 @@ use crate::wire::{Icmpv4Packet, Icmpv4Repr, icmpv4_packet};
 /// be answered in-place without involving the upper layer if supported by the nic.
 pub struct In<'a, P: Payload> {
     /// A reference to the ICMP endpoint state.
-    pub handle: Handle<'a>,
+    pub handle: Controller<'a>,
     /// The valid packet inside the buffer.
     pub packet: Icmpv4Packet<ip::V4Packet<'a, P>>,
 }
@@ -22,14 +22,14 @@ pub struct In<'a, P: Payload> {
 /// be initialized.
 #[must_use = "You need to call `send` explicitely on an OutPacket, otherwise no packet is sent."]
 pub struct Out<'a, P: Payload> {
-    handle: Handle<'a>,
+    handle: Controller<'a>,
     packet: Icmpv4Packet<ip::V4Packet<'a, P>>,
 }
 
 /// A buffer into which a packet can be placed.
 pub struct Raw<'a, P: Payload> {
     /// A reference to the ICMP endpoint state.
-    pub handle: Handle<'a>,
+    pub handle: Controller<'a>,
     /// A mutable reference to the payload buffer.
     pub payload: &'a mut P,
 }
@@ -39,7 +39,7 @@ pub struct Raw<'a, P: Payload> {
 /// This is not really useful on its own but should instead be used either within a `In` or a
 /// `Raw`. Some of the methods offered there will access the non-public members of this struct to
 /// fulfill their task.
-pub struct Handle<'a> {
+pub struct Controller<'a> {
     pub(crate) inner: ip::Controller<'a>,
 }
 
@@ -71,11 +71,11 @@ pub enum Init {
     },
 }
 
-impl<'a> Handle<'a> {
+impl<'a> Controller<'a> {
     pub(crate) fn new(
         handle: ip::Controller<'a>,
     ) -> Self {
-        Handle {
+        Controller {
             inner: handle,
         }
     }
@@ -86,8 +86,8 @@ impl<'a> Handle<'a> {
     }
 
     /// Proof to the compiler that we can shorten the lifetime arbitrarily.
-    pub fn borrow_mut(&mut self) -> Handle {
-        Handle {
+    pub fn borrow_mut(&mut self) -> Controller {
+        Controller {
             inner: self.inner.borrow_mut(),
         }
     }
@@ -95,7 +95,7 @@ impl<'a> Handle<'a> {
 
 impl<'a, P: Payload> In<'a, P> {
     pub(crate) fn new(
-        handle: Handle<'a>,
+        handle: Controller<'a>,
         packet: Icmpv4Packet<ip::V4Packet<'a, P>>)
     -> Self {
         In {
@@ -150,7 +150,7 @@ impl<'a, P: PayloadMut> In<'a, P> {
         };
 
         Ok(Out {
-            handle: Handle::new(handle),
+            handle: Controller::new(handle),
             packet: Icmpv4Packet::new_unchecked(packet, answer),
         })
     }
@@ -186,7 +186,7 @@ impl<'a, P: PayloadMut> Out<'a, P> {
 
 impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
     pub(crate) fn new(
-        handle: Handle<'a>,
+        handle: Controller<'a>,
         payload: &'a mut P,
     ) -> Self {
         Raw {
@@ -212,7 +212,7 @@ impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
         let repr = init.initialize(&mut packet)?;
 
         // Reconstruct the handle.
-        let handle = Handle::new(handle);
+        let handle = Controller::new(handle);
 
         Ok(Out {
             handle,
