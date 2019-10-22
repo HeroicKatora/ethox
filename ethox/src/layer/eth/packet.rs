@@ -68,13 +68,6 @@ pub(crate) trait Endpoint{
 }
 
 impl<'a> Controller<'a> {
-    pub (crate) fn new(
-        nic_handle: &'a mut dyn nic::Handle,
-        endpoint: &'a mut dyn Endpoint,
-    ) -> Self {
-        Controller { nic_handle, endpoint, }
-    }
-
     pub(crate) fn wrap(self,
         wrap: impl FnOnce(&'a mut dyn nic::Handle) -> &'a mut dyn nic::Handle,
     ) -> Self {
@@ -118,7 +111,10 @@ impl<'a, P: Payload> In<'a, P> {
     pub fn deinit(self) -> Raw<'a, P>
         where P: PayloadMut,
     {
-        Raw::new(self.control, self.frame.into_inner())
+        Raw {
+            control: self.control,
+            payload: self.frame.into_inner(),
+        }
     }
 }
 
@@ -208,13 +204,6 @@ impl<'a, P: PayloadMut> Out<'a, P> {
 }
 
 impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
-    pub(crate) fn new(
-        control: Controller<'a>,
-        payload: &'a mut P) -> Self
-    {
-        Raw { control, payload, }
-    }
-
     /// Initialize the raw packet buffer to a valid ethernet frame.
     pub fn prepare(self, init: Init) -> Result<Out<'a, P>> {
         let mut payload = self.payload;

@@ -128,8 +128,8 @@ where
             return
         }
 
-        let control = Controller::new(control);
-        let packet = Packet::new(control, packet);
+        let control = Controller { inner: control };
+        let packet = Packet { control, packet };
         self.handler.receive(packet);
     }
 }
@@ -141,8 +141,8 @@ where
 {
     fn send<'a>(&mut self, packet: ip::RawPacket<'a, P>) {
         let ip::RawPacket { control, payload } = packet;
-        let control = Controller::new(control);
-        let packet = RawPacket::new(control, payload);
+        let control = Controller { inner: control };
+        let packet = RawPacket { control, payload };
 
         self.handler.send(packet)
     }

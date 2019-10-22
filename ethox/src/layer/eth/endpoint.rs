@@ -122,7 +122,11 @@ where
             return
         }
 
-        let control = Controller::new(packet.handle, &mut self.endpoint);
+        let control = Controller {
+            nic_handle: packet.handle,
+            endpoint: &mut self.endpoint,
+        };
+
         let packet = packet::In { control, frame };
         self.handler.receive(packet)
     }
@@ -135,7 +139,11 @@ where
     T: Send<P>,
 {
     fn send(&mut self, nic::Packet { handle, payload }: nic::Packet<H, P>) {
-        let control = Controller::new(handle, &mut self.endpoint);
+        let control = Controller {
+            nic_handle: handle,
+            endpoint: &mut self.endpoint,
+        };
+
         let packet = packet::Raw { control, payload };
         self.handler.send(packet)
     }

@@ -271,9 +271,13 @@ where
             return
         }
 
-        let control = Controller::new(control.borrow_mut(), &mut self.endpoint);
-        let packet = packet::In { control, packet };
-        self.handler.receive(packet)
+        self.handler.receive(packet::In {
+            control: Controller {
+                eth: control.borrow_mut(),
+                endpoint: &mut self.endpoint,
+            },
+            packet,
+        })
     }
 }
 
@@ -289,10 +293,14 @@ where
         }
 
         let eth::RawPacket { control: mut eth_handle, payload } = packet;
-        let control = Controller::new(eth_handle.borrow_mut(), &mut self.endpoint);
-        let packet = packet::Raw { control, payload };
 
-        self.handler.send(packet)
+        self.handler.send(packet::Raw {
+            control: Controller {
+                eth: eth_handle.borrow_mut(),
+                endpoint: &mut self.endpoint
+            },
+            payload,
+        });
     }
 }
 

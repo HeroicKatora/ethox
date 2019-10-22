@@ -43,8 +43,8 @@ pub struct Raw<'a, P: Payload> {
 /// [`RawPacket`]: struct.RawPacket.html
 /// [`OutPacket`]: struct.OutPacket.html
 pub struct Controller<'a> {
-    eth: eth::Controller<'a>,
-    endpoint: &'a mut dyn Endpoint,
+    pub(crate) eth: eth::Controller<'a>,
+    pub(crate) endpoint: &'a mut dyn Endpoint,
 }
 
 /// An IPv4 packet within an ethernet frame.
@@ -115,16 +115,6 @@ pub(crate) trait Endpoint{
 }
 
 impl<'a> Controller<'a> {
-    pub(crate) fn new(
-        control: eth::Controller<'a>,
-        endpoint: &'a mut dyn Endpoint,
-    ) -> Self {
-        Controller {
-            eth: control,
-            endpoint,
-        }
-    }
-
     pub(crate) fn wrap(self,
         wrap: impl FnOnce(&'a mut dyn nic::Handle) -> &'a mut dyn nic::Handle,
     ) -> Self {
@@ -182,7 +172,10 @@ impl<'a, P: Payload> In<'a, P> {
     pub fn deinit(self) -> Raw<'a, P>
         where P: PayloadMut,
     {
-        Raw::new(self.control, self.packet.into_raw())
+        Raw {
+            control: self.control,
+            payload: self.packet.into_raw()
+        }
     }
 }
 
@@ -203,11 +196,11 @@ impl<'a, P: PayloadMut> In<'a, P> {
         let eth::InPacket { control, mut frame } = packet.into_incoming();
         let repr = init.initialize(route.src_addr, &mut frame)?;
 
-        // Reconstruct the control.
-        let control = Controller::new(control, self.control.endpoint);
-
         Ok(Out {
-            control,
+            control: Controller {
+                eth: control,
+                endpoint: self.control.endpoint,
+            },
             packet: IpPacket::new_unchecked(frame, repr),
         })
     }
@@ -272,16 +265,6 @@ impl<'a, P: PayloadMut> Out<'a, P> {
 }
 
 impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
-    pub(crate) fn new(
-        control: Controller<'a>,
-        payload: &'a mut P,
-    ) -> Self {
-        Raw {
-            control,
-            payload,
-        }
-    }
-
     pub fn control(&self) -> &Controller<'a> {
         &self.control
     }
@@ -291,19 +274,20 @@ impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
         let route = self.control.route_to(init.dst_addr)?;
         let lower_init = init.init_eth(route, init.payload)?;
 
-        let lower = eth::RawPacket::new(
-            self.control.eth,
-            self.payload);
+        let lower = eth::RawPacket {
+            control: self.control.eth,
+            payload: self.payload,
+        };
 
         let packet = lower.prepare(lower_init)?;
         let eth::InPacket { control, mut frame } = packet.into_incoming();
         let repr = init.initialize(route.src_addr, &mut frame)?;
 
-        // Reconstruct the handle.
-        let control = Controller::new(control, self.control.endpoint);
-
         Ok(Out {
-            control,
+            control: Controller {
+                eth: control,
+                endpoint: self.control.endpoint,
+            },
             packet: IpPacket::new_unchecked(frame, repr),
         })
     }

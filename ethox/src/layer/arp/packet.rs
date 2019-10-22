@@ -161,7 +161,10 @@ impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
 
     /// Initialize to a valid arp packet.
     pub fn prepare(self, init: Init) -> Result<Out<'a, P>> {
-        let mut lower = eth::RawPacket::new(self.control.inner, self.payload);
+        let mut lower = eth::RawPacket {
+            control: self.control.inner,
+            payload: self.payload,
+        };
 
         let eth_init = eth::Init {
             src_addr: lower.control.src_addr(),

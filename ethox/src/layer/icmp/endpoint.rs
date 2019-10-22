@@ -181,8 +181,8 @@ where
             _ => return,
         };
 
-        let control = Controller::new(control);
-        let packet = In::new(control, icmp);
+        let control = Controller { inner: control };
+        let packet = In { control, packet: icmp };
 
         let how_to_handle = match self.endpoint.handle_internally(packet) {
             Ok(handling) => handling,
@@ -206,10 +206,13 @@ where
 {
     fn send(&mut self, packet: ip::RawPacket<P>) {
         let ip::RawPacket { control: mut eth_handle, payload } = packet;
-        let control = Controller::new(eth_handle.borrow_mut());
-        let packet = Raw { control, payload };
 
-        self.handler.send(packet)
+        self.handler.send(Raw {
+            control: Controller {
+                inner: eth_handle.borrow_mut()
+            },
+            payload,
+        })
     }
 }
 
