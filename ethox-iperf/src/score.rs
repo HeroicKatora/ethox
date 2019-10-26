@@ -29,7 +29,7 @@ impl Score {
     }
 
     fn loss_rate(&self) -> f32 {
-        (self.packet_count as f32)/(self.total_count as f32)
+        ((self.total_count - self.packet_count) as f32)/(self.total_count as f32)
     }
 }
 
@@ -80,12 +80,12 @@ impl fmt::Display for Score {
            "[{ts}] {begin}-{end} sec\t{total} KBytes\t{rate} Mbits/sec\t{dt} ms\t\
             {loss}/\t{packets} ({loss_percent})",
            ts=3,
-           begin=0.0,
-           end=1.0,
+           // Pretend that start was at 0.0 but otherwise accurate.
+           begin=0.0, end=self.time.as_secs_f32(),
            total=self.total_kb(),
            rate=self.effective_rate(),
-           dt=0.0,
-           loss=0,
+           dt=self.time.as_secs_f32() / 1000.0,
+           loss=self.total_count - self.packet_count,
            packets=self.packet_count,
            loss_percent=self.loss_rate()*100.0,
         )
