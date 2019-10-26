@@ -24,18 +24,23 @@ sys = ["libc"]
 [dev-dependencies]
 structopt = { version = "0.2", default-features = false }
 
+# All examples rely on sys and std for some reason.
+#
+# sys: Required to open the underlying sockets.
+# std: Most due to argument parsing (which is done in std) but also to use
+#   stderr and other io portions
 [[example]]
 name = "debug_tap"
-required-features = ["alloc", "sys"]
+required-features = ["alloc", "sys", "std"]
 
 [[example]]
 name = "ping_tap"
-required-features = ["alloc", "sys"]
+required-features = ["alloc", "sys", "std"]
 
 [[example]]
 name = "arp_tap"
-required-features = ["alloc", "sys"]
+required-features = ["alloc", "sys", "std"]
 
 [[example]]
 name = "curl"
-required-features = ["alloc", "sys"]
+required-features = ["alloc", "sys", "std"]

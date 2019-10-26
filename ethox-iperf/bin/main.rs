@@ -3,9 +3,13 @@
 //! Connects to a given remote tcp host and sends a single provided message. Any incoming data is
 //! silently discarded without having been copied into a buffer (but no FIN sent).
 //!
-//! Prepend the ethox configuration to the usual iperf options. Call example:
+//! Prepend the ethox configuration to the usual iperf options. Call example assuming a connected
+//! veth pair `veth0` and `veth1`.
 //!
-//! * `iperf3 tap0 10.0.0.1/24 ab:ff:ff:ff:ff:ff 10.0.0.2/24 -c 10.0.0.2 5001 -n 10000 -l 1470`
+//! * Client: `iperf3 veth0 10.0.0.1/24 ac:ff:ff:ff:ff:ff 10.0.0.2/24 -c 10.0.0.2 5001 -n 10000 -l 1470 --udp`
+//! * Server: `iperf3 veth1 10.0.0.2/24 ac:ff:ff:fe:ff:ff 10.0.0.1/24 -s 5001 --udp`
+//!
+//! (This uses a locally administered unicast MAC address)
 pub use ethox_iperf::{config, iperf2};
 
 use ethox::managed::{List, Slice};
@@ -31,7 +35,7 @@ fn main() {
 
     let result = match &config.iperf3 {
         config::Iperf3Config::Client(
-            config::IperfClient { kind: config::ClientKind::Udp, client
+            config::IperfClient { kind: config::Transport::Udp, client
         }) => {
             ethox_iperf::client(
                 &mut interface,
@@ -42,7 +46,7 @@ fn main() {
             )
         },
         config::Iperf3Config::Client(
-            config::IperfClient { kind: config::ClientKind::Tcp, client
+            config::IperfClient { kind: config::Transport::Tcp, client
         }) => {
             ethox_iperf::client(
                 &mut interface,
@@ -52,6 +56,18 @@ fn main() {
                 iperf2::IperfTcp::new(client),
             )
         },
+        config::Iperf3Config::Server(
+            config::IperfServer { kind: config::Transport::Udp, server }
+        ) => {
+            ethox_iperf::server(
+                &mut interface,
+                10,
+                &mut eth,
+                &mut ip,
+                iperf2::Server::new(server),
+            )
+        }
+        _ => unimplemented!("Tcp server is not yet implemented!"),
     };
 
     println!("[+] Done\n");

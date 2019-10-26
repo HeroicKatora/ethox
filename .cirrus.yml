@@ -12,9 +12,29 @@ main_task:
       - ETHOX_FEATURES: sys
       - ETHOX_FEATURES: alloc sys
       - ETHOX_FEATURES: std sys
-  build_script: cargo build --no-default-features --features "$ETHOX_FEATURES"
-  test_script: cargo test --no-default-features --features "$ETHOX_FEATURES"
+  build_script:
+    - cd ethox
+    - cargo build --no-default-features --features "$ETHOX_FEATURES"
+  test_script:
+    - cd ethox
+    - cargo test --no-default-features --features "$ETHOX_FEATURES"
   before_cache_script: rm -rf $CARGO_HOME/registry/index
+
+side_crates_task:
+  container:
+    image: rust:latest
+  cargo_cache:
+    folder: $CARGO_HOME/registry
+    fingerprint_script: cat Cargo.lock
+  iperf_script:
+    - cd ethox-iperf
+    - cargo test
+  no_std_script:
+    - cd ethox-no-std
+    - cargo build --release
+    - ls -sh target/release/raw-ping
+    - strip target/release/raw-ping
+    - ls -sh target/release/raw-ping
 
 nightly_task:
   container:
@@ -22,20 +42,14 @@ nightly_task:
   cargo_cache:
     folder: $CARGO_HOME/registry
     fingerprint_script: cat Cargo.lock
-  test_all_script: cargo test --all-features
-  before_cache_script: rm -rf $CARGO_HOME/registry/index
-
-no_std_task:
-  container:
-    image: rust:latest
-  cargo_cache:
-    folder: $CARGO_HOME/registry
-    fingerprint_script: cat ethox-no-std/Cargo.lock
-  normal_script: cd ethox-no-std && cargo build
-  release_script: cd ethox-no-std && cargo build --release
+  test_all_script:
+    - cd ethox
+    - cargo test --all-features
   before_cache_script: rm -rf $CARGO_HOME/registry/index
 
 doc_task:
   container:
     image: rustlang/rust:nightly
-  script: cargo doc --no-deps --document-private-items --all-features
+  script:
+    - cd ethox
+    - cargo doc --no-deps --document-private-items --all-features

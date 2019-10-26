@@ -8,14 +8,14 @@
 //!
 //! There is no control channel as for iperf3. This may have negative impact on the accuracy of the
 //! measurement but greatly simplifies the independent implementation for udp.
-use core::{fmt, mem};
+use core::{fmt, mem, ptr};
 
 use ethox::layer::{ip, tcp, udp, Error};
 use ethox::time::{Duration, Instant};
 use ethox::wire::{Ipv4Subnet, PayloadMut, TcpSeqNumber};
 use ethox::managed::{Map, Partial, SlotMap};
 
-use super::config::Client;
+use super::config;
 
 pub struct Iperf {
     connection: Connection,
@@ -28,6 +28,14 @@ pub struct IperfTcp {
     result: Option<TcpResult>,
     first_sent: Option<Instant>,
     last_time: Option<Instant>,
+}
+
+/// An iperf2 udp server instance.
+///
+/// Only supports a single connection to a client, then must be restarted.
+pub struct Server {
+    connection: ServerConnection,
+    udp: udp::Endpoint<'static>,
 }
 
 struct Connection {
@@ -51,6 +59,33 @@ struct Connection {
 
     /// Time of the last sent packet.
     last_time: Instant,
+}
+
+/// Tracks the state of a unique perf connection to a client.
+struct ServerConnection {
+    /// Init for sending the ack packet back.
+    send_init: udp::Init,
+
+    /// Maximum observed length of packets, assumed to be the length of almost all.
+    packet_size: usize,
+
+    /// Number of bytes transferred.
+    received_bytes: usize,
+
+    /// The maximally observed packet number.
+    max: u32,
+
+    /// Number of received packet.
+    count: u32,
+
+    /// The server side result.
+    result: Option<ServerResult>,
+
+    /// The timestamp of the first packet that was received.
+    begin_ts: Instant,
+
+    /// We wait with termination until we sent the result.
+    result_sent: bool,
 }
 
 struct SendRate {
@@ -81,9 +116,13 @@ struct PatternBuffer {
     at: Option<TcpSeqNumber>,
 }
 
-#[derive(Clone, Copy, Debug)]
+/// The result memory representation.
+///
+/// Annotations on members are example values observed in real world usage of the original iperf
+/// using pcap/Wireshark.
+#[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
-pub struct Result {
+pub struct WireResult {
     pub a: u32, // 00 00 00 00
     pub data_len: u32, // 00 02 0a 8a - total data
     pub delta_s: u32, // 00 00 00 01 - delta t (s)
@@ -96,39 +135,55 @@ pub struct Result {
     pub j: u32, // 00 00 00 09
 }
 
-/// A locall created result, **not** sent by the remote.
+/// The local udp result merging local state and server sent result data.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct Result {
+    pub data_len: u32,
+    pub delta_s: u32,
+    pub delta_ms: u32,
+    pub packet_count: u32,
+    pub total_count: u32,
+}
+
+/// A locally created result, **not** sent by the remote.
 ///
 /// There is no result communication for the TCP iperf2 instantiation. (It could, if the Linux
 /// stack were to support half-closed streams in a nice manner, like this stack). But since the
 /// protocol layer intrisically tracks most of the necessary data we can restore it on the client
 /// side.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct TcpResult {
     pub data_len: u32,
     pub duration: Duration,
     pub packet_count: u32,
 }
 
+/// The result of a server.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ServerResult {
+    pub packet_size: u32,
+    pub packet_count: u32,
+    pub received_bytes: u64,
+    pub total_count: u32,
+    pub duration: Duration,
+}
+
 impl Iperf {
-    pub fn new(config: &Client) -> Self {
+    pub fn new(config: &config::Client) -> Self {
         Iperf {
             connection: Connection::new(config),
             udp: Self::generate_udp(config),
         }
     }
 
-    pub fn result(&self) -> Option<Result> {
-        self.connection.result
-    }
-
-    fn generate_udp(_: &Client) -> udp::Endpoint<'static> {
+    fn generate_udp(_: &config::Client) -> udp::Endpoint<'static> {
         // We only need a single connection entry.
-        udp::Endpoint::new(vec![Default::default()])
+        udp::Endpoint::new(vec![Connection::UDP_SRC_PORT])
     }
 }
 
 impl IperfTcp {
-    pub fn new(config: &Client) -> Self {
+    pub fn new(config: &config::Client) -> Self {
         IperfTcp {
             client: Self::generate_client(config),
             tcp: Self::generate_tcp(config),
@@ -138,7 +193,7 @@ impl IperfTcp {
         }
     }
 
-    fn generate_client(client: &Client)
+    fn generate_client(client: &config::Client)
         -> tcp::Client<tcp::io::Sink, PatternBuffer>
     {
         let remote = client.host.into();
@@ -153,7 +208,7 @@ impl IperfTcp {
         tcp::Client::new(remote, port, sink, pattern)
     }
 
-    fn generate_tcp(_: &Client) -> tcp::Endpoint<'static> {
+    fn generate_tcp(_: &config::Client) -> tcp::Endpoint<'static> {
         let isn = tcp::IsnGenerator::from_std_hash();
         // We only need a single connection entry.
         tcp::Endpoint::new(
@@ -167,8 +222,10 @@ impl IperfTcp {
 }
 
 impl Connection {
-    fn new(config: &Client) -> Self {
-        let Client {
+    const UDP_SRC_PORT: u16 = 50020;
+
+    fn new(config: &config::Client) -> Self {
+        let config::Client {
             host: _, port: _,
             buffer_bytes: packet_size,
             total_bytes: remaining,
@@ -190,12 +247,12 @@ impl Connection {
         }
     }
 
-    fn generate_udp_init(config: &Client) -> udp::Init {
+    fn generate_udp_init(config: &config::Client) -> udp::Init {
         udp::Init {
             source: ip::Source::Mask {
                 subnet: Ipv4Subnet::ANY.into(),
             },
-            src_port: 50020,
+            src_port: Connection::UDP_SRC_PORT,
             dst_addr: config.host.into(),
             dst_port: config.port,
             payload: config.buffer_bytes,
@@ -246,6 +303,103 @@ impl Connection {
     }
 }
 
+impl Server {
+    pub fn new(config: &config::Server) -> Self {
+        Server {
+            connection: ServerConnection::new(config),
+            udp: Self::generate_udp(config),
+        }
+    }
+
+    fn generate_udp(config: &config::Server) -> udp::Endpoint<'static> {
+        udp::Endpoint::new(vec![config.port])
+    }
+}
+
+impl ServerConnection {
+    pub fn new(config: &config::Server) -> Self {
+        let config::Server { host, port } = config;
+        let source = host.map(|ip| ip::Source::Exact(ip.into()))
+            .unwrap_or_else(|| ip::Source::Mask {
+                subnet: Ipv4Subnet::ANY.into(),
+            });
+
+        ServerConnection {
+            send_init: udp::Init {
+                source: source,
+                src_port: *port,
+                dst_addr: Default::default(),
+                dst_port: 0,
+                payload: 20 + mem::size_of::<Result>(),
+            },
+            packet_size: 0,
+            received_bytes: 0,
+            count: 0,
+            max: 0,
+            result: None,
+            begin_ts: Instant::from_millis(0),
+            result_sent: false,
+        }
+    }
+
+    fn fill_report(&self, payload: &mut [u8]) {
+        // We prepared this packet, so assert is correct.
+        assert_eq!(payload.len(), 20 + mem::size_of::<Result>());
+
+        let be_result = WireResult {
+            packet_count: u32::to_be(self.count),
+            .. WireResult::default()
+        };
+
+        let mem_result = &mut payload[20..][..mem::size_of::<WireResult>()];
+        unsafe {
+            ptr::write_unaligned(mem_result.as_mut_ptr() as *mut WireResult, be_result)
+        };
+    }
+
+    /// Register a valid udp packet as having arrived.
+    ///
+    /// Panics if the validity invariant of length has not been checked prior.
+    fn register(&mut self, payload: &[u8], time: Instant) {
+        use core::convert::TryFrom;
+        assert!(payload.len() >= 20);
+        self.received_bytes = self.received_bytes.saturating_add(payload.len());
+
+        let id_bytes = <[u8;4]>::try_from(&payload[0..4]).unwrap();
+        let id = u32::from_be_bytes(id_bytes);
+        let last = payload[0] & 0x80 != 0;
+
+        // HACKY: we don't check that all packets but the last have maximum length but we just
+        // assume that this setting was supplied and traffic shaping is not done by reducing
+        // datagram lengths but by delayed packets.
+        self.packet_size = self.packet_size.max(payload.len());
+        self.max = self.max.max(id);
+        self.count += 1;
+
+        if last {
+            self.result = Some(ServerResult {
+                packet_size: u32::try_from(self.packet_size)
+                    .unwrap_or_else(|_| u32::max_value()),
+                packet_count: self.count,
+                total_count: self.max,
+                received_bytes: u64::try_from(self.received_bytes)
+                    .unwrap_or_else(|_| u64::max_value()),
+                duration: time - self.begin_ts,
+            });
+        }
+    }
+
+    fn error_shutdown(&mut self) {
+        self.result = Some(ServerResult {
+            packet_size: 0,
+            packet_count: self.count,
+            total_count: self.max,
+            received_bytes: 0,
+            duration: Duration::from_millis(0),
+        })
+    }
+}
+
 impl SendRate {
     /// Called after a packet has been sent.
     fn update_sent(&mut self, sent: usize, now: Instant) {
@@ -280,6 +434,27 @@ impl<P: PayloadMut> ip::Send<P> for Iperf {
 impl<P: PayloadMut> ip::Recv<P> for Iperf {
     fn receive(&mut self, packet: ip::InPacket<P>) {
         if self.connection.remaining == 0 && self.connection.result.is_none() {
+            self.udp
+                .recv(&mut self.connection)
+                .receive(packet)
+        }
+    }
+}
+
+impl<P: PayloadMut> ip::Send<P> for Server {
+    fn send(&mut self, packet: ip::RawPacket<P>) {
+        if self.connection.result.is_some() && !self.connection.result_sent {
+            self.udp
+                .send(&mut self.connection)
+                .send(packet)
+        }
+    }
+}
+
+impl<P: PayloadMut> ip::Recv<P> for Server {
+    fn receive(&mut self, packet: ip::InPacket<P>) {
+        // While we did not yet receive the last packet.
+        if self.connection.result.is_none() {
             self.udp
                 .recv(&mut self.connection)
                 .receive(packet)
@@ -327,7 +502,7 @@ where
     Nic::Payload: PayloadMut + Sized,
 {
     fn result(&self) -> Option<super::Score> {
-        Iperf::result(self).map(|result| result.into())
+        self.connection.result.clone().map(|result| result.into())
     }
 }
 
@@ -338,6 +513,20 @@ where
 {
     fn result(&self) -> Option<super::Score> {
         self.result.map(|result| result.into())
+    }
+}
+
+impl<Nic> super::Client<Nic> for Server
+where
+    Nic: ethox::nic::Device,
+    Nic::Payload: PayloadMut + Sized,
+{
+    fn result(&self) -> Option<super::Score> {
+        if !self.connection.result_sent {
+            return None;
+        }
+
+        self.connection.result.clone().map(|result| result.into())
     }
 }
 
@@ -372,7 +561,7 @@ impl tcp::SendBuf for PatternBuffer {
     }
 }
 
-impl<P: PayloadMut> udp::Send<P> for &'_ mut Connection {
+impl<P: PayloadMut> udp::Send<P> for Connection {
     fn send(&mut self, packet: udp::RawPacket<P>) {
         let ts = packet.handle.info().timestamp();
 
@@ -408,7 +597,7 @@ impl<P: PayloadMut> udp::Send<P> for &'_ mut Connection {
     }
 }
 
-impl<P: PayloadMut> udp::Recv<P> for &'_ mut Connection {
+impl<P: PayloadMut> udp::Recv<P> for Connection {
     fn receive(&mut self, packet: udp::Packet<P>) {
         let repr = packet.packet.repr();
         if repr.dst_port != self.send_init.src_port {
@@ -417,14 +606,16 @@ impl<P: PayloadMut> udp::Recv<P> for &'_ mut Connection {
 
         let payload = packet.packet.payload_slice();
 
-        if payload.len() <= 20 + mem::size_of::<Result>() {
+        if payload.len() < 20 + mem::size_of::<WireResult>() {
             return;
         }
 
-        let mem_result = &payload[20..][..mem::size_of::<Result>()];
-        let be_result = unsafe { &*(mem_result.as_ptr() as *const Result) };
+        let mem_result = &payload[20..][..mem::size_of::<WireResult>()];
+        let be_result = unsafe {
+            ptr::read_unaligned(mem_result.as_ptr() as *const WireResult)
+        };
 
-        self.result = Some(Result {
+        let wire_result = WireResult {
             a: u32::from_be(be_result.a),
             data_len: u32::from_be(be_result.data_len),
             delta_s: u32::from_be(be_result.delta_s),
@@ -435,7 +626,61 @@ impl<P: PayloadMut> udp::Recv<P> for &'_ mut Connection {
             h: u32::from_be(be_result.h),
             i: u32::from_be(be_result.i),
             j: u32::from_be(be_result.j),
+        };
+
+        self.result = Some(Result {
+            data_len: wire_result.data_len,
+            delta_s: wire_result.delta_s,
+            delta_ms: wire_result.delta_ms,
+            packet_count: wire_result.packet_count,
+            total_count: self.packet_count,
         });
+    }
+}
+
+impl<P: PayloadMut> udp::Send<P> for ServerConnection {
+    fn send(&mut self, packet: udp::RawPacket<P>) {
+        let mut packet = match packet.prepare(self.send_init.clone()) {
+            Ok(packet) => packet,
+            // May simply require an arp lookup.
+            Err(Error::Unreachable) => return,
+            Err(_) => return self.error_shutdown(),
+        };
+
+        self.fill_report(packet.packet.payload_mut_slice());
+
+        match packet.send() {
+            Ok(()) => self.result_sent = true,
+            Err(_) => return self.error_shutdown(),
+        }
+    }
+}
+
+impl<P: PayloadMut> udp::Recv<P> for ServerConnection {
+    fn receive(&mut self, packet: udp::Packet<P>) {
+        let udp::Packet { packet, handle, } = packet;
+
+        let ip_hdr = packet.get_ref().repr();
+        let udp_hdr = packet.repr();
+
+        if self.send_init.dst_port == 0 {
+            // TODO: should we check validity before accepting?
+            self.send_init.dst_addr = ip_hdr.src_addr();
+            self.send_init.dst_port = udp_hdr.src_port;
+            self.begin_ts = handle.info().timestamp();
+        } else if self.send_init.dst_addr != ip_hdr.src_addr()
+            || self.send_init.dst_port != udp_hdr.src_port
+        {
+            // This packet was not from the original client we accepted.
+            return;
+        }
+
+        let payload = packet.payload_slice();
+        if payload.len() <= 20 {
+            return;
+        }
+
+        self.register(payload, handle.info().timestamp());
     }
 }
 

@@ -7,10 +7,13 @@ use ethox::wire::{Ipv4Cidr, EthernetAddress};
 pub enum Iperf3Config {
     #[structopt(name = "-c")]
     Client(IperfClient),
+
+    #[structopt(name = "-s")]
+    Server(IperfServer),
 }
 
 #[derive(Clone, StructOpt)]
-pub enum ClientKind {
+pub enum Transport {
     #[structopt(name = "--udp")]
     Udp,
     #[structopt(name = "--tcp")]
@@ -20,9 +23,17 @@ pub enum ClientKind {
 #[derive(Clone, StructOpt)]
 pub struct IperfClient {
     #[structopt(flatten)]
-    pub kind: ClientKind,
+    pub kind: Transport,
     #[structopt(flatten)]
     pub client: Client,
+}
+
+#[derive(Clone, StructOpt)]
+pub struct IperfServer {
+    #[structopt(flatten)]
+    pub kind: Transport,
+    #[structopt(flatten)]
+    pub server: Server,
 }
 
 #[derive(Clone, StructOpt)]
@@ -33,6 +44,13 @@ pub struct Client {
     pub buffer_bytes: usize,
     #[structopt(short = "n")]
     pub total_bytes: usize,
+}
+
+#[derive(Clone, StructOpt)]
+pub struct Server {
+    #[structopt(short = "B")]
+    pub host: Option<net::Ipv4Addr>,
+    pub port: u16,
 }
 
 #[derive(Clone, StructOpt)]
