@@ -330,7 +330,7 @@ impl ServerConnection {
                 src_port: *port,
                 dst_addr: Default::default(),
                 dst_port: 0,
-                payload: 20 + mem::size_of::<Result>(),
+                payload: 20 + mem::size_of::<WireResult>(),
             },
             packet_size: 0,
             received_bytes: 0,
@@ -344,7 +344,7 @@ impl ServerConnection {
 
     fn fill_report(&self, payload: &mut [u8]) {
         // We prepared this packet, so assert is correct.
-        assert_eq!(payload.len(), 20 + mem::size_of::<Result>());
+        assert_eq!(payload.len(), 20 + mem::size_of::<WireResult>());
 
         let be_result = WireResult {
             packet_count: u32::to_be(self.count),
