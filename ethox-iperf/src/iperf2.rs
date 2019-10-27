@@ -293,7 +293,7 @@ impl Connection {
         packet[16..20].copy_from_slice(&[0, 0, 0, 0]);
 
         // Last packet marker.
-        if self.remaining < self.packet_size {
+        if self.remaining <= self.packet_size {
             packet[0] |= 0x80;
         }
     }
