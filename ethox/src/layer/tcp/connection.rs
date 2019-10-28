@@ -356,8 +356,8 @@ pub trait Endpoint {
 
 /// The interface to a single active connection on an endpoint.
 pub(crate) struct Operator<'a> {
-    pub endpoint: &'a mut dyn Endpoint,
-    pub connection_key: SlotKey,
+    pub(crate) endpoint: &'a mut dyn Endpoint,
+    pub(crate) connection_key: SlotKey,
 }
 
 /// Internal return determining how a received ack is handled.
@@ -1217,19 +1217,19 @@ impl OutSignals {
 }
 
 impl Operator<'_> {
-    pub fn key(&self) -> SlotKey {
+    pub(crate) fn key(&self) -> SlotKey {
         self.connection_key
     }
 
-    pub fn four_tuple(&self) -> FourTuple {
+    pub(crate) fn four_tuple(&self) -> FourTuple {
         self.slot().four_tuple()
     }
 
-    pub fn connection(&self) -> &Connection {
+    pub(crate) fn connection(&self) -> &Connection {
         self.slot().connection()
     }
 
-    pub fn connection_mut(&mut self) -> &mut Connection {
+    pub(crate) fn connection_mut(&mut self) -> &mut Connection {
         self.entry().into_key_value().1
     }
 }
@@ -1238,7 +1238,7 @@ impl<'a> Operator<'a> {
     /// Operate some connection.
     ///
     /// This returns `None` if the key does not refer to an existing connection.
-    pub fn new(endpoint: &'a mut dyn Endpoint, key: SlotKey) -> Option<Self> {
+    pub(crate) fn new(endpoint: &'a mut dyn Endpoint, key: SlotKey) -> Option<Self> {
         let _ = endpoint.get(key)?;
         Some(Operator {
             endpoint,
@@ -1246,7 +1246,7 @@ impl<'a> Operator<'a> {
         })
     }
 
-    pub fn from_tuple(endpoint: &'a mut dyn Endpoint, tuple: FourTuple) -> Result<Self, &'a mut dyn Endpoint> {
+    pub(crate) fn from_tuple(endpoint: &'a mut dyn Endpoint, tuple: FourTuple) -> Result<Self, &'a mut dyn Endpoint> {
         let key = match endpoint.find_tuple(tuple) {
             Some(entry) => Some(entry.slot_key()),
             None => None,
@@ -1261,19 +1261,19 @@ impl<'a> Operator<'a> {
         }
     }
 
-    pub fn arrives(&mut self, incoming: &InPacket) -> Signals {
+    pub(crate) fn arrives(&mut self, incoming: &InPacket) -> Signals {
         let (entry_key, connection) = self.entry().into_key_value();
         connection.arrives(incoming, entry_key)
     }
 
-    pub fn next_send_segment(&mut self, available: AvailableBytes, time: Instant)
+    pub(crate) fn next_send_segment(&mut self, available: AvailableBytes, time: Instant)
         -> OutSignals
     {
         let (entry_key, connection) = self.entry().into_key_value();
         connection.next_send_segment(available, time, entry_key)
     }
 
-    pub fn open(&mut self, time: Instant) -> Result<(), crate::layer::Error> {
+    pub(crate) fn open(&mut self, time: Instant) -> Result<(), crate::layer::Error> {
         let (entry_key, connection) = self.entry().into_key_value();
         connection.open(time, entry_key)
     }
@@ -1301,11 +1301,11 @@ impl Default for State {
 }
 
 impl InnerRepr {
-    pub fn send_back(&self, incoming: &TcpRepr) -> TcpRepr {
+    pub(crate) fn send_back(&self, incoming: &TcpRepr) -> TcpRepr {
         self.send_impl(incoming.dst_port, incoming.src_port)
     }
 
-    pub fn send_to(&self, tuple: FourTuple) -> TcpRepr {
+    pub(crate) fn send_to(&self, tuple: FourTuple) -> TcpRepr {
         self.send_impl(tuple.local_port, tuple.remote_port)
     }
 
@@ -1366,6 +1366,6 @@ mod tests {
 
         let entry = EntryKey::fake(&mut no_remap, &isn, &mut four);
         let available = AvailableBytes { fin: false, total: 0 };
-        let resent = connection.next_send_segment(available, time_resend, entry);
+        let _resent = connection.next_send_segment(available, time_resend, entry);
     }
 }

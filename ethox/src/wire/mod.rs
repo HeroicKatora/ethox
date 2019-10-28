@@ -98,8 +98,8 @@ let mut buffer = vec![0; repr.buffer_len() + repr.payload_len];
 // * `udp.rs`
 
 mod field {
-    pub type Field = ::core::ops::Range<usize>;
-    pub type Rest  = ::core::ops::RangeFrom<usize>;
+    pub(crate) type Field = ::core::ops::Range<usize>;
+    pub(crate) type Rest  = ::core::ops::RangeFrom<usize>;
 }
 
 pub mod pretty_print;

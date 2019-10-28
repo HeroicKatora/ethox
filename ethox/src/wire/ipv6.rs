@@ -4,7 +4,7 @@ use byteorder::{ByteOrder, NetworkEndian};
 use super::{Error, Result, Payload, PayloadError, PayloadMut, Reframe, payload};
 use super::{Ipv4Address, EthernetAddress};
 use super::ip::pretty_print_ip_payload;
-pub use super::IpProtocol as Protocol;
+pub(crate) use super::IpProtocol as Protocol;
 
 /// Minimum MTU required of all links supporting IPv6. See [RFC 8200 § 5].
 ///
@@ -546,20 +546,20 @@ mod field {
     use crate::wire::field::Field;
     // 4-bit version number, 8-bit traffic class, and the
     // 20-bit flow label.
-    pub const VER_TC_FLOW: Field = 0..4;
+    pub(crate) const VER_TC_FLOW: Field = 0..4;
     // 16-bit value representing the length of the payload.
     // Note: Options are included in this length.
-    pub const LENGTH:      Field = 4..6;
+    pub(crate) const LENGTH:      Field = 4..6;
     // 8-bit value identifying the type of header following this
     // one. Note: The same numbers are used in IPv4.
-    pub const NXT_HDR:     usize = 6;
+    pub(crate) const NXT_HDR:     usize = 6;
     // 8-bit value decremented by each node that forwards this
     // packet. The packet is discarded when the value is 0.
-    pub const HOP_LIMIT:   usize = 7;
+    pub(crate) const HOP_LIMIT:   usize = 7;
     // IPv6 address of the source node.
-    pub const SRC_ADDR:    Field = 8..24;
+    pub(crate) const SRC_ADDR:    Field = 8..24;
     // IPv6 address of the destination node.
-    pub const DST_ADDR:    Field = 24..40;
+    pub(crate) const DST_ADDR:    Field = 24..40;
 }
 
 impl ipv6 {

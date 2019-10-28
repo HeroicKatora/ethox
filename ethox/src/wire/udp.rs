@@ -21,12 +21,12 @@ mod field {
     #![allow(non_snake_case)]
     use crate::wire::field::Field;
 
-    pub const SRC_PORT: Field = 0..2;
-    pub const DST_PORT: Field = 2..4;
-    pub const LENGTH:   Field = 4..6;
-    pub const CHECKSUM: Field = 6..8;
+    pub(crate) const SRC_PORT: Field = 0..2;
+    pub(crate) const DST_PORT: Field = 2..4;
+    pub(crate) const LENGTH:   Field = 4..6;
+    pub(crate) const CHECKSUM: Field = 6..8;
 
-    pub fn PAYLOAD(length: u16) -> Field {
+    pub(crate) fn PAYLOAD(length: u16) -> Field {
         CHECKSUM.end..(length as usize)
     }
 }

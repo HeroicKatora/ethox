@@ -75,22 +75,22 @@ mod field {
     use crate::wire::field::Field;
 
     // Minimum size of the header.
-    pub const MIN_HEADER_SIZE:  usize = 4;
+    pub(crate) const MIN_HEADER_SIZE:  usize = 4;
 
     // 8-bit identifier of the header immediately following this header.
-    pub const NXT_HDR:  usize = 0;
+    pub(crate) const NXT_HDR:  usize = 0;
     // 8-bit unsigned integer. Length of the DATA field in 8-octet units,
     // not including the first 8 octets.
-    pub const LENGTH:   usize = 1;
+    pub(crate) const LENGTH:   usize = 1;
     // 8-bit identifier of a particular Routing header variant.
-    pub const TYPE:     usize = 2;
+    pub(crate) const TYPE:     usize = 2;
     // 8-bit unsigned integer. The number of route segments remaining.
-    pub const SEG_LEFT: usize = 3;
+    pub(crate) const SEG_LEFT: usize = 3;
     // Variable-length field. Routing-Type-specific data.
     //
     // Length of the header is in 8-octet units, not including the first 8 octets. The first four
     // octets are the next header type, the header length, routing type and segments left.
-    pub fn DATA(length_field: u8) -> Field {
+    pub(crate) fn DATA(length_field: u8) -> Field {
         let bytes = length_field * 8 + 8;
         4..bytes as usize
     }
@@ -112,7 +112,7 @@ mod field {
     // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
     // 16-byte field containing the home address of the destination mobile node.
-    pub const HOME_ADDRESS: Field = 8..24;
+    pub(crate) const HOME_ADDRESS: Field = 8..24;
 
     // The RPL Source Routing Header has the following format:
     //
@@ -129,11 +129,11 @@ mod field {
     // +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
     // 8-bit field containing the CmprI and CmprE values.
-    pub const CMPR:  usize = 4;
+    pub(crate) const CMPR:  usize = 4;
     // 8-bit field containing the Pad value.
-    pub const PAD:   usize = 5;
+    pub(crate) const PAD:   usize = 5;
     // Variable length field containing addresses
-    pub fn ADDRESSES(length_field: u8) -> Field {
+    pub(crate) fn ADDRESSES(length_field: u8) -> Field {
         let data = DATA(length_field);
         8..data.end
     }

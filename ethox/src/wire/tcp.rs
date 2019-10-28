@@ -89,25 +89,25 @@ mod field {
 
     use crate::wire::field::Field;
 
-    pub const SRC_PORT: Field = 0..2;
-    pub const DST_PORT: Field = 2..4;
-    pub const SEQ_NUM:  Field = 4..8;
-    pub const ACK_NUM:  Field = 8..12;
-    pub const FLAGS:    Field = 12..14;
-    pub const WIN_SIZE: Field = 14..16;
-    pub const CHECKSUM: Field = 16..18;
-    pub const URGENT:   Field = 18..20;
+    pub(crate) const SRC_PORT: Field = 0..2;
+    pub(crate) const DST_PORT: Field = 2..4;
+    pub(crate) const SEQ_NUM:  Field = 4..8;
+    pub(crate) const ACK_NUM:  Field = 8..12;
+    pub(crate) const FLAGS:    Field = 12..14;
+    pub(crate) const WIN_SIZE: Field = 14..16;
+    pub(crate) const CHECKSUM: Field = 16..18;
+    pub(crate) const URGENT:   Field = 18..20;
 
-    pub fn OPTIONS(length: u8) -> Field {
+    pub(crate) fn OPTIONS(length: u8) -> Field {
         URGENT.end..(length as usize)
     }
 
-    pub const OPT_END: u8 = 0x00;
-    pub const OPT_NOP: u8 = 0x01;
-    pub const OPT_MSS: u8 = 0x02;
-    pub const OPT_WS:  u8 = 0x03;
-    pub const OPT_SACKPERM: u8 = 0x04;
-    pub const OPT_SACKRNG:  u8 = 0x05;
+    pub(crate) const OPT_END: u8 = 0x00;
+    pub(crate) const OPT_NOP: u8 = 0x01;
+    pub(crate) const OPT_MSS: u8 = 0x02;
+    pub(crate) const OPT_WS:  u8 = 0x03;
+    pub(crate) const OPT_SACKPERM: u8 = 0x04;
+    pub(crate) const OPT_SACKRNG:  u8 = 0x05;
 }
 
 impl<T: Payload> Packet<T> {

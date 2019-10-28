@@ -3,7 +3,7 @@ use core::fmt;
 use byteorder::{ByteOrder, NetworkEndian};
 
 use super::{Error, Result};
-pub use super::IpProtocol as Protocol;
+pub(crate) use super::IpProtocol as Protocol;
 
 /// A read/write wrapper around an IPv6 Fragment Header.
 #[derive(Debug, PartialEq)]
@@ -24,13 +24,13 @@ mod field {
     use crate::wire::field::Field;
 
     // 8-bit identifier of the header immediately following this header.
-    pub const NXT_HDR:          usize = 0;
+    pub(crate) const NXT_HDR:          usize = 0;
     // 8-bit reserved field.
-    pub const RESERVED:         usize = 1;
+    pub(crate) const RESERVED:         usize = 1;
     // 16-bit field containing the fragment offset, reserved and more fragments values.
-    pub const FR_OF_M:          Field = 2..4;
+    pub(crate) const FR_OF_M:          Field = 2..4;
     // 32-bit field identifying the fragmented packet
-    pub const IDENT:            Field = 4..8;
+    pub(crate) const IDENT:            Field = 4..8;
 }
 
 impl<T: AsRef<[u8]>> Header<T> {

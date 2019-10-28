@@ -24,6 +24,8 @@
 //! not clearly possible, exposes that choice to the caller.
 //!
 //! [`smoltcp`]: https://github.com/m-labs/smoltcp
+#![warn(missing_docs)]
+#![warn(unreachable_pub)]
 
 // tests should be able to use `std`
 #![cfg_attr(all(

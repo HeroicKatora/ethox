@@ -53,8 +53,8 @@ pub struct Layer<'a, 'data> {
     endpoint: IpEndpoint<'a, 'data>,
 }
 
-pub struct IpEndpoint<'a, 'data> {
-    pub inner: &'a mut Endpoint<'data>,
+pub(crate) struct IpEndpoint<'a, 'data> {
+    pub(crate) inner: &'a mut Endpoint<'data>,
 }
 
 impl<'a> Endpoint<'a> {
@@ -122,7 +122,7 @@ impl<'a> Endpoint<'a> {
 }
 
 impl Routing<'_> {
-    pub fn accepts(&self, dst_addr: IpAddress) -> bool {
+    pub(crate) fn accepts(&self, dst_addr: IpAddress) -> bool {
         self.addr.iter().any(|own_addr| own_addr.accepts(dst_addr))
     }
 
@@ -134,7 +134,7 @@ impl Routing<'_> {
     /// * Lookup in routing table for all other addresses.
     ///
     /// For lack of direct loopback mechanism (TODO) we only implement the second two stages.
-    pub fn route(&self, dst_addr: IpAddress, time: Instant) -> Option<Route> {
+    pub(crate) fn route(&self, dst_addr: IpAddress, time: Instant) -> Option<Route> {
         if let Some(route) = self.find_local_route(dst_addr, time) {
             return Some(route)
         }
@@ -142,7 +142,7 @@ impl Routing<'_> {
         self.find_outer_route(dst_addr, time)
     }
 
-    pub fn find_local_route(&self, dst_addr: IpAddress, _: Instant) -> Option<Route> {
+    pub(crate) fn find_local_route(&self, dst_addr: IpAddress, _: Instant) -> Option<Route> {
         let matching_src = self.addr
             .iter()
             .filter(|addr| addr.subnet().contains(dst_addr))
@@ -154,7 +154,7 @@ impl Routing<'_> {
         })
     }
 
-    pub fn find_outer_route(&self, dst_addr: IpAddress, time: Instant) -> Option<Route> {
+    pub(crate) fn find_outer_route(&self, dst_addr: IpAddress, time: Instant) -> Option<Route> {
         let next_hop = self.routes.lookup(dst_addr, time)?;
 
         // Which source to use?
@@ -171,11 +171,11 @@ impl Routing<'_> {
 }
 
 impl<'data> IpEndpoint<'_, 'data> {
-    pub fn neighbors(&self) -> &arp::NeighborCache<'data> {
+    pub(crate) fn neighbors(&self) -> &arp::NeighborCache<'data> {
         self.inner.arp.neighbors()
     }
 
-    pub fn neighbors_mut(&mut self) -> &mut arp::NeighborCache<'data> {
+    pub(crate) fn neighbors_mut(&mut self) -> &mut arp::NeighborCache<'data> {
         self.inner.arp.neighbors_mut()
     }
 

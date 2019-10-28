@@ -754,7 +754,7 @@ impl Repr {
     }
 }
 
-pub mod checksum {
+pub(crate) mod checksum {
     use byteorder::{ByteOrder, NetworkEndian};
 
     use super::*;
@@ -765,7 +765,7 @@ pub mod checksum {
     }
 
     /// Compute an RFC 1071 compliant checksum (without the final complement).
-    pub fn data(mut data: &[u8]) -> u16 {
+    pub(crate) fn data(mut data: &[u8]) -> u16 {
         let mut accum = 0;
 
         // For each 32-byte chunk...
@@ -797,7 +797,7 @@ pub mod checksum {
     }
 
     /// Combine several RFC 1071 compliant checksums.
-    pub fn combine(checksums: &[u16]) -> u16 {
+    pub(crate) fn combine(checksums: &[u16]) -> u16 {
         let mut accum: u32 = 0;
         for &word in checksums {
             accum += word as u32;
@@ -806,7 +806,7 @@ pub mod checksum {
     }
 
     /// Compute an IP pseudo header checksum.
-    pub fn pseudo_header(src_addr: &Address, dst_addr: &Address,
+    pub(crate) fn pseudo_header(src_addr: &Address, dst_addr: &Address,
                          protocol: Protocol, length: u32) -> u16 {
         match (src_addr, dst_addr) {
             (Address::Ipv4(src_addr), Address::Ipv4(dst_addr)) => {
@@ -849,7 +849,7 @@ pub mod checksum {
 
 use super::pretty_print::PrettyIndent;
 
-pub fn pretty_print_ip_payload<T: Into<Repr>>(f: &mut fmt::Formatter, indent: &mut PrettyIndent,
+pub(crate) fn pretty_print_ip_payload<T: Into<Repr>>(f: &mut fmt::Formatter, indent: &mut PrettyIndent,
                                               ip_repr: T, payload: &[u8]) -> fmt::Result {
     use crate::wire::{TcpChecksum, TcpPacket, UdpChecksum, UdpRepr, udp_packet};
     use crate::wire::ip::checksum::format_checksum;

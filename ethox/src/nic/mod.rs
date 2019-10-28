@@ -175,7 +175,7 @@ mod tests {
 
     /// Sender and receiver verifying packet lengths.
     #[derive(Copy, Clone)]
-    pub struct LengthIo;
+    pub(crate) struct LengthIo;
 
     impl LengthIo {
         fn signature<P: Payload + ?Sized>(&mut self, payload: &P) -> [u8; 8] {

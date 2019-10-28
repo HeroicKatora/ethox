@@ -8,7 +8,7 @@ use super::{Error, Checksum, Result};
 use super::ip::{checksum, pretty_print_ip_payload};
 use super::field::Field;
 
-pub use super::IpProtocol as Protocol;
+pub(crate) use super::IpProtocol as Protocol;
 
 /// Minimum MTU required of all links supporting IPv4. See [RFC 791 § 3.1].
 ///
@@ -458,16 +458,16 @@ byte_wrapper! {
 mod field {
     use crate::wire::field::Field;
 
-    pub const VER_IHL:  usize = 0;
-    pub const DSCP_ECN: usize = 1;
-    pub const LENGTH:   Field = 2..4;
-    pub const IDENT:    Field = 4..6;
-    pub const FLG_OFF:  Field = 6..8;
-    pub const TTL:      usize = 8;
-    pub const PROTOCOL: usize = 9;
-    pub const CHECKSUM: Field = 10..12;
-    pub const SRC_ADDR: Field = 12..16;
-    pub const DST_ADDR: Field = 16..20;
+    pub(crate) const VER_IHL:  usize = 0;
+    pub(crate) const DSCP_ECN: usize = 1;
+    pub(crate) const LENGTH:   Field = 2..4;
+    pub(crate) const IDENT:    Field = 4..6;
+    pub(crate) const FLG_OFF:  Field = 6..8;
+    pub(crate) const TTL:      usize = 8;
+    pub(crate) const PROTOCOL: usize = 9;
+    pub(crate) const CHECKSUM: Field = 10..12;
+    pub(crate) const SRC_ADDR: Field = 12..16;
+    pub(crate) const DST_ADDR: Field = 16..20;
 }
 
 impl ipv4 {

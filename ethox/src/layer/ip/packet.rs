@@ -68,8 +68,8 @@ pub enum Source {
 
 /// Source and destination chosen for a particular routing.
 pub(crate) struct Route {
-    pub next_hop: IpAddress,
-    pub src_addr: IpAddress,
+    pub(crate) next_hop: IpAddress,
+    pub(crate) src_addr: IpAddress,
 }
 
 #[derive(Clone, Copy)]

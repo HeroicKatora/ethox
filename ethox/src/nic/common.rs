@@ -44,7 +44,7 @@ impl EnqueueFlag {
 }
 
 impl FlagState {
-    pub fn was_sent(&self) -> bool {
+    pub(crate) fn was_sent(&self) -> bool {
         match self {
             FlagState::NotPossible => false,
             FlagState::SetTrue(b) => *b,

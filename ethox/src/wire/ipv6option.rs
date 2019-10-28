@@ -76,11 +76,11 @@ mod field {
     use crate::wire::field::Field;
 
     // 8-bit identifier of the type of option.
-    pub const TYPE:     usize = 0;
+    pub(crate) const TYPE:     usize = 0;
     // 8-bit unsigned integer. Length of the DATA field of this option, in octets.
-    pub const LENGTH:   usize = 1;
+    pub(crate) const LENGTH:   usize = 1;
     // Variable-length field. Option-Type-specific data.
-    pub fn DATA(length: u8) -> Field {
+    pub(crate) fn DATA(length: u8) -> Field {
         2..length as usize + 2
     }
 }

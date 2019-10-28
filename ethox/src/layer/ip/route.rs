@@ -180,22 +180,22 @@ mod test {
         use super::super::*;
         use crate::wire::Ipv6Cidr;
 
-        pub const ADDR_1A: Ipv6Address = Ipv6Address(
+        pub(crate) const ADDR_1A: Ipv6Address = Ipv6Address(
                 [0xfe, 0x80, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 1]);
-        pub const ADDR_1B: Ipv6Address = Ipv6Address(
+        pub(crate) const ADDR_1B: Ipv6Address = Ipv6Address(
                 [0xfe, 0x80, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 13]);
-        pub const ADDR_1C: Ipv6Address = Ipv6Address(
+        pub(crate) const ADDR_1C: Ipv6Address = Ipv6Address(
                 [0xfe, 0x80, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 42]);
-        pub fn cidr_1() -> Ipv6Cidr {
+        pub(crate) fn cidr_1() -> Ipv6Cidr {
             Ipv6Cidr::new(Ipv6Address(
                     [0xfe, 0x80, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0]), 64)
         }
 
-        pub const ADDR_2A: Ipv6Address = Ipv6Address(
+        pub(crate) const ADDR_2A: Ipv6Address = Ipv6Address(
                 [0xfe, 0x80, 0, 0, 0, 0, 51, 100, 0, 0, 0, 0, 0, 0, 0, 1]);
-        pub const ADDR_2B: Ipv6Address = Ipv6Address(
+        pub(crate) const ADDR_2B: Ipv6Address = Ipv6Address(
                 [0xfe, 0x80, 0, 0, 0, 0, 51, 100, 0, 0, 0, 0, 0, 0, 0, 21]);
-        pub fn cidr_2() -> Ipv6Cidr {
+        pub(crate) fn cidr_2() -> Ipv6Cidr {
             Ipv6Cidr::new(Ipv6Address(
                     [0xfe, 0x80, 0, 0, 0, 0, 51, 100, 0, 0, 0, 0, 0, 0, 0, 0]), 64)
         }

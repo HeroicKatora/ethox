@@ -142,10 +142,10 @@ byte_wrapper! {
 mod field {
     use crate::wire::field::*;
 
-    pub const DESTINATION: Field =  0..6;
-    pub const SOURCE:      Field =  6..12;
-    pub const ETHERTYPE:   Field = 12..14;
-    pub const PAYLOAD:     Rest  = 14..;
+    pub(crate) const DESTINATION: Field =  0..6;
+    pub(crate) const SOURCE:      Field =  6..12;
+    pub(crate) const ETHERTYPE:   Field = 12..14;
+    pub(crate) const PAYLOAD:     Rest  = 14..;
 }
 
 impl ethernet {

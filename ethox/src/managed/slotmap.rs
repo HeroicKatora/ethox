@@ -232,7 +232,7 @@ impl<'a, T> SlotMap<'a, T> {
 }
 
 impl GenerationOrFreelink {
-    pub fn free_link(self) -> Result<Offset, Generation> {
+    pub(crate) fn free_link(self) -> Result<Offset, Generation> {
         if self.0 > 0 {
             Err(Generation(self.0))
         } else {
@@ -240,7 +240,7 @@ impl GenerationOrFreelink {
         }
     }
 
-    pub fn generation(self) -> Result<Generation, Offset> {
+    pub(crate) fn generation(self) -> Result<Generation, Offset> {
         if self.0 > 0 {
             Ok(Generation(self.0))
         } else {
@@ -250,7 +250,7 @@ impl GenerationOrFreelink {
 }
 
 impl IndexComputer {
-    pub fn from_capacity(capacity: usize) -> Self {
+    pub(crate) fn from_capacity(capacity: usize) -> Self {
         assert!(capacity < isize::max_value() as usize);
         IndexComputer(capacity)
     }
@@ -301,19 +301,19 @@ impl IndexComputer {
 }
 
 impl Generation {
-    pub fn advance(&mut self) {
+    pub(crate) fn advance(&mut self) {
         assert!(self.0 > 0);
         self.0 = self.0.wrapping_add(1).max(1)
     }
 }
 
 impl Offset {
-    pub fn from_int_offset(offset: usize) -> Self {
+    pub(crate) fn from_int_offset(offset: usize) -> Self {
         assert!(offset < isize::max_value() as usize);
         Offset((offset as isize).checked_neg().unwrap())
     }
 
-    pub fn int_offset(self) -> usize {
+    pub(crate) fn int_offset(self) -> usize {
         self.0.checked_neg().unwrap() as usize
     }
 }
