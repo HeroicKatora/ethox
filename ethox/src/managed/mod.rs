@@ -5,8 +5,6 @@
 mod map;
 mod ordered;
 mod partial;
-mod phantom_vec;
-mod phantom_btree;
 mod slice;
 pub mod slotmap;
 
@@ -37,16 +35,5 @@ pub type List<'a, T> = Partial<Slice<'a, T>>;
 #[cfg(all(
     not(feature = "std"),
     not(test)))]
-pub mod alloc {
-    pub mod collections {
-        pub use crate::managed::phantom_btree::BTreeMap;
-
-        pub mod btree_map {
-            pub use crate::managed::phantom_btree::*;
-        }
-    }
-
-    pub mod vec {
-        pub use crate::managed::phantom_vec::Vec;
-    }
-}
+#[path = "phantom_alloc/mod.rs"]
+pub mod alloc;
