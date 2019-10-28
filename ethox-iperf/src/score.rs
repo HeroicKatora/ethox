@@ -77,7 +77,7 @@ impl fmt::Display for Score {
         // [  3]  0.0- 1.0 sec   131 KBytes  1.05 Mbits/sec   0.000 ms    0/   91 (0%)
         // ```
         write!(f,
-           "[{ts}] {begin}-{end} sec\t{total} KBytes\t{rate} Mbits/sec\t{dt} ms\t\
+           "[{ts}] {begin}-{end} sec\t{total} KBytes\t{rate} Byte/sec\t{dt} ms\t\
             {loss}/\t{packets} ({loss_percent})",
            ts=3,
            // Pretend that start was at 0.0 but otherwise accurate.
@@ -86,7 +86,7 @@ impl fmt::Display for Score {
            rate=self.effective_rate(),
            dt=self.time.as_secs_f32() / 1000.0,
            loss=self.total_count - self.packet_count,
-           packets=self.packet_count,
+           packets=self.total_count,
            loss_percent=self.loss_rate()*100.0,
         )
     }
