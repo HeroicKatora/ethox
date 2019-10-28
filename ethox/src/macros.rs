@@ -1,3 +1,23 @@
+/// Define an enumeration with known variants and an unknown representation.
+///
+/// Most network protocols define fields where not all bit-patterns are standardized values. In
+/// some cases these are invalid while others allocate them through some registrar (such as IANA).
+/// This macro makes it more ergonomic to define a representation for such fields by providing
+/// converters to and from an underlying representation derived from the definition.
+///
+/// # Example
+///
+/// ```
+/// # use ethox::enum_with_unknown;
+/// # fn main() { }
+/// enum_with_unknown! {
+///     #[derive(Copy, Clone)]
+///     pub enum IpVersion(u8) {
+///         IpV4 = 4,
+///         IpV6 = 6,
+///     }
+/// }
+/// ```
 // Copyright (C) 2016 whitequark@whitequark.org
 macro_rules! enum_with_unknown {
     (
@@ -29,6 +49,12 @@ macro_rules! enum_with_unknown {
               $( #[$variant_attr] )*
               $variant
             ),*,
+            /// A value whose interpretation was not determined.
+            ///
+            /// There are two common cases where this is necessary: To represent a parsed valued
+            /// from an unknown source which might be faulty or from an unsupported standard
+            /// version; Or to encode an arbitrary user supplied value in such fields to allow
+            /// extensions that are not supported in `ethox` itself.
             Unknown($ty)
         }
 
