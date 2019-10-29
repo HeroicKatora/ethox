@@ -366,7 +366,7 @@ impl ServerConnection {
         self.received_bytes = self.received_bytes.saturating_add(payload.len());
 
         let id_bytes = <[u8;4]>::try_from(&payload[0..4]).unwrap();
-        let id = u32::from_be_bytes(id_bytes);
+        let id = u32::from_be_bytes(id_bytes) & 0x7FFF_FFFF;
         let last = payload[0] & 0x80 != 0;
 
         // HACKY: we don't check that all packets but the last have maximum length but we just
@@ -381,7 +381,7 @@ impl ServerConnection {
                 packet_size: u32::try_from(self.packet_size)
                     .unwrap_or_else(|_| u32::max_value()),
                 packet_count: self.received_packets,
-                total_count: self.max_packet_id,
+                total_count: self.max_packet_id + 1,
                 received_bytes: u64::try_from(self.received_bytes)
                     .unwrap_or_else(|_| u64::max_value()),
                 duration: time - self.begin_ts,
@@ -393,7 +393,7 @@ impl ServerConnection {
         self.result = Some(ServerResult {
             packet_size: 0,
             packet_count: self.received_packets,
-            total_count: self.max_packet_id,
+            total_count: self.max_packet_id + 1,
             received_bytes: 0,
             duration: Duration::from_millis(0),
         })
