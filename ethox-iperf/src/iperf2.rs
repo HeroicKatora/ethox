@@ -8,7 +8,7 @@
 //!
 //! There is no control channel as for iperf3. This may have negative impact on the accuracy of the
 //! measurement but greatly simplifies the independent implementation for udp.
-use core::{fmt, mem, ptr};
+use core::{mem, ptr};
 
 use ethox::layer::{ip, tcp, udp, Error};
 use ethox::time::{Duration, Instant};
@@ -49,7 +49,7 @@ struct Connection {
     remaining: usize,
 
     /// Number of sent packets.
-    packet_count: u32,
+    sent_packets: u32,
 
     /// Shape traffic to target bandwidth.
     target_rate: Option<SendRate>,
@@ -73,10 +73,10 @@ struct ServerConnection {
     received_bytes: usize,
 
     /// The maximally observed packet number.
-    max: u32,
+    max_packet_id: u32,
 
     /// Number of received packet.
-    count: u32,
+    received_packets: u32,
 
     /// The server side result.
     result: Option<ServerResult>,
@@ -241,7 +241,7 @@ impl Connection {
             remaining,
             // FIXME: support traffic shaping
             target_rate: None,
-            packet_count: 0,
+            sent_packets: 0,
             result: None,
             last_time: Instant::from_millis(0),
         }
@@ -276,7 +276,7 @@ impl Connection {
 
         self.remaining = self.remaining
             .saturating_sub(self.packet_size);
-        self.packet_count += 1;
+        self.sent_packets += 1;
     }
 
     /// Fill the necessary part of the packet.
@@ -293,7 +293,7 @@ impl Connection {
         packet[16..20].copy_from_slice(&[0, 0, 0, 0]);
 
         // Last packet marker.
-        if self.remaining < self.packet_size {
+        if self.remaining <= self.packet_size {
             packet[0] |= 0x80;
         }
     }
@@ -330,12 +330,12 @@ impl ServerConnection {
                 src_port: *port,
                 dst_addr: Default::default(),
                 dst_port: 0,
-                payload: 20 + mem::size_of::<Result>(),
+                payload: 20 + mem::size_of::<WireResult>(),
             },
             packet_size: 0,
             received_bytes: 0,
-            count: 0,
-            max: 0,
+            max_packet_id: 0,
+            received_packets: 0,
             result: None,
             begin_ts: Instant::from_millis(0),
             result_sent: false,
@@ -344,10 +344,10 @@ impl ServerConnection {
 
     fn fill_report(&self, payload: &mut [u8]) {
         // We prepared this packet, so assert is correct.
-        assert_eq!(payload.len(), 20 + mem::size_of::<Result>());
+        assert_eq!(payload.len(), 20 + mem::size_of::<WireResult>());
 
         let be_result = WireResult {
-            packet_count: u32::to_be(self.count),
+            packet_count: u32::to_be(self.received_packets),
             .. WireResult::default()
         };
 
@@ -366,22 +366,22 @@ impl ServerConnection {
         self.received_bytes = self.received_bytes.saturating_add(payload.len());
 
         let id_bytes = <[u8;4]>::try_from(&payload[0..4]).unwrap();
-        let id = u32::from_be_bytes(id_bytes);
+        let id = u32::from_be_bytes(id_bytes) & 0x7FFF_FFFF;
         let last = payload[0] & 0x80 != 0;
 
         // HACKY: we don't check that all packets but the last have maximum length but we just
         // assume that this setting was supplied and traffic shaping is not done by reducing
         // datagram lengths but by delayed packets.
         self.packet_size = self.packet_size.max(payload.len());
-        self.max = self.max.max(id);
-        self.count += 1;
+        self.max_packet_id = self.max_packet_id.max(id);
+        self.received_packets += 1;
 
         if last {
             self.result = Some(ServerResult {
                 packet_size: u32::try_from(self.packet_size)
                     .unwrap_or_else(|_| u32::max_value()),
-                packet_count: self.count,
-                total_count: self.max,
+                packet_count: self.received_packets,
+                total_count: self.max_packet_id + 1,
                 received_bytes: u64::try_from(self.received_bytes)
                     .unwrap_or_else(|_| u64::max_value()),
                 duration: time - self.begin_ts,
@@ -392,8 +392,8 @@ impl ServerConnection {
     fn error_shutdown(&mut self) {
         self.result = Some(ServerResult {
             packet_size: 0,
-            packet_count: self.count,
-            total_count: self.max,
+            packet_count: self.received_packets,
+            total_count: self.max_packet_id + 1,
             received_bytes: 0,
             duration: Duration::from_millis(0),
         })
@@ -565,7 +565,7 @@ impl<P: PayloadMut> udp::Send<P> for Connection {
     fn send(&mut self, packet: udp::RawPacket<P>) {
         let ts = packet.handle.info().timestamp();
 
-        if self.packet_count > 0 {
+        if self.sent_packets > 0 {
             // Make sure to stay within bandwidth.
             if !self.should_send(ts) {
                 return;
@@ -580,13 +580,13 @@ impl<P: PayloadMut> udp::Send<P> for Connection {
         };
 
         // Ensure we stay at a consistent sender address. Also reduces lookup in ip.
-        if self.packet_count == 0 {
+        if self.sent_packets == 0 {
             let source = packet.packet.get_ref().repr().src_addr();
             self.last_time = ts;
             self.send_init.source = ip::Source::Exact(source);
         }
 
-        let count = self.packet_count;
+        let count = self.sent_packets;
         self.fill(packet.packet.payload_mut_slice(), ts, count);
         self.update_sent(ts);
 
@@ -633,7 +633,7 @@ impl<P: PayloadMut> udp::Recv<P> for Connection {
             delta_s: wire_result.delta_s,
             delta_ms: wire_result.delta_ms,
             packet_count: wire_result.packet_count,
-            total_count: self.packet_count,
+            total_count: self.sent_packets,
         });
     }
 }
@@ -681,28 +681,5 @@ impl<P: PayloadMut> udp::Recv<P> for ServerConnection {
         }
 
         self.register(payload, handle.info().timestamp());
-    }
-}
-
-impl fmt::Display for Result {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // Emulate the iperf style:
-        //
-        // ```text
-        // [  3]  0.0- 1.0 sec   131 KBytes  1.05 Mbits/sec   0.000 ms    0/   91 (0%)
-        // ```
-        write!(f,
-           "[{ts}] {begin}-{end} sec\t{total} KBytes\t{rate} Mbits/sec\t{dt} ms\t\
-            {loss}/\t{packets} ({loss_percent})",
-           ts=3,
-           begin=0.0,
-           end=1.0,
-           total=self.data_len/1024,
-           rate=(self.data_len as f32)/(self.delta_s as f32 + self.delta_ms as f32/1000.0),
-           dt=0.0,
-           loss=0,
-           packets=self.packet_count,
-           loss_percent=(0 as f32)/(self.packet_count as f32)*100.0,
-        )
     }
 }
