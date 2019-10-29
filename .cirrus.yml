@@ -35,6 +35,11 @@ side_crates_task:
     - ls -sh target/release/raw-ping
     - strip target/release/raw-ping
     - ls -sh target/release/raw-ping
+  bpf_script:
+    - apt-get update
+    - apt-get -y install libpcap-dev
+    - cd ethox-bpf
+    - cargo test
 
 nightly_task:
   container:
