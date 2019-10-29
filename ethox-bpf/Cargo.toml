@@ -6,7 +6,9 @@ authors = ["Andreas Molzer <andreas.molzer@gmx.de>"]
 edition = "2018"
 publish = false
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[workspace]
+# Requires libpcap so barred from the workspace.
+members = ["."]
 
 [dependencies]
 bpfjit-sys = "2.0"
