@@ -1,7 +1,7 @@
 //! The ethernet layer.
 use crate::wire::{Payload};
 #[cfg(feature = "std")]
-use crate::wire::{Formatter, PrettyPrinter, ethernet_frame};
+use crate::wire::{pretty_print::Formatter, PrettyPrinter, ethernet_frame};
 
 mod endpoint;
 mod packet;

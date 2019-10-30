@@ -16,10 +16,11 @@ use crate::wire::{Reframe, Payload, PayloadError, PayloadMut, payload};
 /// instead of operating on values. They only change the logical length when called.
 ///
 /// ```
+/// # use ethox::managed::Partial;
 /// let mut elements = [0; 16];
-/// let mut storage = Partial::new(&mut elements);
+/// let mut storage = Partial::new(&mut elements[..]);
 ///
-/// for el in some_iterator {
+/// for el in 0..10 {
 ///     // Note that this drops an instance. That may be undesired.
 ///     *storage.push().unwrap() = el;
 /// }
