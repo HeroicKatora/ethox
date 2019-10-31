@@ -19,6 +19,7 @@
 /// }
 /// ```
 // Copyright (C) 2016 whitequark@whitequark.org
+#[macro_export]
 macro_rules! enum_with_unknown {
     (
         $( #[$enum_attr:meta] )*
@@ -99,6 +100,7 @@ macro_rules! enum_with_unknown {
 /// }
 ///
 /// impl udp {
+///     // Make the constructor public.
 ///     pub fn from_slice(slice: &[u8]) -> &Self {
 ///         Self::__from_macro_new_unchecked(slice)
 ///     }
