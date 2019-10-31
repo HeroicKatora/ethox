@@ -389,9 +389,14 @@ impl Repr {
 
     /// Emit a high-level representation into an User Datagram Protocol packet.
     ///
-    /// FIXME: This requires the correct packet data for calculating the checksum. However, the
-    /// payload slice returned from the packet will only be valid after the length is correctly
-    /// filled in.
+    /// Note: In most cases you will want to use `Checksum::Ignored`. Calculating requires the
+    /// correct packet data to already be present. However, the payload slice returned from the
+    /// packet will only be valid after the length is correctly filled in.
+    ///
+    /// However, `Checksum::Manual` is still useful if the payload was mutated with external means.
+    /// It could also be possible to update the checksum incrementally if only few bytes are
+    /// required to have concrete values, however no means are provided in thie library and you'd
+    /// have to implement such schemes yourself.
     pub fn emit(&self, packet: &mut udp, checksum: Checksum) {
         packet.set_src_port(self.src_port);
         packet.set_dst_port(self.dst_port);
