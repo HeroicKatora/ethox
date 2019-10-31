@@ -167,6 +167,9 @@ pub enum Checksum {
 pub use self::payload_impl::{Reframe, Payload, PayloadMut, Error as PayloadError, payload};
 pub use self::payload_ext::{ReframePayload, PayloadMutExt};
 
+/// The result type of a reframing operation on [`PayloadMut`].
+///
+/// [`PayloadMut`]: trait.PayloadMut.html
 pub type PayloadResult<T> = core::result::Result<T, PayloadError>;
 
 pub use self::pretty_print::PrettyPrinter;
@@ -310,6 +313,10 @@ pub use self::dhcpv4::{
     MessageType as DhcpMessageType};
 
 impl Checksum {
+    /// Check if a checksum should be calculated by the library.
+    ///
+    /// Otherwise it is ignored due to the assumption that it was offloaded or is otherwise
+    /// undesirable to check.
     pub fn manual(self) -> bool {
         match self {
             Checksum::Manual => true,
