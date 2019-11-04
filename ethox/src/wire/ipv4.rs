@@ -381,17 +381,24 @@ impl Subnet {
     }
 }
 
+/// Error emitted when parsing an IPv4 CIDR specifier fails.
 #[cfg(feature = "std")]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParseCidrError {
     kind: ParseCidrErrorKind,
 }
 
+/// The general kind of failure during parsing of an IPv4 CIDR.
 #[cfg(feature = "std")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ParseCidrErrorKind {
+    /// The subnet prefix was missing entirely.
     NoSubnet,
+
+    /// The IPv4 address part is invalid.
     AddrParseError,
+
+    /// The subnet prefix is invalid.
     InvalidPrefix,
 }
 
@@ -491,12 +498,12 @@ impl ipv4 {
         Ok(packet)
     }
 
-    /// Unwrap the packet as a raw byte slice.
+    /// View the packet as a raw byte slice.
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 
-    /// Unwrap the packet as a mutable raw byte slice.
+    /// View the packet as a mutable raw byte slice.
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
         &mut self.0
     }
@@ -723,6 +730,10 @@ impl ipv4 {
         self.set_checksum(checksum)
     }
 
+    /// Compute the range of the payload without accessing it.
+    ///
+    /// Contrary to `payload_slice`, this only requires the packet to have a valid header but need
+    /// not have a consistent length for the payload itself.
     pub fn payload_range(&self) -> Field {
         let header_end = usize::from(self.header_len());
         let total_len = usize::from(self.total_len());
@@ -869,10 +880,15 @@ impl<T: Payload + PayloadMut> PayloadMut for Packet<T> {
 /// A high-level representation of an Internet Protocol version 4 packet header.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct Repr {
+    /// The source of the packet.
     pub src_addr:    Address,
+    /// The destination of the packet.
     pub dst_addr:    Address,
+    /// The encapsulated protocol identifier.
     pub protocol:    Protocol,
+    /// The length of the payload.
     pub payload_len: usize,
+    /// The remaining hop limit of the packet.
     pub hop_limit:   u8,
 }
 

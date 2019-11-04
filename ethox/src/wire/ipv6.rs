@@ -27,12 +27,19 @@ pub struct InterfaceId(pub [u8; 8]);
 enum_with_unknown! {
     /// IPv6 multicast scope.
     pub enum Scope(u8) {
+        /// The address is valid for the interface alone.
         InterfaceLocal = 1,
+        /// The address is valid on the physical link.
         LinkLocal = 2,
+        /// The address is valid for the administrative domain.
         AdminLocal = 4,
+        /// The address is valid for a physical datasite.
         SiteLocal = 5,
+        /// The address is valid for one organization.
         OrganizationLocal = 8,
+        /// The address is for all IPv6 hosts.
         Global = 0xE,
+        /// The address is reserved for future use in global.
         ReservedToGlobal = 0xF,
     }
 }
@@ -513,6 +520,7 @@ pub struct Packet<T: Payload> {
 }
 
 byte_wrapper! {
+    /// An byte slice containing a potential ipv6 packet.
     #[derive(Debug, PartialEq, Eq)]
     pub struct ipv6([u8]);
 }
@@ -544,21 +552,20 @@ byte_wrapper! {
 // See https://tools.ietf.org/html/rfc2460#section-3 for details.
 mod field {
     use crate::wire::field::Field;
-    // 4-bit version number, 8-bit traffic class, and the
-    // 20-bit flow label.
+    /// 4-bit version number, 8-bit traffic class, and the 20-bit flow label.
     pub(crate) const VER_TC_FLOW: Field = 0..4;
-    // 16-bit value representing the length of the payload.
-    // Note: Options are included in this length.
+    /// 16-bit value representing the length of the payload.
+    /// Note: Options are included in this length.
     pub(crate) const LENGTH:      Field = 4..6;
-    // 8-bit value identifying the type of header following this
-    // one. Note: The same numbers are used in IPv4.
+    /// 8-bit value identifying the type of header following this one.
+    /// Note: The same numbers are used in IPv4.
     pub(crate) const NXT_HDR:     usize = 6;
-    // 8-bit value decremented by each node that forwards this
-    // packet. The packet is discarded when the value is 0.
+    /// 8-bit value decremented by each node that forwards this packet.
+    /// The packet is discarded when forwarding but the value is 0.
     pub(crate) const HOP_LIMIT:   usize = 7;
-    // IPv6 address of the source node.
+    /// IPv6 address of the source node.
     pub(crate) const SRC_ADDR:    Field = 8..24;
-    // IPv6 address of the destination node.
+    /// IPv6 address of the destination node.
     pub(crate) const DST_ADDR:    Field = 24..40;
 }
 
@@ -586,10 +593,12 @@ impl ipv6 {
         Ok(packet)
     }
 
+    /// View the packet as a raw byte slice.
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 
+    /// View the packet as a mutable raw byte slice.
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
         &mut self.0
     }
