@@ -8,7 +8,7 @@ use super::ip::checksum;
 /// A TCP sequence number.
 ///
 /// A sequence number is a monotonically advancing integer modulo 2<sup>32</sup>.
-/// Sequence numbers do not have a discontiguity when compared pairwise across a signed overflow.
+/// Sequence numbers do not have a discontinuity when compared pairwise across a signed overflow.
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Hash)]
 pub struct SeqNumber(pub i32);
 
@@ -445,9 +445,11 @@ impl Flags {
     pub const ACK: Self = Flags(0x010);
     /// A constant with the URG flag bit set.
     pub const URG: Self = Flags(0x020);
-    /// A constant with the ECE flag bit set.
+    /// A constant with the ECE (explicit congestion echo) flag bit set.
     pub const ECE: Self = Flags(0x040);
+    /// A constant with the CWR (congestion window reduced) flag bit set.
     pub const CWR: Self = Flags(0x080);
+    /// A constant with the experimental NS (nonce sum) flag bit set.
     pub const NS:  Self = Flags(0x100);
 
     /// Return the FIN flag.
@@ -781,18 +783,18 @@ pub struct Repr {
     pub src_port:     u16,
     /// The local port to which a packet is sent.
     pub dst_port:     u16,
-    /// The collection of flag bits not handled explicitely in other attributes.
+    /// The collection of flag bits not handled explicitly in other attributes.
     pub flags:        Flags,
     /// The sequence number of the packet itself.
     /// In a SYN packet this identifies the SYN itself, during transmission it identifies the first
     /// byte of a segment in the data stream, and afterwards it is one-past-the-end of the FIN that
     /// was sent last.
     pub seq_number:   SeqNumber,
-    /// The acknowleged sequence number.
+    /// The acknowledged sequence number.
     /// Tells the remote that the data stream until that point has been completely received.
     pub ack_number:   Option<SeqNumber>,
     /// The packet encoded window scale.
-    /// To get the actual window scale one must shifte as indicated in the header option set during
+    /// To get the actual window scale one must shift as indicated in the header option set during
     /// the initial connection request.
     pub window_len:   u16,
     /// The window scale header option, if present.
@@ -955,7 +957,7 @@ impl Repr {
     /// Return the length of the header for the TCP protocol.
     ///
     /// Per RFC 6691, this should be used for MSS calculations. It may be smaller than the buffer
-    /// space required to accomodate this packet's data.
+    /// space required to accommodate this packet's data.
     pub fn mss_header_len(&self) -> usize {
         field::URGENT.end
     }

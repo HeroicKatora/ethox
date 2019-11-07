@@ -19,7 +19,7 @@ use super::endpoint::{
 
 /// The state of a connection.
 ///
-/// Includes current state machine state, the configuratin state that is required to stay constant
+/// Includes current state machine state, the configuration state that is required to stay constant
 /// during a connection, and the in- and out-buffers.
 #[derive(Clone, Copy, Debug, Hash)]
 pub struct Connection {
@@ -156,7 +156,7 @@ pub struct Receive {
     /// The actually acknowledged sequence number.
     ///
     /// Implementing delayed ACKs (not sending acks for every packet) this tracks what we have
-    /// publicly announed as our `NXT` sequence. Validity checks of incoming packet should be done
+    /// publicly announced as our `NXT` sequence. Validity checks of incoming packet should be done
     /// relative to this value instead of `next`. In Linux, this is called `wup`.
     pub acked: TcpSeqNumber,
 
@@ -182,7 +182,7 @@ pub struct Receive {
     pub initial_seq: TcpSeqNumber,
 }
 
-/// State enum of the statemachine.
+/// State enum of the state machine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum State {
     /// Marker state fo an unintended/uninitialized connection state.
@@ -207,7 +207,7 @@ pub enum State {
     ///
     /// This is split into two states (FinWait1 and FinWait2) in the RFC where we track whether our
     /// own FIN has been ack'ed. This is of importance for answering CLOSE calls but can be
-    /// supplemented in the io implementation. Transition the the TimeWait state works the same.
+    /// supplemented in the Io implementation. Transition to the TimeWait state works the same.
     FinWait,
 
     /// Closed both sides but we don't know the other knows.
@@ -228,7 +228,7 @@ pub enum State {
 pub struct Flow {
     /// Decider between slow-start and congestion.
     ///
-    /// Set to MAX initially, then updated on occurance of congestion.
+    /// Set to MAX initially, then updated on occurrence of congestion.
     pub ssthresh: u32,
 
     /// The window dictated by congestion.
@@ -511,7 +511,7 @@ impl Connection {
         // sack, and window scale as well. Note that ts and sack require only a single flag bit in
         // the cookie; the state for timestamp can be restored from the ts-option in the Ack answer
         // to our Syn+Ack and we require only a flag to check if we had received a ts-option in the
-        // Syn initially; while sack also only requires a flag to indicate its negotation state.
+        // Syn initially; while sack also only requires a flag to indicate its negotiation state.
         //
         // The harder part seems to be that syn cookies require a new operation within Signals.
 
@@ -718,7 +718,7 @@ impl Connection {
         // window we indicated to the remote may not reflect exactly what we can actually accept.
         // Furthermore, we a) want to piggy-back data on the ACK to reduce the number of packet
         // sent and b) may want to delay ACKs as given by data in flight and RTT considerations
-        // such as RFC1122. Thus, we merely signal the precence of available data to the operator
+        // such as RFC1122. Thus, we merely signal the presence of available data to the operator
         // above.
         let mut signals = Signals::default();
         signals.receive = Some(segment_ack);
@@ -773,7 +773,7 @@ impl Connection {
         signals
     }
 
-    /// Explicitely send an ack for all data, now.
+    /// Explicitly send an ack for all data, now.
     fn signal_ack_all(&mut self, remote: FourTuple) -> Signals {
         let mut signals = Signals::default();
         signals.answer = Some(self.repr_ack_all(remote));
@@ -836,7 +836,7 @@ impl Connection {
             // When we have already sent our FIN, never send *new* data.
             State::FinWait | State::Closing | State::LastAck => {
                 available.total = available.total.min(self.send.next - self.send.unacked);
-                // FIXME: ensure fin bit is set for retranmissions of last segment.
+                // FIXME: ensure fin bit is set for retransmissions of last segment.
                 self.select_send_segment(available, time, entry)
                     .map(OutSignals::segment)
                     .unwrap_or_else(OutSignals::none)
