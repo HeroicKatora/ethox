@@ -1,3 +1,10 @@
+/// Defines the state machine for a single connection.
+///
+/// A `Connection` is a Mealy machine receiving `InPacket` from the network, returning `Signals` to
+/// the rest of the TCP layer. In the other direction, the transmit portion of the stack
+/// communicates the user buffers `AvailableBytes` and `ReceivedSegment` to affect the `Segment`
+/// emitted in the transmission part.
+
 use core::convert::TryFrom;
 use core::ops::Range;
 use crate::time::{Duration, Expiration, Instant};

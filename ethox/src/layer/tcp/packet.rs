@@ -1,3 +1,7 @@
+//! The user facing packet interface.
+//!
+//! The interface differs from other layers in that the `In` packet has many different variants it
+//! represents, depending on the state of the underlying connection.
 use crate::layer::ip;
 use crate::wire::{Payload, PayloadMut};
 use crate::wire::{IpAddress, Ipv4Subnet, Ipv6Subnet, IpSubnet, IpProtocol};

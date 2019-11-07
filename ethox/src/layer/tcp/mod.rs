@@ -71,8 +71,9 @@
 //! A listening socket is designed to accept all connection request. That is not necessarily true
 //! and we want to be indistinguishable from a closed socket else.
 //!
-//! SYN packet may contain data. 
-//!
+//! Data sent in SYN packet is ignored for now but that may change in the future. If the connection
+//! was initiated actively then there is virtually no difference for the handling of contained
+//! segment data within the library.
 use crate::wire::PayloadMut;
 
 mod connection;
