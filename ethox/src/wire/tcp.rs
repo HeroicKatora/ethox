@@ -149,6 +149,7 @@ impl<T: Payload> Packet<T> {
         }
     }
 
+    /// Get a reference to the containing buffer.
     pub fn inner(&self) -> &T {
         &self.buffer
     }
@@ -430,13 +431,21 @@ impl<T: PayloadMut> Packet<T> {
 }
 
 impl Flags {
+    /// A constant with no flag bit set.
     pub const NONE: Self = Flags(0x0);
+    /// A constant with the FIN flag bit set.
     pub const FIN: Self = Flags(0x001);
+    /// A constant with the SYN flag bit set.
     pub const SYN: Self = Flags(0x002);
+    /// A constant with the RST flag bit set.
     pub const RST: Self = Flags(0x004);
+    /// A constant with the PSH flag bit set.
     pub const PSH: Self = Flags(0x008);
+    /// A constant with the ACK flag bit set.
     pub const ACK: Self = Flags(0x010);
+    /// A constant with the URG flag bit set.
     pub const URG: Self = Flags(0x020);
+    /// A constant with the ECE flag bit set.
     pub const ECE: Self = Flags(0x040);
     pub const CWR: Self = Flags(0x080);
     pub const NS:  Self = Flags(0x100);
@@ -595,19 +604,33 @@ impl<T: Payload> AsRef<[u8]> for Packet<T> {
     }
 }
 
-/// A representation of a single TCP option.
+/// A representation of a single TCP option (of those which may be supported).
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum TcpOption<'a> {
+    /// Marks the last option. Trailing bytes are ignored.
     EndOfList,
+    /// An option without effect.
     NoOperation,
+    /// Advise the remote of its maximum segment size to use.
+    /// Must only be sent as part of a SYN packet.
     MaxSegmentSize(u16),
+    /// Set the window scaling used by all window indications of the sender.
+    /// Must only be sent as part of a SYN packet.
     WindowScale(u8),
+    /// Signal support for SACK mechanism on an established connection.
+    /// Must only be sent as part of a SYN packet.
     SackPermitted,
+    /// Specifies the selectively acknowledged ranges.
+    /// Should only be sent if the remote sent `SackPermitted` originally.
     SackRange([Option<(u32, u32)>; 3]),
+    /// Some user specified option not handled within the library itself.
     Unknown { kind: u8, data: &'a [u8] }
 }
 
 impl<'a> TcpOption<'a> {
+    /// Split the first option from a buffer.
+    ///
+    /// The buffer should be part of a larger TCP header.
     pub fn parse(buffer: &'a [u8]) -> Result<(&'a [u8], TcpOption<'a>)> {
         let (length, option): (usize, TcpOption);
         match *buffer.get(0).ok_or(Error::Truncated)? {
@@ -683,6 +706,7 @@ impl<'a> TcpOption<'a> {
         Ok((&buffer[length..], option))
     }
 
+    /// Get the buffer length required to encode this header option.
     pub fn buffer_len(&self) -> usize {
         match self {
             TcpOption::EndOfList => 1,
@@ -695,6 +719,9 @@ impl<'a> TcpOption<'a> {
         }
     }
 
+    /// Write the encoding into the buffer.
+    ///
+    /// Returns the remaining tail into which no data has been written.
     pub fn emit<'b>(&self, buffer: &'b mut [u8]) -> &'b mut [u8] {
         let length;
         match self {
@@ -750,16 +777,37 @@ impl<'a> TcpOption<'a> {
 /// A high-level representation of a Transmission Control Protocol packet.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct Repr {
+    /// The remote port from which a packet originated.
     pub src_port:     u16,
+    /// The local port to which a packet is sent.
     pub dst_port:     u16,
+    /// The collection of flag bits not handled explicitely in other attributes.
     pub flags:        Flags,
+    /// The sequence number of the packet itself.
+    /// In a SYN packet this identifies the SYN itself, during transmission it identifies the first
+    /// byte of a segment in the data stream, and afterwards it is one-past-the-end of the FIN that
+    /// was sent last.
     pub seq_number:   SeqNumber,
+    /// The acknowleged sequence number.
+    /// Tells the remote that the data stream until that point has been completely received.
     pub ack_number:   Option<SeqNumber>,
+    /// The packet encoded window scale.
+    /// To get the actual window scale one must shifte as indicated in the header option set during
+    /// the initial connection request.
     pub window_len:   u16,
+    /// The window scale header option, if present.
+    /// See [`TcpOption::WindowScale`](struct.TcpOption.html#variant.WindowScale).
     pub window_scale: Option<u8>,
+    /// The maximum segment size option, if present.
+    /// See [`TcpOption::MaxSegmentSize`](struct.TcpOption.html#variant.MaxSegmentSize).
     pub max_seg_size: Option<u16>,
+    /// Is true if the SackPermitted option is present.
+    /// See [`TcpOption::SackPermitted`](struct.TcpOption.html#variant.SackPermitted).
     pub sack_permitted: bool,
+    /// The selective acknowledgement ranges.
+    /// See [`TcpOption::SackRange`](struct.TcpOption.html#variant.SackRange).
     pub sack_ranges:  [Option<(u32, u32)>; 3],
+    /// The length of the segment carried by the packet.
     pub payload_len:  u16,
 }
 
@@ -769,8 +817,12 @@ pub struct Repr {
 /// src and dst address.
 pub enum Checksum {
     /// Always fill the checksum and check if it exists.
+    ///
+    /// Note that the ip addresses must both have the same kind, IPv4 or IPv6.
     Manual {
+        /// The ip source address.
         src_addr: IpAddress,
+        /// The ip destination address.
         dst_addr: IpAddress,
     },
 

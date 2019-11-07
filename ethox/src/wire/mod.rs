@@ -7,7 +7,7 @@ functionality.
 
  * First, it provides functions to extract fields from sequences of octets, and to insert fields
    into sequences of octets. This happens in the lowercase structures e.g.  [`ethernet_frame`] or
-   [`udp_packet`].
+   [`udp_packet`] [^tcp].
  * Second, it provides a compact, high-level representation of header data that can be created from
    parsing and emitted into a sequence of octets. This happens through the `Repr` family of structs
    and enums, e.g. [`ArpRepr`] or [`Ipv4Repr`].
@@ -23,6 +23,10 @@ functionality.
 [`Ipv4Repr`]: struct.Ipv4Repr.html
 [`ArpPacket`]: struct.ArpPacket.html
 [`UdpPacket`]: struct.UdpPacket.html
+
+[^tcp]: The TCP structures differ since i haven't gotten around to reworking them. It does not have
+a dynamically sized byte wrapper so its `Packet` implements this functionality as well but come
+with all downsides. In particular, its accessors may panic.
 
 An important part is also the underlying trait for byte containers, [`Payload`] and [`PayloadMut`].
 None of the standard reference traits accurately captures the relationship of a framing outer
