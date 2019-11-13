@@ -26,17 +26,24 @@ pub use crate::layer::loss::{Lossy, PrngLoss};
 
 /// A reference to memory holding packet data and a handle.
 ///
-/// The `Payload` is as an interfance into internal library types for packet parsing while the
+/// The `Payload` is as an interface into internal library types for packet parsing while the
 /// `Handle` is an interface to the device to provide operations for packet handling.
 pub struct Packet<'a, H, P>
 where
     H: Handle + ?Sized + 'a,
     P: Payload + ?Sized + 'a,
 {
+    /// A control handle to the network interface and current buffer.
     pub handle: &'a mut H,
+    /// One buffer containing an Ethernet frame.
     pub payload: &'a mut P,
 }
 
+/// A controller for the network operations of the payload buffer.
+///
+/// Provides the meta data of the payload. This trait is split from the main payload since it must
+/// be possible to use its method even while the payload itself is borrowed (e.g. within a parsed
+/// packet representation).
 pub trait Handle {
     /// Queue this packet to be sent.
     ///
@@ -55,7 +62,7 @@ pub trait Handle {
 }
 
 pub trait Info {
-    /// The reference timestamp for this packet.
+    /// The reference time stamp for this packet.
     fn timestamp(&self) -> Instant;
 
     /// Capabilities used for the packet.
@@ -65,8 +72,17 @@ pub trait Info {
     fn capabilities(&self) -> Capabilities;
 }
 
+/// A layer 2 device.
 pub trait Device {
+    /// The control handle type also providing packet meta information.
     type Handle: Handle + ?Sized;
+    /// The payload buffer type of this device.
+    ///
+    /// It can be an owning buffer such as `Vec<u8>` or a non-owning buffer or even only emulate a
+    /// buffer containing an Ethernet packet. Note that the buffer trait should stay a type
+    /// parameter so that upper layers can make use of additional methods and not be constrained to
+    /// the `Payload` trait. (Although smart use of `Any` might in some cases suffice in a real,
+    /// specific network stack that is not this library).
     type Payload: Payload + ?Sized;
 
     /// A description of the device.
@@ -75,10 +91,18 @@ pub trait Device {
     /// implementation does not take advantage of this fact.
     fn personality(&self) -> Personality;
 
+    /// Transmit some packets utilizing the `sender`.
+    ///
+    /// Up to `max` packet buffers are chosen by the device. They are provided to the sender callback
+    /// which may initialize their contents and decide to queue them. Afterwards, the device is
+    /// responsible for cleaning up unused buffers and physically sending queued buffers.
     fn tx(&mut self, max: usize, sender: impl Send<Self::Handle, Self::Payload>)
         -> Result<usize>;
 
-    fn rx(&mut self, max: usize, receptor: impl Recv<Self::Handle, Self::Payload>)
+    /// Receive packet utilizing the `receptor`.
+    ///
+    /// Dequeue up to `max` received packets and provide them to the receiver callback.
+    fn rx(&mut self, max: usize, receiver: impl Recv<Self::Handle, Self::Payload>)
         -> Result<usize>;
 }
 
@@ -102,8 +126,12 @@ pub trait Recv<H: Handle + ?Sized, P: Payload + ?Sized> {
 }
 
 pub trait Send<H: Handle + ?Sized, P: Payload + ?Sized> {
+    /// Fill a single packet for sending.
     fn send(&mut self, packet: Packet<H, P>);
 
+    /// Vectored sending.
+    ///
+    /// The default implementation will simply send all packets in sequence.
     fn sendv<'a>(&mut self, packets: impl IntoIterator<Item=Packet<'a, H, P>>)
         where P: 'a, H: 'a
     {
