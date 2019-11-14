@@ -27,7 +27,7 @@ use tap_traits::{IfIndex, NetdeviceMtu};
 pub struct RawSocketDesc {
     lower: libc::c_int,
     ifreq: ifreq,
-    mss: usize,
+    mtu: usize,
 }
 
 #[derive(Debug)]
@@ -68,17 +68,22 @@ impl RawSocketDesc {
         };
 
         FdResult(lower).errno()?;
+        let mtu = Self::get_sock_mtu(lower, name)?;
 
         Ok(RawSocketDesc {
             lower,
             ifreq: ifreq::new(name),
-            mss: 1500,
+            mtu,
         })
     }
 
-    pub fn interface_mtu(&mut self) -> Result<usize, Errno> {
-        self.ifreq.get_mtu(self.lower)
-            .map(|mtu| mtu as usize)
+    fn get_sock_mtu(sock: libc::c_int, name: &str) -> Result<usize, Errno> {
+        let mut ifreq = ifreq::new(name);
+        ifreq.get_mtu(sock).map(|mtu| mtu as usize)
+    }
+
+    pub fn interface_mtu(&self) -> Result<usize, Errno> {
+        Ok(self.mtu)
     }
 
     pub fn bind_interface(&mut self) -> Result<(), Errno> {
