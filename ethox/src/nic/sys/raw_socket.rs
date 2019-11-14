@@ -2,7 +2,7 @@
 // Copyright (C) 2019 Andreas Molzer <andreas.molzer@tum.de>
 //
 // in large parts from `smoltcp` originally distributed under 0-clause BSD
-use core::mem;
+use core::{mem, ptr};
 #[cfg(feature = "std")]
 use std::os::unix::io::{RawFd, AsRawFd};
 
@@ -26,7 +26,8 @@ use tap_traits::{IfIndex, NetdeviceMtu};
 #[derive(Debug)]
 pub struct RawSocketDesc {
     lower: libc::c_int,
-    ifreq: ifreq
+    ifreq: ifreq,
+    mss: usize,
 }
 
 #[derive(Debug)]
@@ -71,6 +72,7 @@ impl RawSocketDesc {
         Ok(RawSocketDesc {
             lower,
             ifreq: ifreq::new(name),
+            mss: 1500,
         })
     }
 
@@ -122,6 +124,45 @@ impl RawSocketDesc {
         };
         IoLenResult(len).errno()?;
         Ok(len as usize)
+    }
+
+    /// Receive a number of messages.
+    pub fn recvm(&mut self, buffers: &mut [libc::mmsghdr])
+        -> Result<usize, Errno>
+    {
+        use core::convert::TryFrom;
+        let compat_len = libc::c_uint::try_from(buffers.len())
+            .unwrap_or_else(|_| libc::c_uint::max_value());
+        let len = unsafe {
+            libc::recvmmsg(
+                self.lower,
+                buffers.as_mut_ptr(),
+                compat_len,
+                libc::MSG_WAITFORONE,
+                ptr::null_mut())
+        };
+        IoLenResult(len as libc::ssize_t).errno()?;
+        Ok(len as usize)
+    }
+
+    /// Send a number of messages.
+    /// Buffers must be writable since each buffers own sent byte count is written.
+    pub fn sendm(&mut self, buffers: &mut [libc::mmsghdr])
+        -> Result<(), Errno>
+    {
+        use core::convert::TryFrom;
+        let compat_len = libc::c_uint::try_from(buffers.len())
+            .unwrap_or_else(|_| libc::c_uint::max_value());
+        let len = unsafe {
+            libc::sendmmsg(
+                self.lower,
+                buffers.as_mut_ptr(),
+                compat_len,
+                0)
+        };
+        IoLenResult(len as libc::ssize_t).errno()?;
+        // Sent all buffers if successful.
+        Ok(())
     }
 }
 
