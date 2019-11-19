@@ -151,14 +151,13 @@ impl RawSocketDesc {
         use core::convert::TryFrom;
         let compat_len = libc::c_uint::try_from(buffers.len())
             .unwrap_or_else(|_| libc::c_uint::max_value());
-        let len = unsafe {
-            libc::recvmmsg(
-                self.lower,
-                buffers.as_mut_ptr(),
-                compat_len,
-                libc::MSG_WAITFORONE,
-                ptr::null_mut())
-        };
+        let len = libc::recvmmsg(
+            self.lower,
+            buffers.as_mut_ptr(),
+            compat_len,
+            libc::MSG_WAITFORONE,
+            ptr::null_mut()
+        );
         IoLenResult(len as libc::ssize_t).errno()?;
         Ok(len as usize)
     }
@@ -174,13 +173,12 @@ impl RawSocketDesc {
         use core::convert::TryFrom;
         let compat_len = libc::c_uint::try_from(buffers.len())
             .unwrap_or_else(|_| libc::c_uint::max_value());
-        let len = unsafe {
-            libc::sendmmsg(
-                self.lower,
-                buffers.as_mut_ptr(),
-                compat_len,
-                0)
-        };
+        let len = libc::sendmmsg(
+            self.lower,
+            buffers.as_mut_ptr(),
+            compat_len,
+            0
+        );
         IoLenResult(len as libc::ssize_t).errno()?;
         // Sent all buffers if successful.
         Ok(())
