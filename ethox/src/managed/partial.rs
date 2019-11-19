@@ -13,7 +13,7 @@ use crate::wire::{Reframe, Payload, PayloadError, PayloadMut, payload};
 /// the current length unless the request can not be fulfilled with the current buffer size. Only
 /// in that case will it resize the underlying buffer.
 // TODO: implement PartialEq, Eq, PartialOrd, Ord
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Partial<C> {
     inner: C,
     end: usize,

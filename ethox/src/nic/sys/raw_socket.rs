@@ -38,6 +38,17 @@ pub struct RawSocket<C> {
     capabilities: Capabilities,
 }
 
+const BATCH_COUNT: usize = 8;
+
+/// An raw socket adapter for multi send/recv calls.
+pub struct Batched<'a> {
+    inner: &'a mut RawSocketDesc,
+    last_err: &'a mut Option<Errno>,
+    capabilities: Capabilities,
+    buffers: [Partial<&'a mut [u8]>; BATCH_COUNT],
+    buffer_count: usize,
+}
+
 enum Received {
     NoData,
     Ok,
@@ -132,7 +143,9 @@ impl RawSocketDesc {
     }
 
     /// Receive a number of messages.
-    pub fn recvm(&mut self, buffers: &mut [libc::mmsghdr])
+    ///
+    /// Safety: The buffers pointed to by the `mmsghdr` elements must be valid for writing.
+    pub unsafe fn recvm(&mut self, buffers: &mut [libc::mmsghdr])
         -> Result<usize, Errno>
     {
         use core::convert::TryFrom;
@@ -151,8 +164,11 @@ impl RawSocketDesc {
     }
 
     /// Send a number of messages.
-    /// Buffers must be writable since each buffers own sent byte count is written.
-    pub fn sendm(&mut self, buffers: &mut [libc::mmsghdr])
+    ///
+    /// Buffer headers must be writable since each buffers own sent byte count is written.
+    ///
+    /// Safety: The buffers pointed to by the `mmsghdr` elements must be valid for reading.
+    pub unsafe fn sendm(&mut self, buffers: &mut [libc::mmsghdr])
         -> Result<(), Errno>
     {
         use core::convert::TryFrom;
@@ -200,6 +216,11 @@ impl<C: PayloadMut> RawSocket<C> {
         self.last_err.take()
     }
 
+    /// Construct an adapter that acts on multiple messages.
+    pub fn batched(&mut self) -> Batched<'_> {
+        Batched::new(self)
+    }
+
     /// Resize the partial buffer to its full length.
     fn recycle(&mut self) {
         let length = self.buffer
@@ -236,6 +257,139 @@ impl<C: PayloadMut> RawSocket<C> {
         let as_nic = crate::layer::Error::Illegal;
         self.last_err = Some(err);
         as_nic
+    }
+
+    fn current_info(&self) -> PacketInfo {
+        PacketInfo {
+            timestamp: now().unwrap(),
+            capabilities: self.capabilities,
+        }
+    }
+}
+
+impl<'a> Batched<'a> {
+    pub fn new(sock: &'a mut RawSocket<impl PayloadMut>)
+        -> Self
+    {
+        let mut buffers: [Partial<_>; BATCH_COUNT] = Default::default();
+        let buffer = sock.buffer
+            .inner_mut()
+            .payload_mut()
+            .as_mut_slice();
+
+        let count = buffer.chunks_mut(sock.inner.mtu)
+            .zip(&mut buffers)
+            .map(|(chunk, buffer)| {
+                *buffer = Partial::new(chunk);
+            })
+            .count();
+
+        Batched {
+            inner: &mut sock.inner,
+            last_err: &mut sock.last_err,
+            capabilities: sock.capabilities,
+            buffers,
+            buffer_count: count,
+        }
+    }
+
+    fn recycle(&mut self) {
+        for buffer in &mut self.buffers {
+            buffer.set_len_unchecked(0);
+        }
+    }
+
+    const NULL_IOHDR: libc::mmsghdr = libc::mmsghdr {
+        msg_hdr: libc::msghdr {
+            msg_name: ptr::null_mut(),
+            msg_namelen: 0,
+            msg_control: ptr::null_mut(),
+            msg_controllen: 0,
+            msg_flags: 0,
+            msg_iov: ptr::null_mut(),
+            msg_iovlen: 0,
+        },
+        msg_len: 0,
+    };
+
+    const NULL_IOVEC: libc::iovec = libc::iovec {
+        iov_base: ptr::null_mut(),
+        iov_len: 0,
+    };
+
+    fn send_where(&mut self, flags: &[EnqueueFlag]) -> nic::Result<usize> {
+        assert!(flags.len() <= self.buffers.len());
+        let mut headers = [Self::NULL_IOHDR; 8];
+        let mut iovecs = [Self::NULL_IOVEC; BATCH_COUNT];
+        let mut count = 0;
+
+        for (buffer, flag) in self.buffers.iter_mut().zip(flags) {
+            if flag.was_sent() {
+                let slot = &mut headers[count];
+                let iovec = &mut iovecs[count];
+                let buffer = buffer.as_mut_slice();
+
+                iovec.iov_base = buffer.as_mut_ptr() as *mut _;
+                iovec.iov_len = buffer.len();
+
+                slot.msg_hdr.msg_iov = iovec;
+                slot.msg_hdr.msg_iovlen = 1;
+
+                count += 1;
+            }
+        }
+
+        let sent = unsafe {
+            self.inner.sendm(&mut headers[..count])
+        };
+
+        match sent {
+            Ok(()) => Ok(count),
+            Err(errno) => {
+                *self.last_err = Some(errno);
+                Err(crate::layer::Error::Illegal)
+            },
+        }
+    }
+
+    fn recvm(&mut self) -> nic::Result<usize> {
+        let mut headers = [Self::NULL_IOHDR; BATCH_COUNT];
+        let mut iovecs = [Self::NULL_IOVEC; BATCH_COUNT];
+
+        for (idx, buffer) in self.buffers.iter_mut().enumerate() {
+            //Resize the buffer to maximum length.
+            buffer.set_len_unchecked(buffer.capacity());
+
+            let slot = &mut headers[idx];
+            let iovec = &mut iovecs[idx];
+
+            let buffer = buffer.as_mut_slice();
+
+            iovec.iov_base = buffer.as_mut_ptr() as *mut _;
+            iovec.iov_len = buffer.len();
+
+            slot.msg_hdr.msg_iov = iovec;
+            slot.msg_hdr.msg_iovlen = 1;
+        }
+
+        let recv = unsafe {
+            self.inner.recvm(&mut headers[..BATCH_COUNT])
+        };
+
+        let recv = match recv {
+            Ok(recv) => recv as usize,
+            Err(errno) => {
+                *self.last_err = Some(errno);
+                return Err(crate::layer::Error::Illegal);
+            },
+        };
+
+        for (idx, buffer) in self.buffers.iter_mut().enumerate().take(recv) {
+            let len = headers[idx].msg_len;
+            buffer.set_len_unchecked(len as usize);
+        }
+
+        Ok(recv)
     }
 
     fn current_info(&self) -> PacketInfo {
@@ -301,6 +455,54 @@ impl<C: PayloadMut> Device for RawSocket<C> {
         }
 
         Ok(1)
+    }
+}
+
+impl<'a> Device for Batched<'a> {
+    type Handle = EnqueueFlag;
+    type Payload = Partial<&'a mut [u8]>;
+
+    /// A description of the device.
+    ///
+    /// Could be dynamically configured but the optimizer and the user is likely happier if the
+    /// implementation does not take advantage of this fact.
+    fn personality(&self) -> Personality {
+        Personality::baseline()
+    }
+
+    fn tx(&mut self, _: usize, mut sender: impl nic::Send<Self::Handle, Self::Payload>)
+        -> nic::Result<usize>
+    {
+        let handle = EnqueueFlag::set_true(self.current_info());
+        let mut handle = [handle; BATCH_COUNT];
+
+        self.recycle();
+        let packets = self.buffers
+            .iter_mut()
+            .zip(&mut handle)
+            .map(|(payload, handle)| Packet { payload, handle });
+
+        sender.sendv(packets);
+        self.send_where(&handle)
+    }
+
+    fn rx(&mut self, _: usize, mut receptor: impl nic::Recv<Self::Handle, Self::Payload>)
+        -> nic::Result<usize>
+    {
+        let received = self.recvm()?;
+
+        let handle = EnqueueFlag::set_true(self.current_info());
+        let mut handle = [handle; BATCH_COUNT];
+        assert!(received <= BATCH_COUNT);
+
+        let packets = self.buffers
+            .iter_mut()
+            .zip(&mut handle)
+            .map(|(payload, handle)| Packet { payload, handle });
+
+        receptor.receivev(packets);
+
+        self.send_where(&handle)
     }
 }
 

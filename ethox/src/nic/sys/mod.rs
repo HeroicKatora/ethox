@@ -37,7 +37,7 @@ pub mod exports {
     #[cfg(target_os = "linux")]
     pub use super::tap_interface::{TapInterface, TapInterfaceDesc};
     #[cfg(target_os = "linux")]
-    pub use super::raw_socket::{RawSocket, RawSocketDesc};
+    pub use super::raw_socket::{Batched, RawSocket, RawSocketDesc};
     #[cfg(feature = "std")]
     pub use super::wait as sys_wait;
     pub use super::Errno;
