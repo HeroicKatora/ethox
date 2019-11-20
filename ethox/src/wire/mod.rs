@@ -125,6 +125,10 @@ let mut buffer = vec![0; repr.buffer_len() + repr.payload_len];
 // * `tcp.rs`
 // * `udp.rs`
 
+// FIXME: Most fields should be self-explanatory and there is the general guide but enable once the
+// other issues have been resolved.
+#![allow(missing_docs)]
+
 mod field {
     pub(crate) type Field = ::core::ops::Range<usize>;
     pub(crate) type Rest  = ::core::ops::RangeFrom<usize>;
