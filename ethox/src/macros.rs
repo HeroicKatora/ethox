@@ -11,7 +11,6 @@
 /// # use ethox::enum_with_unknown;
 /// # fn main() { }
 /// enum_with_unknown! {
-///     #[derive(Copy, Clone)]
 ///     pub enum IpVersion(u8) {
 ///         IpV4 = 4,
 ///         IpV6 = 6,
