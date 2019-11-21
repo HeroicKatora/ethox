@@ -151,15 +151,20 @@ impl RawSocketDesc {
         use core::convert::TryFrom;
         let compat_len = libc::c_uint::try_from(buffers.len())
             .unwrap_or_else(|_| libc::c_uint::max_value());
+
         let len = libc::recvmmsg(
             self.lower,
             buffers.as_mut_ptr(),
             compat_len,
-            libc::MSG_WAITFORONE,
+            0,
             ptr::null_mut()
         );
-        IoLenResult(len as libc::ssize_t).errno()?;
-        Ok(len as usize)
+
+        match IoLenResult(len as libc::ssize_t).errno() {
+            Ok(_) => Ok(len as usize),
+            Err(Errno(libc::EWOULDBLOCK)) => Ok(0),
+            Err(other) => Err(other),
+        }
     }
 
     /// Send a number of messages.
@@ -279,7 +284,9 @@ impl<'a> Batched<'a> {
             .zip(&mut buffers)
             .map(|(chunk, buffer)| {
                 *buffer = Partial::new(chunk);
+                buffer
             })
+            .filter(|partial| partial.capacity() > 0)
             .count();
 
         Batched {
@@ -317,7 +324,7 @@ impl<'a> Batched<'a> {
 
     fn send_where(&mut self, flags: &[EnqueueFlag]) -> nic::Result<usize> {
         assert!(flags.len() <= self.buffers.len());
-        let mut headers = [Self::NULL_IOHDR; 8];
+        let mut headers = [Self::NULL_IOHDR; BATCH_COUNT];
         let mut iovecs = [Self::NULL_IOVEC; BATCH_COUNT];
         let mut count = 0;
 
@@ -354,7 +361,7 @@ impl<'a> Batched<'a> {
         let mut headers = [Self::NULL_IOHDR; BATCH_COUNT];
         let mut iovecs = [Self::NULL_IOVEC; BATCH_COUNT];
 
-        for (idx, buffer) in self.buffers.iter_mut().enumerate() {
+        for (idx, buffer) in self.buffers.iter_mut().enumerate().take(self.buffer_count) {
             //Resize the buffer to maximum length.
             buffer.set_len_unchecked(buffer.capacity());
 
@@ -495,6 +502,7 @@ impl<'a> Device for Batched<'a> {
 
         let packets = self.buffers
             .iter_mut()
+            .take(received)
             .zip(&mut handle)
             .map(|(payload, handle)| Packet { payload, handle });
 

@@ -19,8 +19,9 @@ use ethox::layer::{eth, ip};
 fn main() {
     let config = config::Config::from_args();
 
-    let mut interface = RawSocket::new(&config.tap, vec![0; 1 << 14])
+    let mut interface = RawSocket::new(&config.tap, vec![0; 1 << 20])
         .expect("Couldn't initialize interface");
+    let mut interface = interface.batched();
 
     let mut eth = eth::Endpoint::new(config.hostmac);
 
