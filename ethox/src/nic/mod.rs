@@ -61,6 +61,13 @@ pub trait Handle {
     // TODO: multiple interfaces (=zerocopy forwarding).
 }
 
+/// The metadata associated with a packet buffer.
+///
+/// This is the central source of information for the ethox implementation that can be customized
+/// by the network interface. The data can differ per buffer, although certain constraints should
+/// hold such as the timestamp should also be monotonically increasing. Violating them is not a
+/// memory safety concern but could hinder forward progress or harm performance, trough discarded
+/// caches or otherwise.
 pub trait Info {
     /// The reference time stamp for this packet.
     fn timestamp(&self) -> Instant;
@@ -106,6 +113,7 @@ pub trait Device {
         -> Result<usize>;
 }
 
+/// A raw network packet receiver.
 pub trait Recv<H: Handle + ?Sized, P: Payload + ?Sized> {
     /// Receive a single packet.
     ///
@@ -125,6 +133,7 @@ pub trait Recv<H: Handle + ?Sized, P: Payload + ?Sized> {
     }
 }
 
+/// A raw network packet sender.
 pub trait Send<H: Handle + ?Sized, P: Payload + ?Sized> {
     /// Fill a single packet for sending.
     fn send(&mut self, packet: Packet<H, P>);
