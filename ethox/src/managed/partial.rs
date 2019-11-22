@@ -94,6 +94,11 @@ impl<C> Partial<C> {
 impl<C, T> Partial<C>
     where C: Deref<Target=[T]>
 {
+    /// Construct an instance referring to all of the inner container.
+    ///
+    /// This sets the Partial's length based on the slice to which the container dereferences. If
+    /// the containers impl of `Deref` is not consistent then some later calls may panic (but not
+    /// this constructor).
     pub fn new_full(inner: C) -> Self {
         let end = inner.len();
         Partial {
@@ -102,7 +107,7 @@ impl<C, T> Partial<C>
         }
     }
 
-    /// Check how many elements can be inserted at most.
+    /// Check how many elements can be referred to at most.
     ///
     /// This results in the length of the underlying container, not its capacity since the
     /// `Partial` is not aware of reallocation or other behaviour to change the underlying

@@ -22,14 +22,17 @@ pub enum Slice<'a, T: 'a> {
 }
 
 impl<'a, T: 'a> Slice<'a, T> {
+    /// Create an empty Slice, borrowing an empty slice.
     pub fn empty() -> Self {
         Slice::Borrowed(Default::default())
     }
 
+    /// Construct a slice directly containing a single value.
     pub fn one_default() -> Self where T: Default {
         Slice::One(T::default())
     }
 
+    /// Returns a reference to the contained data as a slice.
     pub fn as_slice(&self) -> &[T] {
         match self {
             Slice::One(t) => slice::from_ref(t),
@@ -38,6 +41,7 @@ impl<'a, T: 'a> Slice<'a, T> {
         }
     }
 
+    /// Returns a reference to the contained data as a mutable slice.
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         match self {
             Slice::One(t) => slice::from_mut(t),
