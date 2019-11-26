@@ -32,6 +32,13 @@ pub enum Answer {
     RateLimited,
 }
 
+/// One mapped value of an entry in the neighbor cache.
+///
+/// A valid physical address is only one possible variant. To ensure that an outgoing probe can
+/// receive an answer, we reserve a slot while the outstanding request has not timed out. And since
+/// we might not have a packet buffer when a request should be sent, or due to rate limiting, there
+/// also exists a state for requests that have not yet been sent but which are necessary for upper
+/// layer progress.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Mapping {
     /// An address is present.
@@ -50,6 +57,7 @@ impl Default for Mapping {
     }
 }
 
+/// Errors that can occur when adding a new ARP result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
     /// There as no space to add the entry.
@@ -300,6 +308,7 @@ impl Neighbor {
         self.protocol_addr
     }
 
+    /// Get the physical address this protocol address is mapped to.
     pub fn hardware_addr(&self) -> Option<EthernetAddress> {
         match self.hardware_addr {
             Mapping::Address(addr) => Some(addr),
@@ -308,10 +317,16 @@ impl Neighbor {
         }
     }
 
+    /// Check if the entry should still be considered valid.
+    ///
+    /// This is the negation of `is_expired`.
     pub fn is_alive(&self, ts: Instant) -> bool {
         Expiration::When(ts) <= self.expires_at
     }
 
+    /// Check if the entry expired.
+    ///
+    /// This is the negation of `is_alive`.
     pub fn is_expired(&self, ts: Instant) -> bool {
         !self.is_alive(ts)
     }
