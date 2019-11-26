@@ -39,14 +39,14 @@ pub struct FourTuple {
     pub remote_port: u16,
 }
 
-/// A connection slot.
-///
-/// Can be used to open or accept a new connection. Usage of this acts similar to a slotmap where a
-/// dedicated `SlotKey` allows referring to a connection outside of its lifetime without
-/// introducing lifetime-tracked references and dependencies.
+/// A connection slot wrapping the internal connection state.
 ///
 /// Contains the four-tuple which maps to the slot, completing the loop for lookups
-/// (slotkey->4tuple,4tuple->slotkey).
+/// (slotkey->4tuple,4tuple->slotkey). Usage of this acts similar to a slotmap where a dedicated
+/// `SlotKey` allows referring to a connection outside of its lifetime without introducing
+/// lifetime-tracked references and dependencies.
+///
+/// Internally used as the backing storage to open or accept a new connection.
 #[derive(Clone, Copy, Debug, Hash)]
 pub struct Slot {
     addr: FourTuple,
@@ -131,7 +131,7 @@ impl Endpoint<'_> {
         self.states.get_mut(index.key)
     }
 
-    pub fn entry(&mut self, index: SlotKey)
+    pub(crate) fn entry(&mut self, index: SlotKey)
         -> Option<Entry>
     {
         let slot = self.states.get_mut(index.key)?;
@@ -144,7 +144,7 @@ impl Endpoint<'_> {
         })
     }
 
-    pub fn entry_from_tuple(&mut self, tuple: FourTuple)
+    pub(crate) fn entry_from_tuple(&mut self, tuple: FourTuple)
         -> Option<Entry>
     {
         let key = self.ports.get(&tuple).cloned()?;
@@ -277,7 +277,7 @@ impl Slot {
         self.addr
     }
 
-    pub fn connection(&self) -> &Connection {
+    pub(crate) fn connection(&self) -> &Connection {
         &self.connection
     }
 }
