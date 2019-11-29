@@ -104,6 +104,7 @@ pub struct Connection {
     pub recv: Receive,
 }
 
+/// The connection state relevant for outgoing segments.
 #[derive(Clone, Copy, Debug, Hash)]
 pub struct Send {
     /// The next not yet acknowledged sequence number.
@@ -145,6 +146,7 @@ pub struct Send {
     pub initial_seq: TcpSeqNumber,
 }
 
+/// The connection state relevant for incoming segments.
 #[derive(Clone, Copy, Debug, Hash)]
 pub struct Receive {
     /// The next expected sequence number.
@@ -267,6 +269,9 @@ pub struct Signals {
     pub answer: Option<TcpRepr>,
 }
 
+/// A descriptor of the transmission buffer.
+///
+///
 #[derive(Clone, Copy, Debug)]
 pub struct AvailableBytes {
     /// Set when no more data will come.
@@ -276,7 +281,14 @@ pub struct AvailableBytes {
     pub total: usize,
 }
 
+/// A descriptor of an accepted incoming segment.
+///
+/// This acknowledges a segment that has been accepted by the receive/reassembly buffer, advancing
+/// the outgoing ACKs and other related state. See [`Connection::set_recv_ack`] for details.
+///
+/// [`Connection::set_recv_ack`]: struct.Connection.set_recv_ack
 #[derive(Clone, Copy, Debug)]
+#[must_use = "Pass this to `Connection::set_recv_ack` after read the segment."]
 pub struct ReceivedSegment {
     /// If the segment has a syn.
     ///
@@ -311,12 +323,13 @@ pub struct InPacket {
     pub time: Instant,
 }
 
+/// An outgoing segment.
 #[derive(Clone, Debug)]
 pub struct Segment {
     /// Representation for the packet.
     pub repr: TcpRepr,
 
-    /// Range of the data within the (re-)transmit buffer.
+    /// Range of the data that should be included, as indexed within the (re-)transmit buffer.
     pub range: Range<usize>,
 }
 
@@ -434,6 +447,7 @@ impl Connection {
         }
     }
 
+    /// Handle an arriving packet.
     pub fn arrives(&mut self, incoming: &InPacket, entry: EntryKey) -> Signals {
         match self.current {
             State::Closed => self.arrives_closed(incoming),
@@ -444,6 +458,7 @@ impl Connection {
         }
     }
 
+    /// Realize the effect of opening SYN packet.
     pub fn open(&mut self, time: Instant, entry: EntryKey)
         -> Result<(), crate::layer::Error>
     {
@@ -504,6 +519,7 @@ impl Connection {
         return signals;
     }
 
+    /// Handle an incoming packet in Listen state.
     fn arrives_listen(&mut self, incoming: &InPacket, mut entry: EntryKey)
         -> Signals
     {
@@ -1041,8 +1057,16 @@ impl Connection {
 
     /// Acknowledge that a received segment has reached the reader.
     ///
-    /// This method trusts the content of the `ReceivedSegment`. In particular, its FIN bit should
-    /// be accurate.
+    /// This method trusts the content of the `ReceivedSegment`. In particular, its SYN/FIN bits,
+    /// time stamp and length information should be of the last received packet. The best course of
+    /// action is to only pass in exactly the value previously returned in the signals of a call to
+    /// [`arrives`].
+    ///
+    /// Passing wrong information will not lead to memory safety concerns directly but you can no
+    /// longer rely on the accuracy of subsequent connection state. The remote may also get
+    /// incorrect ACKs, and connection resets might occur.
+    ///
+    /// [`arrives`]: #method.arrives
     pub fn set_recv_ack(&mut self, meta: ReceivedSegment) {
         let end = meta.sequence_end();
         let acked_all = self.send.next == self.send.unacked;
@@ -1131,6 +1155,7 @@ impl Receive {
         self.next.contains_in_window(seq, self.window.into())
     }
 
+    /// Setup the window based on an incoming (unscaled) window field.
     pub fn update_window(&mut self, window: usize) {
         let max = u32::from(u16::max_value()) << self.window_scale;
         let capped = u32::try_from(window)
@@ -1171,6 +1196,7 @@ impl Send {
 }
 
 impl ReceivedSegment {
+    /// Compute the total length in sequence space, including SYN or FIN.
     pub fn sequence_len(&self) -> usize {
         self.data_len
             + usize::from(self.syn)
@@ -1191,18 +1217,22 @@ impl ReceivedSegment {
         }
     }
 
+    /// Returns the sequence number corresponding to the first data byte in this segment.
     pub fn data_begin(&self) -> TcpSeqNumber {
         self.begin + usize::from(self.syn)
     }
 
+    /// Returns the sequence number corresponding to the last data byte in this segment.
     pub fn data_end(&self) -> TcpSeqNumber {
         self.begin + usize::from(self.syn) + self.data_len
     }
 
+    /// Check if the given sequence number if within the window of this segment.
     pub fn contains_in_window(&self, seq: TcpSeqNumber) -> bool {
         self.begin.contains_in_window(seq, self.sequence_len())
     }
 
+    /// Returns the past-the-end sequence number with which to ACK the segment.
     pub fn sequence_end(&self) -> TcpSeqNumber {
         self.begin + self.sequence_len()
     }

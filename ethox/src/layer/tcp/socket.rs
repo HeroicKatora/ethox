@@ -6,6 +6,23 @@
 use super::{InPacket, RawPacket, Recv, RecvBuf, Send, SendBuf, SlotKey};
 use crate::wire::{IpAddress, PayloadMut};
 
+/// A tcp handler for a client (actively opened connection).
+///
+/// Groups the user buffers and some additional cached connection state to provide maximally
+/// generic implementations of [`tcp::Send`] and [`tcp::Recv`]. Note that writing and reading data
+/// from the underlying stream still depends on what methods the buffers offer. For these reasons,
+/// it is possible to access them with the [`send`] and [`recv`] methods (and mutable variants
+/// thereof) respectively.
+///
+/// ## Things that do not work yet
+///
+/// There should be a `bind` constructor but currently the local address can only be deduced
+/// automatically.
+///
+/// Error handling is also suboptimal and mostly close the connection.
+///
+/// [`tcp::Send`]: ../trait.Send.html
+/// [`tcp::Recv`]: ../trait.Recv.html
 pub struct Client<R, S> {
     state: ClientState,
     recv: R,
@@ -29,6 +46,7 @@ where
     R: RecvBuf,
     S: SendBuf,
 {
+    /// Create a client connecting to a remote on some automatically derived local address.
     pub fn new(
         remote: IpAddress,
         remote_port: u16,
@@ -68,9 +86,9 @@ impl<R, S> Client<R, S> {
     /// Get a mutable reference to the send buffer.
     ///
     /// You should only use this to append additional data or remove acknowledged data, and not to
-    /// modify data that has already been sent but is still in the retranmission window.
+    /// modify data that has already been sent but is still in the retransmission window.
     ///
-    /// (Admitteldy, you could use this to probe other network stacks on their handling of
+    /// (Admittedly, you could use this to probe other network stacks on their handling of
     /// conflicting retransmitted segments. That would be annoying but, and this should not be read
     /// as an endorsement of blackhat hacking, somewhat cool).
     pub fn send_mut(&mut self) -> &mut S {
@@ -82,6 +100,20 @@ impl<R, S> Client<R, S> {
         match self.state {
             ClientState::Finished => true,
             _ => false,
+        }
+    }
+
+    /// Get the key of the active connection.
+    ///
+    /// The key can be used to manually attach to the connection during rx and tx operations or to
+    /// query the state from the endpoint at any point.
+    ///
+    /// Returns `None` when no connection has been established yet or the connection is already
+    /// terminated.
+    pub fn connection_key(&self) -> Option<SlotKey> {
+        match self.state {
+            ClientState::InStack { key } => Some(key),
+            _ => None,
         }
     }
 }
@@ -131,8 +163,8 @@ where
                         self.state = ClientState::InStack { key: open.key() };
                         open
                     },
-                    // TODO: error handling.
                     Err(crate::layer::Error::Exhausted) => return,
+                    // TODO: error handling.
                     Err(_other) => {
                         // TODO: error debgugging.
                         self.state = ClientState::Finished;

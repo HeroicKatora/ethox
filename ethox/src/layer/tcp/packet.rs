@@ -39,13 +39,15 @@ pub enum In<'a, P: PayloadMut> {
     Stray(Stray<'a, P>),
 }
 
+/// A user defined (re-)transmission buffer.
+/// TODO: a better guide on how to customize
 pub trait SendBuf {
     /// Check the available data.
     ///
-    /// This should be the total of previously sent bytes and unsent bytes.
+    /// This should be the total of sent-but-unacknowledged bytes and unsent bytes.
     fn available(&self) -> AvailableBytes;
 
-    /// Fill in some retransmited data.
+    /// Fill in some (re-)transmitted data.
     ///
     /// The tcp connection layer will take care to never call this with a buffer outside the
     /// indicated available data length. Bytes that have already been sent are not supposed to
@@ -58,6 +60,8 @@ pub trait SendBuf {
     fn ack(&mut self, begin: TcpSeqNumber);
 }
 
+/// A user defined segment reassembly buffer.
+/// TODO: a better guide on how to customize
 pub trait RecvBuf {
     /// Accept some incoming data.
     ///
@@ -150,6 +154,9 @@ pub struct Closed<'a, P: PayloadMut> {
 /// An open connection on which we might want to send and receive data.
 ///
 /// Reading of incoming data and sending of ones own is largely independent of each other.
+///
+/// On the receiving path it is recommended to call `read` sometimes to ensure the remote is not
+/// stalled indefinitely (
 pub struct Open<'a, P: PayloadMut> {
     ip: ip::Handle<'a>,
     operator: Operator<'a>,
@@ -217,6 +224,7 @@ impl<'a, P: PayloadMut> Unhandled<'a, P> {
 }
 
 impl<'a, P: PayloadMut> In<'a, P> {
+    /// Handle an incoming TCP packet returning a representation indicating appropriate options.
     pub fn from_arriving(
         endpoint: &'a mut dyn Endpoint,
         ip_control: ip::Handle<'a>,
@@ -318,10 +326,12 @@ impl<'a, P: PayloadMut> In<'a, P> {
 }
 
 impl<'a, P: PayloadMut> Open<'a, P> {
+    /// Get the slot key of the connection corresponding to this packet.
     pub fn key(&self) -> SlotKey {
         self.operator.connection_key
     }
 
+    /// Receive data contained in the TCP segment.
     pub fn read(&mut self, with: &mut impl RecvBuf) {
         let connection = self.operator.connection_mut();
         connection.recv.update_window(with.window());
