@@ -454,7 +454,7 @@ impl<'a, P: PayloadMut> Raw<'a, P> {
             _ => return Err(crate::layer::Error::Illegal),
         };
 
-        self.ip.handle().local_ip(source)
+        self.ip.handle.local_ip(source)
             .ok_or(crate::layer::Error::Unreachable)
     }
 }

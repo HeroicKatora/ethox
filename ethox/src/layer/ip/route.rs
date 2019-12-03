@@ -144,6 +144,10 @@ impl<'a> Routes<'a> {
         }
     }
 
+    /// Find the next hop for a destination address.
+    ///
+    /// The timestamp ensures that only valid entries are used. If multiple matching routes are
+    /// found then the one with the shortest subnet prefix is preferred.
     pub fn lookup(&self, addr: IpAddress, timestamp: Instant)
         -> Option<IpAddress>
     {
@@ -162,8 +166,9 @@ impl<'a> Routes<'a> {
                 continue;
             }
 
+            // Fill the best_match if none at all yet.
             let best = best_match.get_or_insert(route);
-            // Prefer shortest route.
+            // Prefer shortest route. Fails if just filled.
             if best.net.prefix_len() < route.net.prefix_len() {
                 *best = route;
             }

@@ -63,18 +63,22 @@ impl<'a> Endpoint<'a> {
         }
     }
 
+    /// Receive packet using this mutably borrowed endpoint.
     pub fn recv<H>(&mut self, handler: H) -> Receiver<'_, 'a, H> {
         Receiver { endpoint: self.get_mut(), handler, }
     }
 
+    /// Receive packet using this mutably borrowed endpoint and a function.
     pub fn recv_with<H>(&mut self, handler: H) -> Receiver<'_, 'a, FnHandler<H>> {
         self.recv(FnHandler(handler))
     }
 
+    /// Send packets using this mutably borrowed endpoint.
     pub fn send<H>(&mut self, handler: H) -> Sender<'_, 'a, H> {
         Sender { _endpoint: self.get_mut(), handler, }
     }
 
+    /// Send packets using this mutably borrowed endpoint and a function.
     pub fn send_with<H>(&mut self, handler: H) -> Sender<'_, 'a, FnHandler<H>> {
         self.send(FnHandler(handler))
     }

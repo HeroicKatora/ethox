@@ -9,6 +9,14 @@ use super::{Recv, Send};
 use super::packet::{self, IpPacket, Handle, Route};
 use super::route::Routes;
 
+/// Handles IP connection states.
+///
+/// See the [module level documentation][mod] for more information about the context in which this
+/// structure is used.
+///
+/// [mod]: index.html
+///
+/// As noted there, this contains routing information and neighbor cache(s).
 pub struct Endpoint<'a> {
     /// Routing information.
     routing: Routing<'a>,
@@ -42,6 +50,11 @@ pub struct Receiver<'a, 'data, H> {
     handler: H,
 }
 
+/// An endpoint borrowed for sending.
+///
+/// Note that automatic address configuration traffic (arp, ..) is sent before the upper layer is
+/// invoked. That is, some packet buffers provided by the ethernet layer below might not reach to
+/// handler.
 pub struct Sender<'a, 'data, H> {
     endpoint: IpEndpoint<'a, 'data>,
 
@@ -49,6 +62,10 @@ pub struct Sender<'a, 'data, H> {
     handler: H,
 }
 
+/// An endpoint borrowed only for doing layer internal communication.
+///
+/// This is an equivalent of a receiver and sender without an upper layer handler but might be
+/// slightly more optimized since we statically know that this is the case.
 pub struct Layer<'a, 'data> {
     endpoint: IpEndpoint<'a, 'data>,
 }
@@ -85,18 +102,22 @@ impl<'a> Endpoint<'a> {
         }
     }
 
+    /// Receive packet using this mutably borrowed endpoint.
     pub fn recv<H>(&mut self, handler: H) -> Receiver<'_, 'a, H> {
         Receiver { endpoint: self.ip(), handler, }
     }
 
+    /// Receive packet using this mutably borrowed endpoint and a function.
     pub fn recv_with<H>(&mut self, handler: H) -> Receiver<'_, 'a, FnHandler<H>> {
         self.recv(FnHandler(handler))
     }
 
+    /// Send packets using this mutably borrowed endpoint.
     pub fn send<H>(&mut self, handler: H) -> Sender<'_, 'a, H> {
         Sender { endpoint: self.ip(), handler, }
     }
 
+    /// Send packets using this mutably borrowed endpoint and a function.
     pub fn send_with<H>(&mut self, handler: H) -> Sender<'_, 'a, FnHandler<H>> {
         self.send(FnHandler(handler))
     }
@@ -112,6 +133,7 @@ impl<'a> Endpoint<'a> {
         }
     }
 
+    /// Query if the configured addresses contain this destination.
     pub fn accepts(&self, dst_addr: IpAddress) -> bool {
         self.routing.accepts(dst_addr)
     }
