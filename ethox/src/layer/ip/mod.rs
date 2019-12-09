@@ -78,7 +78,7 @@ pub use route::{
     Routes,
 };
 
-/// A TCP receiver.
+/// A IP receiver.
 ///
 /// Processes incoming TCP traffic and automatic answers and is encouraged to generate additional
 /// packets when the buffer is not needed for protocol internal messages.
@@ -90,15 +90,16 @@ pub trait Recv<P: Payload> {
 }
 
 
-/// A TCP sender.
+/// An IP sender.
 ///
-/// Utilize raw TCP buffers to open connections or send on existing ones.
+/// Utilize raw packet buffers to generate IP encapsulated packets with control over options,
+/// flags, and other extensions.
 pub trait Send<P: Payload> {
     /// Fill in one available packet buffer.
     ///
-    /// Utilize one of the methods to create a new connection or produce packets on an already
-    /// existing one. Directly modifying the endpoint could instead be done outside the `Send`
-    /// trait but a few methods are available as well.
+    /// Utilize one of the methods to query routes or let `Init` do all the work of filling the
+    /// packets from the configured existing ones. Directly modifying the endpoint could instead be
+    /// done outside the `Send` trait but a few methods are available as well.
     fn send(&mut self, raw: RawPacket<P>);
 }
 
