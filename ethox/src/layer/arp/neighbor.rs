@@ -96,6 +96,13 @@ pub enum Error {
 /// let mut neighbor_cache_storage = [Neighbor::default(); 10];
 /// let mut neighbor_cache = NeighborCache::new(&mut neighbor_cache_storage[..]);
 /// ```
+///
+/// ## Details
+///
+/// The map in the background is an ordered slice, optimized for use in small local networks. This
+/// makes insertion and deletion potentially costly but it is bounded by the size of the slice
+/// which is chosen by the user. If your use case requires a different performance characteristic,
+/// feel free to change the code (and upstream your improvement if possible).
 #[derive(Debug)]
 pub struct Cache<'a> {
     storage:      Ordered<'a, Neighbor>,
@@ -213,12 +220,6 @@ impl<'a> Cache<'a> {
                 }
             }
 
-            /*
-            println!("Refreshed entry {}: {:?} - expiry: {:?}", 
-                 new_neighbor.protocol_addr,
-                 new_neighbor.hardware_addr,
-                 new_neighbor.expires_at);
-                 */
             let _old = self.storage.replace_at(index, new_neighbor)
                 .expect("Sorting didn't change since we only have one entry per protocol addr");
             return Ok(());
@@ -264,6 +265,11 @@ impl Table {
         unsafe { &*(data as *const [Neighbor] as *const Self) }
     }
 
+    /// Perform one IpAddress to EthernetAddress translation.
+    ///
+    /// This will ignore any existing mapping other than a valid address. Use it in case it is not
+    /// required to know if the protocol address is currently being queried or the request is
+    /// currently rate limited. If this *is* required, use `lookup` instead.
     pub fn lookup_pure(
         &self,
         protocol_addr: IpAddress,
@@ -275,6 +281,11 @@ impl Table {
         }
     }
 
+    /// Resolve one protocol address to the state reserved for it.
+    ///
+    /// The variants of the returned enum allows one to deduce if the protocol address is currently
+    /// being queried and ifaa request has been sent or is currently rate limited. If only address
+    /// information is desired, use `lookup_pure` instead.
     pub fn lookup(
         &self,
         protocol_addr: IpAddress,
@@ -296,6 +307,7 @@ impl Table {
         Some(entry.hardware_addr)
     }
 
+    /// An iterator over entries with no response yet.
     pub fn missing(&self) -> Missing {
         Missing {
             inner: self.0.iter(),
@@ -304,6 +316,7 @@ impl Table {
 }
 
 impl Neighbor {
+    /// Get the protocol address stored in this entry.
     pub fn protocol_addr(&self) -> IpAddress {
         self.protocol_addr
     }

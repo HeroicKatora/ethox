@@ -8,7 +8,9 @@ use crate::wire::{Payload, PayloadMut};
 
 /// An incoming packet.
 pub struct In<'a, P: Payload> {
+    /// A reference to the ARP endpoint state.
     pub handle: Handle<'a>,
+    /// The valid packet inside the buffer.
     pub packet: ArpPacket<EthernetFrame<&'a mut P>>,
 }
 
@@ -20,20 +22,34 @@ pub struct Out<'a, P: Payload> {
 
 /// A buffer into which a packet can be placed.
 pub struct Raw<'a, P: Payload> {
+    /// A reference to the ARP endpoint state.
     pub handle: Handle<'a>,
+    /// A mutable reference to the payload buffer.
     pub payload: &'a mut P,
 }
 
+
+/// A reference to the endpoint of layers below (phy + eth + ip).
+///
+/// This is not really useful on its own but should instead be used either within a `In` or a
+/// `Raw`. Some of the methods offered there will access the non-public members of this struct to
+/// fulfill their task.
 pub struct Handle<'a> {
     pub(crate) inner: eth::Handle<'a>,
 }
 
 /// Initializer for a packet.
 pub enum Init {
+    /// As an arp request for Ethernet-IPv4 translation.
     EthernetIpv4Request {
+        /// The hardware source address to use.
         source_hardware_addr: EthernetAddress,
+        /// The IPv4 source address to use.
+        /// Might be the same as `target_protocol_addr` for gratuitous ARP.
         source_protocol_addr: Ipv4Address,
+        /// The hardware address of the target of the request, potentially broadcast.
         target_hardware_addr: EthernetAddress,
+        /// The IPv4 address of the target.
         target_protocol_addr: Ipv4Address,
     },
 }
@@ -61,6 +77,7 @@ impl<'a, P: Payload> In<'a, P> {
         In { handle, packet }
     }
 
+    /// Deconstruct the packet into the reusable buffer.
     pub fn deinit(self) -> Raw<'a, P>
     where
         P: PayloadMut,
