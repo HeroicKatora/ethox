@@ -7,7 +7,9 @@ use crate::wire::{EthernetAddress, EthernetFrame, EthernetProtocol, EthernetRepr
 ///
 /// The contents were inspected and could be handled up to the eth layer.
 pub struct In<'a, P: Payload> {
+    /// A reference to the ethernet endpoint state.
     pub handle: Handle<'a>,
+    /// The valid ethernet frame inside the buffer.
     pub frame: EthernetFrame<&'a mut P>,
 }
 
@@ -23,7 +25,9 @@ pub struct Out<'a, P: Payload> {
 
 /// A buffer into which a packet can be placed.
 pub struct Raw<'a, P: Payload> {
+    /// A reference to the ethernet endpoint state.
     pub handle: Handle<'a>,
+    /// A mutable reference to the payload buffer.
     pub payload: &'a mut P,
 }
 
@@ -39,9 +43,21 @@ pub struct Handle<'a> {
 
 /// Initializer for a packet.
 pub struct Init {
+    /// The ethernet source address to use.
+    ///
+    /// Most often you'll want to select the address assigned to the ethernet endpoint at which
+    /// responses are to be received. But in theory you are free to use other addresses, for
+    /// example to emulate a very temporary endpoint or use manual addresses for less standard
+    /// compliant networking.
     pub src_addr: EthernetAddress,
+    /// The destination address for the frame.
+    ///
+    /// Can be broadcast, multi-cast, unicast or some application specific addressing magic within
+    /// an organizational reserved block.
     pub dst_addr: EthernetAddress,
+    /// The protocol of the next layer, contained in the frame payload.
     pub ethertype: EthernetProtocol,
+    /// The length in bytes that the payload requires.
     pub payload: usize,
 }
 
@@ -74,10 +90,17 @@ impl<'a> Handle<'a> {
         }
     }
 
+    /// Get a reference to the network device information.
+    ///
+    /// This is a central method since the ethernet layer abstracts over the phsical media in use.
+    /// It splits the raw packet buffers supplied by the network device into a dynamic trait object
+    /// with the device info (part of the handle) on one hand and the payload buffer on the other.
+    /// This removes some detailed information on the device but simplifies layers on top.
     pub fn info(&self) -> &dyn nic::Info {
         self.nic_handle.info()
     }
 
+    /// Get the configured (source) address of the ethernet endpoint.
     pub fn src_addr(&mut self) -> EthernetAddress {
         self.endpoint.src_addr()
     }
@@ -91,10 +114,6 @@ impl<'a, P: Payload> In<'a, P> {
         where P: PayloadMut,
     {
         Raw::new(self.handle, self.frame.into_inner())
-    }
-
-    pub fn frame(&mut self) -> &mut EthernetFrame<&'a mut P> {
-        &mut self.frame
     }
 }
 
@@ -158,6 +177,10 @@ impl<'a, P: Payload> Out<'a, P> {
         In { handle, frame }
     }
 
+    /// Deconstruct the initialized frame into a raw buffer.
+    ///
+    /// Pairing this with `new_unchecked` allows modifying the frame or handle in nearly arbitrary
+    /// ways while explicitely warning that it is a bad idea to transmit arbitrary frames.
     pub fn into_raw(self) -> Raw<'a, P> {
         let Out { handle, frame } = self;
         Raw { handle, payload: frame.into_inner() }
@@ -170,6 +193,10 @@ impl<'a, P: Payload> Out<'a, P> {
 }
 
 impl<'a, P: PayloadMut> Out<'a, P> {
+    /// A mutable slice containing the payload of the contained protocol.
+    ///
+    /// Prefer this an `into_raw` and `new_unchecked` in case a temporary reference to the payload
+    /// is sufficient.
     pub fn payload_mut_slice(&mut self) -> &mut [u8] {
         self.frame.payload_mut_slice()
     }
@@ -183,6 +210,7 @@ impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
         Raw { handle, payload, }
     }
 
+    /// Initialize the raw packet buffer to a valid ethernet frame.
     pub fn prepare(self, init: Init) -> Result<Out<'a, P>> {
         let mut payload = self.payload;
         let repr = init.initialize(&mut payload)?;

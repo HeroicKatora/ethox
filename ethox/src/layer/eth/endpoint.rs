@@ -7,6 +7,20 @@ use crate::nic;
 use super::{Recv, Send};
 use super::packet::{self, Handle};
 
+/// An ethernet endpoint, logical part of a device.
+///
+/// This structure contains the ethernet address considered to identify the device on the local
+/// ethernet network. Then all parts of receiving and sending, except physical layer framing, can
+/// be implemented in software.
+///
+/// Note that the ethernet wire layer does **not yet** support giant frames but if it did these
+/// would need to be explicitely enabled here.
+///
+/// Otherwise, the endpoint holds no configuration state and options. To preserve future
+/// compatibility it nevertheless has a lifetime parameter like other layer's endpoints. (ARP and
+/// ICMP do not use the same reservation since they are less likely to break upper layer code by
+/// having basically no upper layer). This allows introducing new state, as long as there is a
+/// default value with static lifetime—such as is the case for slices.
 pub struct Endpoint<'a> {
     /// Our own address.
     ///
@@ -27,6 +41,7 @@ pub struct Receiver<'a, 'e, H> {
     handler: H,
 }
 
+/// An endpoint borrowed for sending.
 pub struct Sender<'a, 'e, H> {
     endpoint: EthEndpoint<'a, 'e>,
 
@@ -41,6 +56,10 @@ struct EthEndpoint<'a, 'e> {
 }
 
 impl<'a> Endpoint<'a> {
+    /// Construct a new endpoint with a specified address.
+    ///
+    /// The endpoint will filter incoming messages by the hardware address and allows inspection of
+    /// that address for sending.
     pub fn new(addr: EthernetAddress) -> Self {
         Endpoint {
             addr,
@@ -48,18 +67,22 @@ impl<'a> Endpoint<'a> {
         }
     }
 
+    /// Receive frames using this mutably borrowed endpoint.
     pub fn recv<H>(&mut self, handler: H) -> Receiver<'_, 'a, H> {
         Receiver { endpoint: self.eth(), handler, }
     }
 
+    /// Receive frames using this mutably borrowed endpoint and a function.
     pub fn recv_with<H>(&mut self, handler: H) -> Receiver<'_, 'a, FnHandler<H>> {
         self.recv(FnHandler(handler))
     }
 
+    /// Send frames using this mutably borrowed endpoint.
     pub fn send<H>(&mut self, handler: H) -> Sender<'_, 'a, H> {
         Sender { endpoint: self.eth(), handler, }
     }
 
+    /// Send frames using this mutably borrowed endpoint and a function.
     pub fn send_with<H>(&mut self, handler: H) -> Sender<'_, 'a, FnHandler<H>> {
         self.send(FnHandler(handler))
     }
@@ -171,8 +194,8 @@ mod tests {
             .expect("Sending is possible");
     }
 
-    fn simple_recv<P: Payload>(mut frame: packet::In<P>) {
-        assert_eq!(frame.frame().payload().as_slice(), &PAYLOAD_BYTES[..]);
+    fn simple_recv<P: Payload>(frame: packet::In<P>) {
+        assert_eq!(frame.frame.payload().as_slice(), &PAYLOAD_BYTES[..]);
     }
 
     #[test]
