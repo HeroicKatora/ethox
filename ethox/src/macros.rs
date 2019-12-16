@@ -168,12 +168,14 @@ mod log {
     }
 }
 
-#[macro_export]
+// FIXME: re-introduce under a logging feature.
+#[allow(unused)]
 macro_rules! net_trace {
     ($($arg:expr),*) => (net_log!(trace, $($arg),*));
 }
 
-#[macro_export]
+// FIXME: re-introduce under a logging feature.
+#[allow(unused)]
 macro_rules! net_debug {
     ($($arg:expr),*) => (net_log!(debug, $($arg),*));
 }

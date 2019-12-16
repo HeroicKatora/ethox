@@ -470,22 +470,30 @@ impl<'a, P: PayloadMut> Raw<'a, P> {
 }
 
 impl<'a> Sending<'a> {
+    /// Get a the slot key identifying the connection the sending segment belongs to.
     pub fn key(&self) -> SlotKey {
         self.operator.connection_key
     }
 }
 
 impl<'a> Closing<'a> {
+    /// Get a the slot key identifying the connection which closes.
     pub fn key(&self) -> SlotKey {
         self.previous
     }
 }
 
 impl<'a, P: PayloadMut> Closed<'a, P> {
+    /// Get a the slot key identifying the connection which just got closed.
     pub fn key(&self) -> SlotKey {
         self.previous
     }
 
+    /// Unwrap the packet buffer for reuse.
+    ///
+    /// Since there is no longer a connection, the attachement no longer has a purpose. It's also
+    /// not incredibly sensible to try and send more segments to the previously connected remote.
+    /// For most systems, the answer are resets or challenge ACKs.
     pub fn into_raw(self) -> Raw<'a, P> {
         let raw_ip = ip::RawPacket {
             handle: self.ip,
@@ -500,6 +508,10 @@ impl<'a, P: PayloadMut> Closed<'a, P> {
 }
 
 impl<'a, P: PayloadMut> Stray<'a, P> {
+    /// Unwrap the packet buffer for reuse.
+    ///
+    /// There was no connection that the packet belonged to and thus no response required. This
+    /// allows the user to use the packet buffer for arbitrary other communication.
     pub fn into_raw(self) -> Raw<'a, P> {
         let raw_ip = ip::RawPacket {
             handle: self.ip,

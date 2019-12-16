@@ -141,20 +141,27 @@ pub mod loss;
 pub mod udp;
 pub mod tcp;
 
+/// A shortened result type for a generic layer operation.
 pub type Result<T> = core::result::Result<T, Error>;
 
+/// An error type for layer operations.
+///
+/// These variants explicitely do not capture error cases that happen on the network or as part of
+/// the logical protocol interactions but express adverse conditions that are caused by some
+/// property or configuration within a layer used during the send or receive process.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Error {
     /// The operation was not permitted.
     ///
     /// Returned when the device, endpoint, receiver or sender does not allow or implement an
-    /// operation.
+    /// operation. Might also be returned when requesting behaviour that contradicts a standard.
+    /// These should (and will mostly) have a configurable flag to turn the error off, though.
     Illegal,
 
     /// Not enough space for the requested packet.
     ///
     /// May also be returned when trying to resize a packet but the requested length can not be
-    /// fulfilled. In contrast to `Illegal` this would signal that a smaller size may be possible.
+    /// fulfilled. In contrast to `Illegal` this would signal that a smaller size is possible.
     BadSize,
 
     /// Unable to find a route towards the destination address.
