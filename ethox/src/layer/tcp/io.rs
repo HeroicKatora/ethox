@@ -203,13 +203,13 @@ impl<Buffer: Borrow<[u8]>> SendFrom<Buffer> {
 
     /// Rotate the buffered bytes, replacing acknowledged data with new data.
     ///
-    /// Returns the number of bytes read.
+    /// Returns the number of bytes written.
     ///
     /// First moves unsent and pending data to the front, then overwrites the free space at the end
     /// with new data and finally bumps the buffer by the bytes we have removed. This will not
     /// modify the total amount of data buffered. It is also less efficient than using a dedicated
     /// `VecDeque`, which avoids moving all bytes, but works for all linear byte buffers.
-    pub fn bump_with_read(&mut self, data: &[u8]) -> usize
+    pub fn bump_with_write(&mut self, data: &[u8]) -> usize
         where Buffer: BorrowMut<[u8]>
     {
         let front_space = self.completed_bytes();
@@ -262,7 +262,12 @@ impl<Buffer: BorrowMut<[u8]>> RecvInto<Buffer> {
     /// Get a mutable reference to the data buffer.
     ///
     /// This allows one to modify the data but doing so requires some care to avoid incorrect
-    /// segment reassembly. It is fine TODO
+    /// segment reassembly. It is fine to manually remove some fully assembled data from the head
+    /// of the buffer if combined with a call to `bump_external`. Removing completed data not from
+    /// the head might mess up the order of the data stream as assumed by inherent utility methods
+    /// (e.g. [`bump_with_write`]) of this struct but otherwise has no impact.
+    ///
+    /// [`bump_with_write`]: #method.bump_with_write
     pub fn get_mut(&mut self) -> &mut Buffer {
         &mut self.buffer
     }
@@ -285,6 +290,19 @@ impl<Buffer: BorrowMut<[u8]>> RecvInto<Buffer> {
     pub fn bump_external(&mut self, amount: usize) {
         self.mark = self.mark.checked_sub(amount)
             .expect("Tried bumping receive buffer into unreceived region");
+    }
+
+    /// Read some buffered completed bytes, making room for new data.
+    ///
+    /// Returns the number of bytes read.
+    pub fn bump_with_read(&mut self, buffer: &mut [u8])
+        -> usize
+    {
+        let to_write = self.mark.min(buffer.len());
+        let data = &self.buffer.borrow()[..to_write];
+        buffer[..to_write].copy_from_slice(data);
+        self.bump_external(to_write);
+        to_write
     }
 }
 
