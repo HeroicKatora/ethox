@@ -33,7 +33,7 @@ use structopt::StructOpt;
 
 use ethox::managed::{List, Slice};
 use ethox::nic::{Device, TapInterface};
-use ethox::layer::{eth, ip};
+use ethox::layer::{arp, eth, ip};
 use ethox::wire::{Ipv4Cidr, EthernetAddress, PayloadMut};
 
 fn main() {
@@ -47,9 +47,9 @@ fn main() {
 
     let mut eth = eth::Endpoint::new(hostmac);
 
-    let mut neighbors = [eth::Neighbor::default(); 5];
+    let mut neighbors = [arp::Neighbor::default(); 5];
     let neighbors = {
-        let mut eth_cache = eth::NeighborCache::new(&mut neighbors[..]);
+        let mut eth_cache = arp::NeighborCache::new(&mut neighbors[..]);
         eth_cache.fill(gateway.address().into(), gatemac, None).unwrap();
         eth_cache
     };
