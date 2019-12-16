@@ -31,11 +31,29 @@ pub struct Endpoint<'a> {
     isn_generator: IsnGenerator,
 }
 
+/// The TCP connection identifier, with four components.
+///
+/// In the model of TCP, there exists at most one bidirectional data stream for each unique tuple.
+///
+/// There is no inherent split into so called 'privileged' and unprivileged ports (the former often
+/// refers to ports below 1024). This is mostly a best practise you *may* want to follow but it is
+/// not built into the library.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FourTuple {
+    /// The address identifying this machine/device for incoming segments.
+    ///
+    /// This address is not necessarily accurate (or unicast) until a connection has been
+    /// established. In particular, it is used also for the netmask of a passively opened
+    /// port and then modified when an incoming SYN is accepted.
     pub local: IpAddress,
+    /// The address to which outgoing segments are sent.
+    ///
+    /// This is filled in for actively opened connections but contains the reserved all-zero
+    /// address for a passively opened port until a connection attempt.
     pub remote: IpAddress,
+    /// The local port of the connection.
     pub local_port: u16,
+    /// The remote port of the connection.
     pub remote_port: u16,
 }
 
