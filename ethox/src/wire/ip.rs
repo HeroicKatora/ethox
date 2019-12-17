@@ -849,9 +849,9 @@ pub(crate) mod checksum {
 
 use super::pretty_print::PrettyIndent;
 
-pub(crate) fn pretty_print_ip_payload<T: Into<Repr>>(f: &mut fmt::Formatter, indent: &mut PrettyIndent,
+pub(crate) fn pretty_print_ip_payload<T: Into<Repr>>(f: &mut fmt::Formatter, indent: PrettyIndent,
                                               ip_repr: T, payload: &[u8]) -> fmt::Result {
-    use crate::wire::{TcpChecksum, TcpPacket, UdpChecksum, UdpRepr, udp_packet};
+    use crate::wire::{TcpChecksum, TcpPacket, udp};
     use crate::wire::ip::checksum::format_checksum;
 
     let repr = ip_repr.into();
@@ -863,24 +863,16 @@ pub(crate) fn pretty_print_ip_payload<T: Into<Repr>>(f: &mut fmt::Formatter, ind
         }
         */
         Protocol::Udp => {
-            indent.increase(f)?;
-            match udp_packet::new_checked(payload.as_ref()) {
-                Err(err) => write!(f, "{}({})", indent, err),
-                Ok(udp_packet) => {
-                    match UdpRepr::parse(udp_packet, UdpChecksum::Ignored) {
-                        Err(err) => write!(f, "{}({})", indent, err),
-                        Ok(udp_repr) => {
-                            write!(f, "{}{}", indent, udp_repr)?;
-                            let valid = udp_packet.verify_checksum(
-                                repr.src_addr(), repr.dst_addr());
-                            format_checksum(f, valid)
-                        }
-                    }
-                }
-            }
+            let indent = indent.increase(f)?;
+            let printer = udp::CheckedPrinter::new(udp::Checksum::Manual {
+                src_addr: repr.src_addr(),
+                dst_addr: repr.dst_addr(),
+            });
+
+            printer.pretty_print(payload.as_ref(), f, indent)
         }
         Protocol::Tcp => {
-            indent.increase(f)?;
+            let indent = indent.increase(f)?;
             match TcpPacket::<&[u8]>::new_checked(payload.as_ref(), TcpChecksum::Ignored) {
                 Err(err) => write!(f, "{}({})", indent, err),
                 Ok(tcp_packet) => {

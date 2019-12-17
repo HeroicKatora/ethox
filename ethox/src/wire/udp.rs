@@ -17,6 +17,12 @@ byte_wrapper! {
     pub struct udp([u8]);
 }
 
+/// A pretty print helper for verifying the checksum.
+#[derive(Debug, PartialEq, Clone)]
+pub struct CheckedPrinter {
+    checksum: Checksum,
+}
+
 mod field {
     #![allow(non_snake_case)]
     use crate::wire::field::Field;
@@ -339,6 +345,7 @@ pub struct Repr {
 ///
 /// The checksum requires calculating a pseudo header for the upper layer protocol consisting of
 /// src and dst address. The checksum can be elided (`=0`) execept when the upper layer is Ipv6.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Checksum {
     /// Always fill the checksum and check if it exists.
     Manual {
@@ -445,9 +452,40 @@ impl fmt::Display for Repr {
 
 use super::pretty_print::{PrettyPrint, PrettyIndent};
 
+impl CheckedPrinter {
+    pub fn new(checksum: Checksum) -> Self {
+        CheckedPrinter { checksum }
+    }
+
+    pub fn pretty_print(
+        &self,
+        buffer: &[u8],
+        f: &mut fmt::Formatter,
+        indent: PrettyIndent
+    ) -> fmt::Result {
+        let packet = match udp::new_checked(buffer) {
+            Err(err) => return write!(f, "{}({})", indent, err),
+            Ok(packet) => packet,
+        };
+
+        let repr = match Repr::parse(packet, Checksum::Ignored) {
+            Err(err) => return write!(f, "{}({})", indent, err),
+            Ok(repr) => repr,
+        };
+
+        write!(f, "{}{}", indent, repr)?;
+        if let Checksum::Manual { src_addr, dst_addr } = self.checksum {
+            let valid = packet.verify_checksum(src_addr, dst_addr);
+            checksum::format_checksum(f, valid)?;
+        }
+
+        Ok(())
+    }
+}
+
 impl PrettyPrint for udp {
     fn pretty_print(buffer: &[u8], f: &mut fmt::Formatter,
-                    indent: &mut PrettyIndent) -> fmt::Result {
+                    indent: PrettyIndent) -> fmt::Result {
         match Packet::new_checked(buffer, Checksum::Ignored) {
             Err(err)   => write!(f, "{}({})", indent, err),
             Ok(packet) => write!(f, "{}{}", indent, packet)

@@ -612,7 +612,7 @@ use super::pretty_print::{PrettyPrint, PrettyIndent};
 
 impl PrettyPrint for icmpv4 {
     fn pretty_print(buffer: &[u8], f: &mut fmt::Formatter,
-                    indent: &mut PrettyIndent) -> fmt::Result {
+                    indent: PrettyIndent) -> fmt::Result {
         let packet = match icmpv4::new_checked(buffer) {
             Err(err)   => return write!(f, "{}({})", indent, err),
             Ok(packet) => packet

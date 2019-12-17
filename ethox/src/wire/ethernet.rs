@@ -361,7 +361,7 @@ use super::pretty_print::{PrettyPrint, PrettyIndent};
 
 impl PrettyPrint for ethernet {
     fn pretty_print(buffer: &[u8], f: &mut fmt::Formatter,
-                    indent: &mut PrettyIndent) -> fmt::Result {
+                    indent: PrettyIndent) -> fmt::Result {
         let frame = match Frame::new_checked(buffer) {
             Err(err)  => return write!(f, "{}({})", indent, err),
             Ok(frame) => frame
@@ -370,15 +370,15 @@ impl PrettyPrint for ethernet {
 
         match frame.ethertype() {
             EtherType::Arp => {
-                indent.increase(f)?;
+                let indent = indent.increase(f)?;
                 super::arp_packet::pretty_print(&frame.payload(), f, indent)
             }
             EtherType::Ipv4 => {
-                indent.increase(f)?;
+                let indent = indent.increase(f)?;
                 super::ipv4_packet::pretty_print(&frame.payload(), f, indent)
             }
             EtherType::Ipv6 => {
-                indent.increase(f)?;
+                let indent = indent.increase(f)?;
                 super::ipv6_packet::pretty_print(&frame.payload(), f, indent)
             }
             _ => Ok(())

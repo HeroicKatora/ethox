@@ -923,7 +923,7 @@ use super::pretty_print::{PrettyPrint, PrettyIndent};
 // a way to have less copy and pasted code here.
 impl PrettyPrint for ipv6 {
     fn pretty_print(buffer: &[u8], f: &mut fmt::Formatter,
-                    indent: &mut PrettyIndent) -> fmt::Result {
+                    indent: PrettyIndent) -> fmt::Result {
         // Verify the packet structure.
         let packet = match ipv6::new_checked(buffer) {
             Err(err) => return write!(f, "{}({})", indent, err),

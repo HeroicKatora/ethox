@@ -84,6 +84,12 @@ pub struct Packet<T> {
     repr: Repr,
 }
 
+/// A pretty print helper for verifying the checksum.
+#[derive(Debug, PartialEq, Clone)]
+pub struct CheckedPrinter {
+    checksum: Checksum,
+}
+
 mod field {
     #![allow(non_snake_case)]
 
@@ -817,6 +823,7 @@ pub struct Repr {
 ///
 /// The checksum requires calculating a pseudo header for the upper layer protocol consisting of
 /// src and dst address.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Checksum {
     /// Always fill the checksum and check if it exists.
     ///
@@ -1105,13 +1112,40 @@ impl fmt::Display for Flags {
 
 use super::pretty_print::{PrettyPrint, PrettyIndent};
 
-impl<T: Payload> PrettyPrint for Packet<T> {
-    fn pretty_print(buffer: &[u8], f: &mut fmt::Formatter,
-                    indent: &mut PrettyIndent) -> fmt::Result {
-        match Packet::new_checked(buffer, Checksum::Ignored) {
-            Err(err)   => write!(f, "{}({})", indent, err),
-            Ok(packet) => write!(f, "{}{}", indent, packet)
+impl CheckedPrinter {
+    pub fn new(checksum: Checksum) -> Self {
+        CheckedPrinter {
+            checksum,
         }
+    }
+
+    fn pretty_print(
+        &self,
+        buffer: &[u8],
+        f: &mut fmt::Formatter,
+        indent: PrettyIndent
+    ) -> fmt::Result {
+        let packet = match Packet::new_checked(buffer, Checksum::Ignored) {
+            Err(err) => return write!(f, "{}({})", indent, err),
+            Ok(repr) => repr,
+        };
+
+        write!(f, "{}{}", indent, packet)?;
+        if let Checksum::Manual { src_addr, dst_addr } = self.checksum {
+            let valid = packet.verify_checksum(src_addr, dst_addr);
+            checksum::format_checksum(f, valid)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl<T: Payload> PrettyPrint for Packet<T> {
+    fn pretty_print(buffer: &[u8], f: &mut fmt::Formatter, indent: PrettyIndent)
+        -> fmt::Result
+    {
+        CheckedPrinter::new(Checksum::Ignored)
+            .pretty_print(buffer, f, indent)
     }
 }
 

@@ -34,6 +34,7 @@ use core::marker::PhantomData;
 
 /// Indentation state.
 #[derive(Debug)]
+#[must_use="Does not do anything on its own, must be formatted."]
 pub struct PrettyIndent {
     prefix: &'static str,
     level:  usize
@@ -47,10 +48,12 @@ impl PrettyIndent {
     }
 
     /// Increase indentation level.
-    pub fn increase(&mut self, f: &mut fmt::Formatter) -> fmt::Result {
+    pub fn increase(&self, f: &mut fmt::Formatter) -> Result<PrettyIndent, fmt::Error> {
         write!(f, "\n")?;
-        self.level += 1;
-        Ok(())
+        Ok(PrettyIndent {
+            prefix: self.prefix,
+            level: self.level + 1,
+        })
     }
 }
 
@@ -71,8 +74,19 @@ pub trait PrettyPrint {
     ///
     /// `pretty_print` accepts a buffer and not a packet wrapper because the packet might
     /// be truncated, and so it might not be possible to create the packet wrapper.
-    fn pretty_print(buffer: &[u8], fmt: &mut fmt::Formatter,
-                    indent: &mut PrettyIndent) -> fmt::Result;
+    fn pretty_print(buffer: &[u8], fmt: &mut fmt::Formatter, indent: PrettyIndent)
+        -> fmt::Result;
+
+    /// Pretty print a parsed object.
+    ///
+    /// This could be implemented slightly more efficient than re-parsing the buffer.
+    fn print(obj: &Self, fmt: &mut fmt::Formatter, indent: PrettyIndent)
+        -> fmt::Result
+    where
+        Self: AsRef<[u8]>
+    {
+        Self::pretty_print(obj.as_ref(), fmt, indent)
+    }
 }
 
 /// Zero-sized marker type for pretty printers.
@@ -90,7 +104,7 @@ pub struct PrettyPrinter<'a, T: PrettyPrint + ?Sized> {
 
 impl<'a, T: PrettyPrint + ?Sized> PrettyPrinter<'a, T> {
     /// Format the listing with the recorded parameters when Display::fmt is called.
-    pub fn new(prefix: &'static str, buffer: &'a (impl AsRef<[u8]> + ?Sized)) -> PrettyPrinter<'a, T> {
+    pub fn new(prefix: &'static str, buffer: &'a [u8]) -> PrettyPrinter<'a, T> {
         PrettyPrinter {
             prefix:  prefix,
             buffer:  buffer.as_ref(),
@@ -112,7 +126,7 @@ impl<'a, T: PrettyPrint + AsRef<[u8]> + ?Sized> PrettyPrinter<'a, T> {
 
 impl<'a, T: PrettyPrint + ?Sized> fmt::Display for PrettyPrinter<'a, T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        T::pretty_print(&self.buffer, f, &mut PrettyIndent::new(self.prefix))
+        T::pretty_print(&self.buffer, f, PrettyIndent::new(self.prefix))
     }
 }
 

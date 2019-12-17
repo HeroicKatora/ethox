@@ -1002,7 +1002,7 @@ use super::pretty_print::{PrettyPrint, PrettyIndent};
 
 impl PrettyPrint for ipv4 {
     fn pretty_print(buffer: &[u8], f: &mut fmt::Formatter,
-                    indent: &mut PrettyIndent) -> fmt::Result {
+                    indent: PrettyIndent) -> fmt::Result {
         use crate::wire::ip::checksum::format_checksum;
 
         // Verify the packet structure.
