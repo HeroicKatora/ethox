@@ -1,7 +1,7 @@
 //! Debugs all packets coming in on a tap.
 use std::{env, process};
 
-use ethox::nic::{Device, TapInterface};
+use ethox::nic::{Device, sys::TapInterface};
 use ethox::wire::pretty_print::Formatter;
 
 fn main() {

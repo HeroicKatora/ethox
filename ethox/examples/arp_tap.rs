@@ -32,7 +32,7 @@ use std::io::{stdout, Write};
 use structopt::StructOpt;
 
 use ethox::managed::{List, Slice};
-use ethox::nic::{Device, TapInterface};
+use ethox::nic::{Device, sys::TapInterface};
 use ethox::layer::{arp, eth, ip};
 use ethox::wire::{Ipv4Cidr, EthernetAddress, PayloadMut};
 

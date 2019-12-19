@@ -7,7 +7,7 @@ use std::net;
 use structopt::StructOpt;
 
 use ethox::managed::{List, Map, SlotMap, Slice};
-use ethox::nic::{Device, RawSocket, Protocol};
+use ethox::nic::{Device, sys::RawSocket, Protocol};
 use ethox::layer::{arp, eth, ip, tcp};
 use ethox::wire::{Ipv4Address, Ipv4Cidr, EthernetAddress};
 

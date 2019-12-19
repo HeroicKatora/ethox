@@ -9,7 +9,7 @@
 pub use ethox_iperf::{config, iperf2};
 
 use ethox::managed::{List, Slice};
-use ethox::nic::RawSocket;
+use ethox::nic::sys::RawSocket;
 use ethox::layer::{arp, eth, ip};
 
 fn main() {

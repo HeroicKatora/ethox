@@ -6,7 +6,7 @@
 #![no_main]
 
 use ethox::managed::Slice;
-use ethox::nic::{Device, TapInterface};
+use ethox::nic::{Device, sys::TapInterface};
 use ethox::layer::{arp, eth, ip, icmp};
 use ethox::wire::{Ipv4Address, Ipv4Cidr, EthernetAddress};
 
