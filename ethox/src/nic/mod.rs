@@ -5,8 +5,10 @@ pub mod common;
 pub mod loopback;
 pub mod external;
 mod personality;
+
 #[cfg(feature = "sys")]
-mod sys;
+#[path="sys/mod.rs"]
+mod sys_internal;
 
 use crate::wire::Payload;
 use crate::layer::{Result, FnHandler};
@@ -20,7 +22,7 @@ pub use self::personality::{
     Protocol};
 
 #[cfg(feature = "sys")]
-pub use self::sys::exports::*;
+pub use self::sys_internal::exports as sys;
 
 pub use crate::layer::loss::{Lossy, PrngLoss};
 
