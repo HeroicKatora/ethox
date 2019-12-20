@@ -136,6 +136,7 @@ pub struct Sending<'a> {
 ///
 /// Same as `Sending`, the packet has already been prepared and queue.
 pub struct Closing<'a> {
+    #[allow(dead_code)] // This attribute exists for parity with other message structs.
     endpoint: &'a mut dyn Endpoint,
     previous: SlotKey,
     signals: UserSignals,
