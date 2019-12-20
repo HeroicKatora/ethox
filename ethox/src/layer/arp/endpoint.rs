@@ -40,6 +40,10 @@ struct EndpointRef<'a, 'data> {
 }
 
 impl<'data> Endpoint<'data> {
+    /// Create a new endpoint with some memory for a cache.
+    ///
+    /// The cache might be pre-filled, for example with some static entries that are set to never
+    /// expire.
     pub fn new<C>(neighbors: C) -> Self
         where C: Into<Cache<'data>>,
     {

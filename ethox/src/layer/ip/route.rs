@@ -144,6 +144,10 @@ impl<'a> Routes<'a> {
         }
     }
 
+    /// Find the next hop for a destination address.
+    ///
+    /// The timestamp ensures that only valid entries are used. If multiple matching routes are
+    /// found then the one with the shortest subnet prefix is preferred.
     pub fn lookup(&self, addr: IpAddress, timestamp: Instant)
         -> Option<IpAddress>
     {
@@ -162,8 +166,9 @@ impl<'a> Routes<'a> {
                 continue;
             }
 
+            // Fill the best_match if none at all yet.
             let best = best_match.get_or_insert(route);
-            // Prefer shortest route.
+            // Prefer shortest route. Fails if just filled.
             if best.net.prefix_len() < route.net.prefix_len() {
                 *best = route;
             }
@@ -180,22 +185,22 @@ mod test {
         use super::super::*;
         use crate::wire::Ipv6Cidr;
 
-        pub const ADDR_1A: Ipv6Address = Ipv6Address(
+        pub(crate) const ADDR_1A: Ipv6Address = Ipv6Address(
                 [0xfe, 0x80, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 1]);
-        pub const ADDR_1B: Ipv6Address = Ipv6Address(
+        pub(crate) const ADDR_1B: Ipv6Address = Ipv6Address(
                 [0xfe, 0x80, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 13]);
-        pub const ADDR_1C: Ipv6Address = Ipv6Address(
+        pub(crate) const ADDR_1C: Ipv6Address = Ipv6Address(
                 [0xfe, 0x80, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 42]);
-        pub fn cidr_1() -> Ipv6Cidr {
+        pub(crate) fn cidr_1() -> Ipv6Cidr {
             Ipv6Cidr::new(Ipv6Address(
                     [0xfe, 0x80, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0]), 64)
         }
 
-        pub const ADDR_2A: Ipv6Address = Ipv6Address(
+        pub(crate) const ADDR_2A: Ipv6Address = Ipv6Address(
                 [0xfe, 0x80, 0, 0, 0, 0, 51, 100, 0, 0, 0, 0, 0, 0, 0, 1]);
-        pub const ADDR_2B: Ipv6Address = Ipv6Address(
+        pub(crate) const ADDR_2B: Ipv6Address = Ipv6Address(
                 [0xfe, 0x80, 0, 0, 0, 0, 51, 100, 0, 0, 0, 0, 0, 0, 0, 21]);
-        pub fn cidr_2() -> Ipv6Cidr {
+        pub(crate) fn cidr_2() -> Ipv6Cidr {
             Ipv6Cidr::new(Ipv6Address(
                     [0xfe, 0x80, 0, 0, 0, 0, 51, 100, 0, 0, 0, 0, 0, 0, 0, 0]), 64)
         }

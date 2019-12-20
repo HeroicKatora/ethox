@@ -29,8 +29,8 @@ use std::io::{stdout, Write};
 use structopt::StructOpt;
 
 use ethox::managed::{List, Slice};
-use ethox::nic::{Device, TapInterface};
-use ethox::layer::{eth, ip, icmp};
+use ethox::nic::{Device, sys::TapInterface};
+use ethox::layer::{arp, eth, ip, icmp};
 use ethox::wire::{Ipv4Cidr, EthernetAddress};
 
 fn main() {
@@ -43,13 +43,13 @@ fn main() {
 
     let mut eth = eth::Endpoint::new(hostmac);
 
-    let mut neighbors = [eth::Neighbor::default(); 1];
+    let mut neighbors = [arp::Neighbor::default(); 1];
     let mut routes = [ip::Route::new_ipv4_gateway(gateway.address()); 1];
     let mut ip = ip::Endpoint::new(Slice::One(host.into()),
         // Prefill the routes
         ip::Routes::import(List::new_full(routes.as_mut().into())), 
         // But do automatic arp
-        eth::NeighborCache::new(&mut neighbors[..]));
+        arp::NeighborCache::new(&mut neighbors[..]));
 
     let mut icmp = icmp::Endpoint::new();
 

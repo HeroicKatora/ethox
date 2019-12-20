@@ -1,15 +1,35 @@
+/// Define an enumeration with known variants and an unknown representation.
+///
+/// Most network protocols define fields where not all bit-patterns are standardized values. In
+/// some cases these are invalid while others allocate them through some registrar (such as IANA).
+/// This macro makes it more ergonomic to define a representation for such fields by providing
+/// converters to and from an underlying representation derived from the definition.
+///
+/// # Example
+///
+/// ```
+/// # use ethox::enum_with_unknown;
+/// # fn main() { }
+/// enum_with_unknown! {
+///     pub enum IpVersion(u8) {
+///         IpV4 = 4,
+///         IpV6 = 6,
+///     }
+/// }
+/// ```
 // Copyright (C) 2016 whitequark@whitequark.org
+#[macro_export]
 macro_rules! enum_with_unknown {
     (
         $( #[$enum_attr:meta] )*
         pub enum $name:ident($ty:ty) {
-            $( $variant:ident = $value:expr ),+ $(,)*
+            $($(#[$val_attr:meta])* $variant:ident = $value:expr ),+ $(,)*
         }
     ) => {
         enum_with_unknown! {
             $( #[$enum_attr] )*
             pub doc enum $name($ty) {
-                $( #[doc(shown)] $variant = $value ),+
+                $($(#[$val_attr])* #[doc(shown)] $variant = $value ),+
             }
         }
     };
@@ -29,6 +49,12 @@ macro_rules! enum_with_unknown {
               $( #[$variant_attr] )*
               $variant
             ),*,
+            /// A value whose interpretation was not determined.
+            ///
+            /// There are two common cases where this is necessary: To represent a parsed valued
+            /// from an unknown source which might be faulty or from an unsupported standard
+            /// version; Or to encode an arbitrary user supplied value in such fields to allow
+            /// extensions that are not supported in `ethox` itself.
             Unknown($ty)
         }
 
@@ -73,6 +99,7 @@ macro_rules! enum_with_unknown {
 /// }
 ///
 /// impl udp {
+///     // Make the constructor public.
 ///     pub fn from_slice(slice: &[u8]) -> &Self {
 ///         Self::__from_macro_new_unchecked(slice)
 ///     }
@@ -141,12 +168,14 @@ mod log {
     }
 }
 
-#[macro_export]
+// FIXME: re-introduce under a logging feature.
+#[allow(unused)]
 macro_rules! net_trace {
     ($($arg:expr),*) => (net_log!(trace, $($arg),*));
 }
 
-#[macro_export]
+// FIXME: re-introduce under a logging feature.
+#[allow(unused)]
 macro_rules! net_debug {
     ($($arg:expr),*) => (net_log!(debug, $($arg),*));
 }

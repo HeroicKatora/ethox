@@ -4,9 +4,9 @@ use core::{fmt, ops};
 use super::Payload;
 use super::{Error, Result};
 
-pub use super::EthernetProtocol as Protocol;
-pub use super::EthernetAddress as Address;
-pub use super::Ipv4Address as IpAddress;
+pub(crate) use super::EthernetProtocol as Protocol;
+pub(crate) use super::EthernetAddress as Address;
+pub(crate) use super::Ipv4Address as IpAddress;
 
 enum_with_unknown! {
     /// ARP hardware type.
@@ -41,32 +41,32 @@ mod field {
 
     use crate::wire::field::*;
 
-    pub const HTYPE: Field = 0..2;
-    pub const PTYPE: Field = 2..4;
-    pub const HLEN: usize = 4;
-    pub const PLEN: usize = 5;
-    pub const OPER: Field = 6..8;
+    pub(crate) const HTYPE: Field = 0..2;
+    pub(crate) const PTYPE: Field = 2..4;
+    pub(crate) const HLEN: usize = 4;
+    pub(crate) const PLEN: usize = 5;
+    pub(crate) const OPER: Field = 6..8;
 
     #[inline]
-    pub fn SHA(hardware_len: u8, _protocol_len: u8) -> Field {
+    pub(crate) fn SHA(hardware_len: u8, _protocol_len: u8) -> Field {
         let start = OPER.end;
         start..(start + hardware_len as usize)
     }
 
     #[inline]
-    pub fn SPA(hardware_len: u8, protocol_len: u8) -> Field {
+    pub(crate) fn SPA(hardware_len: u8, protocol_len: u8) -> Field {
         let start = SHA(hardware_len, protocol_len).end;
         start..(start + protocol_len as usize)
     }
 
     #[inline]
-    pub fn THA(hardware_len: u8, protocol_len: u8) -> Field {
+    pub(crate) fn THA(hardware_len: u8, protocol_len: u8) -> Field {
         let start = SPA(hardware_len, protocol_len).end;
         start..(start + hardware_len as usize)
     }
 
     #[inline]
-    pub fn TPA(hardware_len: u8, protocol_len: u8) -> Field {
+    pub(crate) fn TPA(hardware_len: u8, protocol_len: u8) -> Field {
         let start = THA(hardware_len, protocol_len).end;
         start..(start + protocol_len as usize)
     }

@@ -1,3 +1,8 @@
+//! A slotmap, a vector-like container with unique keys instead of indices.
+//!
+//! See the documentation of [`SlotMap`] for details.
+//!
+//! [`SlotMap`]: struct.SlotMap.html
 use super::{List, Slice};
 
 /// Provides links between slots and elements.
@@ -7,17 +12,6 @@ use super::{List, Slice};
 /// could help with iteration or very large structs.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Slot {
-    /*
-    /// Back link of an element to its slot.
-    ///
-    /// The `Slot` at index `i` provides the mapping for the element at index `i` and its
-    /// `index_to_slot` is the index of the slot owning that element. This makes it possible for
-    /// the `SlotMap` to swap elements within their containing slice while updating the index
-    /// structure in constant time. This in turn keeps the element list organized as a pure stack
-    /// even in the face of element removal.
-    index_to_slot: usize,
-    */
-
     /// The id of this slot.
     ///
     /// If the given out index mismatches the `generation_id` then the element was removed already
@@ -32,7 +26,10 @@ pub struct Slot {
 ///
 /// A slotmap provides a `Vec`-like interface where each entry is associated with a stable
 /// index-like key. Lookup with the key will detect if an entry has been removed but does not
-/// require and lifetime relation.
+/// require a lifetime relation. Compared to other slotmap implementations this does not internally
+/// allocate any memory on its own but only relies on the [`Slice`] arguments in the constructor.
+///
+/// [`Slice`]: ../enum.Slice.html
 ///
 /// ## Usage
 ///
@@ -219,6 +216,9 @@ impl<T> SlotMap<'_, T> {
 }
 
 impl<'a, T> SlotMap<'a, T> {
+    /// Create a slot map.
+    ///
+    /// The capacity is the minimum of the capacity of the element and slot slices.
     pub fn new(elements: Slice<'a, T>, slots: Slice<'a, Slot>) -> Self {
         let capacity = elements.len().min(slots.len());
         SlotMap {
@@ -232,7 +232,7 @@ impl<'a, T> SlotMap<'a, T> {
 }
 
 impl GenerationOrFreelink {
-    pub fn free_link(self) -> Result<Offset, Generation> {
+    pub(crate) fn free_link(self) -> Result<Offset, Generation> {
         if self.0 > 0 {
             Err(Generation(self.0))
         } else {
@@ -240,7 +240,7 @@ impl GenerationOrFreelink {
         }
     }
 
-    pub fn generation(self) -> Result<Generation, Offset> {
+    pub(crate) fn generation(self) -> Result<Generation, Offset> {
         if self.0 > 0 {
             Ok(Generation(self.0))
         } else {
@@ -250,7 +250,7 @@ impl GenerationOrFreelink {
 }
 
 impl IndexComputer {
-    pub fn from_capacity(capacity: usize) -> Self {
+    pub(crate) fn from_capacity(capacity: usize) -> Self {
         assert!(capacity < isize::max_value() as usize);
         IndexComputer(capacity)
     }
@@ -301,19 +301,19 @@ impl IndexComputer {
 }
 
 impl Generation {
-    pub fn advance(&mut self) {
+    pub(crate) fn advance(&mut self) {
         assert!(self.0 > 0);
         self.0 = self.0.wrapping_add(1).max(1)
     }
 }
 
 impl Offset {
-    pub fn from_int_offset(offset: usize) -> Self {
+    pub(crate) fn from_int_offset(offset: usize) -> Self {
         assert!(offset < isize::max_value() as usize);
         Offset((offset as isize).checked_neg().unwrap())
     }
 
-    pub fn int_offset(self) -> usize {
+    pub(crate) fn int_offset(self) -> usize {
         self.0.checked_neg().unwrap() as usize
     }
 }

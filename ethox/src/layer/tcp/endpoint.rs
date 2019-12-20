@@ -31,22 +31,40 @@ pub struct Endpoint<'a> {
     isn_generator: IsnGenerator,
 }
 
+/// The TCP connection identifier, with four components.
+///
+/// In the model of TCP, there exists at most one bidirectional data stream for each unique tuple.
+///
+/// There is no inherent split into so called 'privileged' and unprivileged ports (the former often
+/// refers to ports below 1024). This is mostly a best practise you *may* want to follow but it is
+/// not built into the library.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FourTuple {
+    /// The address identifying this machine/device for incoming segments.
+    ///
+    /// This address is not necessarily accurate (or unicast) until a connection has been
+    /// established. In particular, it is used also for the netmask of a passively opened
+    /// port and then modified when an incoming SYN is accepted.
     pub local: IpAddress,
+    /// The address to which outgoing segments are sent.
+    ///
+    /// This is filled in for actively opened connections but contains the reserved all-zero
+    /// address for a passively opened port until a connection attempt.
     pub remote: IpAddress,
+    /// The local port of the connection.
     pub local_port: u16,
+    /// The remote port of the connection.
     pub remote_port: u16,
 }
 
-/// A connection slot.
-///
-/// Can be used to open or accept a new connection. Usage of this acts similar to a slotmap where a
-/// dedicated `SlotKey` allows referring to a connection outside of its lifetime without
-/// introducing lifetime-tracked references and dependencies.
+/// A connection slot wrapping the internal connection state.
 ///
 /// Contains the four-tuple which maps to the slot, completing the loop for lookups
-/// (slotkey->4tuple,4tuple->slotkey).
+/// (slotkey->4tuple,4tuple->slotkey). Usage of this acts similar to a slotmap where a dedicated
+/// `SlotKey` allows referring to a connection outside of its lifetime without introducing
+/// lifetime-tracked references and dependencies.
+///
+/// Internally used as the backing storage to open or accept a new connection.
 #[derive(Clone, Copy, Debug, Hash)]
 pub struct Slot {
     addr: FourTuple,
@@ -125,13 +143,24 @@ pub(crate) trait PortMap {
 }
 
 impl Endpoint<'_> {
+    /// Returns a reference to the slot containing the corresponding connection.
+    ///
+    /// Can be used to inspect the TCP state and connection information.
+    pub fn get(&self, index: SlotKey)
+        -> Option<&Slot>
+    {
+        self.states.get(index.key)
+    }
+
+    /// Returns a mutable reference to the slot containing the corresponding connection.
     pub fn get_mut(&mut self, index: SlotKey)
         -> Option<&mut Slot>
     {
         self.states.get_mut(index.key)
     }
 
-    pub fn entry(&mut self, index: SlotKey)
+    /// Returns the entry of the corresponding connection.
+    pub(crate) fn entry(&mut self, index: SlotKey)
         -> Option<Entry>
     {
         let slot = self.states.get_mut(index.key)?;
@@ -144,19 +173,26 @@ impl Endpoint<'_> {
         })
     }
 
-    pub fn entry_from_tuple(&mut self, tuple: FourTuple)
-        -> Option<Entry>
+    /// Returns the entry of a connection identification tuple.
+    pub fn key_from_tuple(&mut self, tuple: FourTuple)
+        -> Option<SlotKey>
     {
         let key = self.ports.get(&tuple).cloned()?;
-        self.entry(SlotKey { key })
+        Some(SlotKey { key })
     }
 
-    pub fn get(&self, index: SlotKey)
-        -> Option<&Slot>
+    /// Returns the entry of a connection identification tuple.
+    pub(crate) fn entry_from_tuple(&mut self, tuple: FourTuple)
+        -> Option<Entry>
     {
-        self.states.get(index.key)
+        let key = self.key_from_tuple(tuple)?;
+        self.entry(key)
     }
 
+    /// Forcibly drop a connection.
+    ///
+    /// Note that this will *not* send any termination messages and *not* wait for a graceful exit
+    /// period. It simply sets the state of the slot to `Closed` and removes all other mappings.
     pub fn remove(&mut self, index: SlotKey) {
         let addr = match self.get_mut(index) {
             Some(connection) => {
@@ -171,6 +207,9 @@ impl Endpoint<'_> {
     }
 
     /// Opens a new port for listening.
+    ///
+    /// The source address is chosen during the first send operation on the create connection.
+    /// Returns the key to use to inspect or modify the connection state and parameters.
     fn listen(&mut self, ip: IpAddress, port: u16)
         -> Option<SlotKey>
     {
@@ -188,6 +227,8 @@ impl Endpoint<'_> {
     }
 
     /// Actively try to connect to a remote TCP.
+    ///
+    /// This is not public as the caller controls the complete tuple.
     fn open(&mut self, tuple: FourTuple)
         -> Option<SlotKey>
     {
@@ -273,16 +314,24 @@ impl Endpoint<'_> {
 }
 
 impl Slot {
+    /// Return the connection four tuple of the slot.
+    ///
+    /// Note that the source or destination ports may be `0` if they have not been chosen yet. This
+    /// happens when the connection has only been opened passively or no active SYN has been sent.
     pub fn four_tuple(&self) -> FourTuple {
         self.addr
     }
 
-    pub fn connection(&self) -> &Connection {
+    /// Returns a reference to the connection contained in the slot.
+    pub(crate) fn connection(&self) -> &Connection {
         &self.connection
     }
 }
 
 impl<'ep> Endpoint<'ep> {
+    /// Create a new endpoint.
+    ///
+    /// The map and states are **not** cleared.
     pub fn new(
         ports: Map<'ep, FourTuple, Key>,
         states: SlotMap<'ep, Slot>,
@@ -295,10 +344,12 @@ impl<'ep> Endpoint<'ep> {
         }
     }
 
+    /// Create a TCP receiver using this endpoint.
     pub fn recv<H>(&mut self, handler: H) -> Receiver<'_, 'ep, H> {
         Receiver { endpoint: self.borrow(), handler }
     }
 
+    /// Create a TCP sender using this endpoint.
     pub fn send<H>(&mut self, handler: H) -> Sender<'_, 'ep, H> {
         Sender { endpoint: self.borrow(), handler }
     }
@@ -322,6 +373,7 @@ impl<'a> Entry<'a> {
         (entry_key, connection)
     }
 
+    /// Get the slot key with which the entry was created.
     pub fn slot_key(&self) -> SlotKey {
         self.key
     }
@@ -333,6 +385,7 @@ impl<'a> Entry<'a> {
 }
 
 impl EntryKey<'_> {
+    /// Generate a new initial sequence number.
     pub fn initial_seq_num(&self, time: Instant) -> TcpSeqNumber {
         self.isn.get_isn(*self.key_in_slot, time)
     }

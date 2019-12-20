@@ -13,8 +13,8 @@
 pub use ethox_iperf::{config, iperf2};
 
 use ethox::managed::{List, Slice};
-use ethox::nic::RawSocket;
-use ethox::layer::{eth, ip};
+use ethox::nic::sys::RawSocket;
+use ethox::layer::{arp, eth, ip};
 
 fn main() {
     let config = config::Config::from_args();
@@ -24,12 +24,12 @@ fn main() {
 
     let mut eth = eth::Endpoint::new(config.hostmac);
 
-    let mut neighbors = [eth::Neighbor::default(); 1];
+    let mut neighbors = [arp::Neighbor::default(); 1];
     let mut routes = [ip::Route::new_ipv4_gateway(config.gateway.address()); 1];
     let mut ip = ip::Endpoint::new(
         Slice::One(config.host.into()),
         ip::Routes::import(List::new_full(routes.as_mut().into())),
-        eth::NeighborCache::new(&mut neighbors[..]));
+        arp::NeighborCache::new(&mut neighbors[..]));
 
     println!("[+] Configured layers, communicating");
 

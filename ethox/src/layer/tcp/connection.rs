@@ -1,3 +1,10 @@
+/// Defines the state machine for a single connection.
+///
+/// A `Connection` is a Mealy machine receiving `InPacket` from the network, returning `Signals` to
+/// the rest of the TCP layer. In the other direction, the transmit portion of the stack
+/// communicates the user buffers `AvailableBytes` and `ReceivedSegment` to affect the `Segment`
+/// emitted in the transmission part.
+
 use core::convert::TryFrom;
 use core::ops::Range;
 use crate::time::{Duration, Expiration, Instant};
@@ -12,7 +19,7 @@ use super::endpoint::{
 
 /// The state of a connection.
 ///
-/// Includes current state machine state, the configuratin state that is required to stay constant
+/// Includes current state machine state, the configuration state that is required to stay constant
 /// during a connection, and the in- and out-buffers.
 #[derive(Clone, Copy, Debug, Hash)]
 pub struct Connection {
@@ -97,6 +104,7 @@ pub struct Connection {
     pub recv: Receive,
 }
 
+/// The connection state relevant for outgoing segments.
 #[derive(Clone, Copy, Debug, Hash)]
 pub struct Send {
     /// The next not yet acknowledged sequence number.
@@ -138,6 +146,7 @@ pub struct Send {
     pub initial_seq: TcpSeqNumber,
 }
 
+/// The connection state relevant for incoming segments.
 #[derive(Clone, Copy, Debug, Hash)]
 pub struct Receive {
     /// The next expected sequence number.
@@ -149,7 +158,7 @@ pub struct Receive {
     /// The actually acknowledged sequence number.
     ///
     /// Implementing delayed ACKs (not sending acks for every packet) this tracks what we have
-    /// publicly announed as our `NXT` sequence. Validity checks of incoming packet should be done
+    /// publicly announced as our `NXT` sequence. Validity checks of incoming packet should be done
     /// relative to this value instead of `next`. In Linux, this is called `wup`.
     pub acked: TcpSeqNumber,
 
@@ -175,7 +184,7 @@ pub struct Receive {
     pub initial_seq: TcpSeqNumber,
 }
 
-/// State enum of the statemachine.
+/// State enum of the state machine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum State {
     /// Marker state fo an unintended/uninitialized connection state.
@@ -200,7 +209,7 @@ pub enum State {
     ///
     /// This is split into two states (FinWait1 and FinWait2) in the RFC where we track whether our
     /// own FIN has been ack'ed. This is of importance for answering CLOSE calls but can be
-    /// supplemented in the io implementation. Transition the the TimeWait state works the same.
+    /// supplemented in the Io implementation. Transition to the TimeWait state works the same.
     FinWait,
 
     /// Closed both sides but we don't know the other knows.
@@ -221,7 +230,7 @@ pub enum State {
 pub struct Flow {
     /// Decider between slow-start and congestion.
     ///
-    /// Set to MAX initially, then updated on occurance of congestion.
+    /// Set to MAX initially, then updated on occurrence of congestion.
     pub ssthresh: u32,
 
     /// The window dictated by congestion.
@@ -260,6 +269,9 @@ pub struct Signals {
     pub answer: Option<TcpRepr>,
 }
 
+/// A descriptor of the transmission buffer.
+///
+///
 #[derive(Clone, Copy, Debug)]
 pub struct AvailableBytes {
     /// Set when no more data will come.
@@ -269,7 +281,14 @@ pub struct AvailableBytes {
     pub total: usize,
 }
 
+/// A descriptor of an accepted incoming segment.
+///
+/// This acknowledges a segment that has been accepted by the receive/reassembly buffer, advancing
+/// the outgoing ACKs and other related state. See [`Connection::set_recv_ack`] for details.
+///
+/// [`Connection::set_recv_ack`]: struct.Connection.set_recv_ack
 #[derive(Clone, Copy, Debug)]
+#[must_use = "Pass this to `Connection::set_recv_ack` after read the segment."]
 pub struct ReceivedSegment {
     /// If the segment has a syn.
     ///
@@ -304,12 +323,13 @@ pub struct InPacket {
     pub time: Instant,
 }
 
+/// An outgoing segment.
 #[derive(Clone, Debug)]
 pub struct Segment {
     /// Representation for the packet.
     pub repr: TcpRepr,
 
-    /// Range of the data within the (re-)transmit buffer.
+    /// Range of the data that should be included, as indexed within the (re-)transmit buffer.
     pub range: Range<usize>,
 }
 
@@ -356,8 +376,8 @@ pub trait Endpoint {
 
 /// The interface to a single active connection on an endpoint.
 pub(crate) struct Operator<'a> {
-    pub endpoint: &'a mut dyn Endpoint,
-    pub connection_key: SlotKey,
+    pub(crate) endpoint: &'a mut dyn Endpoint,
+    pub(crate) connection_key: SlotKey,
 }
 
 /// Internal return determining how a received ack is handled.
@@ -427,6 +447,7 @@ impl Connection {
         }
     }
 
+    /// Handle an arriving packet.
     pub fn arrives(&mut self, incoming: &InPacket, entry: EntryKey) -> Signals {
         match self.current {
             State::Closed => self.arrives_closed(incoming),
@@ -437,6 +458,7 @@ impl Connection {
         }
     }
 
+    /// Realize the effect of opening SYN packet.
     pub fn open(&mut self, time: Instant, entry: EntryKey)
         -> Result<(), crate::layer::Error>
     {
@@ -497,6 +519,7 @@ impl Connection {
         return signals;
     }
 
+    /// Handle an incoming packet in Listen state.
     fn arrives_listen(&mut self, incoming: &InPacket, mut entry: EntryKey)
         -> Signals
     {
@@ -504,7 +527,7 @@ impl Connection {
         // sack, and window scale as well. Note that ts and sack require only a single flag bit in
         // the cookie; the state for timestamp can be restored from the ts-option in the Ack answer
         // to our Syn+Ack and we require only a flag to check if we had received a ts-option in the
-        // Syn initially; while sack also only requires a flag to indicate its negotation state.
+        // Syn initially; while sack also only requires a flag to indicate its negotiation state.
         //
         // The harder part seems to be that syn cookies require a new operation within Signals.
 
@@ -711,7 +734,7 @@ impl Connection {
         // window we indicated to the remote may not reflect exactly what we can actually accept.
         // Furthermore, we a) want to piggy-back data on the ACK to reduce the number of packet
         // sent and b) may want to delay ACKs as given by data in flight and RTT considerations
-        // such as RFC1122. Thus, we merely signal the precence of available data to the operator
+        // such as RFC1122. Thus, we merely signal the presence of available data to the operator
         // above.
         let mut signals = Signals::default();
         signals.receive = Some(segment_ack);
@@ -766,7 +789,7 @@ impl Connection {
         signals
     }
 
-    /// Explicitely send an ack for all data, now.
+    /// Explicitly send an ack for all data, now.
     fn signal_ack_all(&mut self, remote: FourTuple) -> Signals {
         let mut signals = Signals::default();
         signals.answer = Some(self.repr_ack_all(remote));
@@ -829,7 +852,7 @@ impl Connection {
             // When we have already sent our FIN, never send *new* data.
             State::FinWait | State::Closing | State::LastAck => {
                 available.total = available.total.min(self.send.next - self.send.unacked);
-                // FIXME: ensure fin bit is set for retranmissions of last segment.
+                // FIXME: ensure fin bit is set for retransmissions of last segment.
                 self.select_send_segment(available, time, entry)
                     .map(OutSignals::segment)
                     .unwrap_or_else(OutSignals::none)
@@ -1034,8 +1057,16 @@ impl Connection {
 
     /// Acknowledge that a received segment has reached the reader.
     ///
-    /// This method trusts the content of the `ReceivedSegment`. In particular, its FIN bit should
-    /// be accurate.
+    /// This method trusts the content of the `ReceivedSegment`. In particular, its SYN/FIN bits,
+    /// time stamp and length information should be of the last received packet. The best course of
+    /// action is to only pass in exactly the value previously returned in the signals of a call to
+    /// [`arrives`].
+    ///
+    /// Passing wrong information will not lead to memory safety concerns directly but you can no
+    /// longer rely on the accuracy of subsequent connection state. The remote may also get
+    /// incorrect ACKs, and connection resets might occur.
+    ///
+    /// [`arrives`]: #method.arrives
     pub fn set_recv_ack(&mut self, meta: ReceivedSegment) {
         let end = meta.sequence_end();
         let acked_all = self.send.next == self.send.unacked;
@@ -1124,6 +1155,7 @@ impl Receive {
         self.next.contains_in_window(seq, self.window.into())
     }
 
+    /// Setup the window based on an incoming (unscaled) window field.
     pub fn update_window(&mut self, window: usize) {
         let max = u32::from(u16::max_value()) << self.window_scale;
         let capped = u32::try_from(window)
@@ -1164,6 +1196,7 @@ impl Send {
 }
 
 impl ReceivedSegment {
+    /// Compute the total length in sequence space, including SYN or FIN.
     pub fn sequence_len(&self) -> usize {
         self.data_len
             + usize::from(self.syn)
@@ -1184,18 +1217,22 @@ impl ReceivedSegment {
         }
     }
 
+    /// Returns the sequence number corresponding to the first data byte in this segment.
     pub fn data_begin(&self) -> TcpSeqNumber {
         self.begin + usize::from(self.syn)
     }
 
+    /// Returns the sequence number corresponding to the last data byte in this segment.
     pub fn data_end(&self) -> TcpSeqNumber {
         self.begin + usize::from(self.syn) + self.data_len
     }
 
+    /// Check if the given sequence number if within the window of this segment.
     pub fn contains_in_window(&self, seq: TcpSeqNumber) -> bool {
         self.begin.contains_in_window(seq, self.sequence_len())
     }
 
+    /// Returns the past-the-end sequence number with which to ACK the segment.
     pub fn sequence_end(&self) -> TcpSeqNumber {
         self.begin + self.sequence_len()
     }
@@ -1217,19 +1254,19 @@ impl OutSignals {
 }
 
 impl Operator<'_> {
-    pub fn key(&self) -> SlotKey {
+    pub(crate) fn key(&self) -> SlotKey {
         self.connection_key
     }
 
-    pub fn four_tuple(&self) -> FourTuple {
+    pub(crate) fn four_tuple(&self) -> FourTuple {
         self.slot().four_tuple()
     }
 
-    pub fn connection(&self) -> &Connection {
+    pub(crate) fn connection(&self) -> &Connection {
         self.slot().connection()
     }
 
-    pub fn connection_mut(&mut self) -> &mut Connection {
+    pub(crate) fn connection_mut(&mut self) -> &mut Connection {
         self.entry().into_key_value().1
     }
 }
@@ -1238,7 +1275,7 @@ impl<'a> Operator<'a> {
     /// Operate some connection.
     ///
     /// This returns `None` if the key does not refer to an existing connection.
-    pub fn new(endpoint: &'a mut dyn Endpoint, key: SlotKey) -> Option<Self> {
+    pub(crate) fn new(endpoint: &'a mut dyn Endpoint, key: SlotKey) -> Option<Self> {
         let _ = endpoint.get(key)?;
         Some(Operator {
             endpoint,
@@ -1246,7 +1283,7 @@ impl<'a> Operator<'a> {
         })
     }
 
-    pub fn from_tuple(endpoint: &'a mut dyn Endpoint, tuple: FourTuple) -> Result<Self, &'a mut dyn Endpoint> {
+    pub(crate) fn from_tuple(endpoint: &'a mut dyn Endpoint, tuple: FourTuple) -> Result<Self, &'a mut dyn Endpoint> {
         let key = match endpoint.find_tuple(tuple) {
             Some(entry) => Some(entry.slot_key()),
             None => None,
@@ -1261,19 +1298,19 @@ impl<'a> Operator<'a> {
         }
     }
 
-    pub fn arrives(&mut self, incoming: &InPacket) -> Signals {
+    pub(crate) fn arrives(&mut self, incoming: &InPacket) -> Signals {
         let (entry_key, connection) = self.entry().into_key_value();
         connection.arrives(incoming, entry_key)
     }
 
-    pub fn next_send_segment(&mut self, available: AvailableBytes, time: Instant)
+    pub(crate) fn next_send_segment(&mut self, available: AvailableBytes, time: Instant)
         -> OutSignals
     {
         let (entry_key, connection) = self.entry().into_key_value();
         connection.next_send_segment(available, time, entry_key)
     }
 
-    pub fn open(&mut self, time: Instant) -> Result<(), crate::layer::Error> {
+    pub(crate) fn open(&mut self, time: Instant) -> Result<(), crate::layer::Error> {
         let (entry_key, connection) = self.entry().into_key_value();
         connection.open(time, entry_key)
     }
@@ -1301,11 +1338,11 @@ impl Default for State {
 }
 
 impl InnerRepr {
-    pub fn send_back(&self, incoming: &TcpRepr) -> TcpRepr {
+    pub(crate) fn send_back(&self, incoming: &TcpRepr) -> TcpRepr {
         self.send_impl(incoming.dst_port, incoming.src_port)
     }
 
-    pub fn send_to(&self, tuple: FourTuple) -> TcpRepr {
+    pub(crate) fn send_to(&self, tuple: FourTuple) -> TcpRepr {
         self.send_impl(tuple.local_port, tuple.remote_port)
     }
 
@@ -1366,6 +1403,6 @@ mod tests {
 
         let entry = EntryKey::fake(&mut no_remap, &isn, &mut four);
         let available = AvailableBytes { fin: false, total: 0 };
-        let resent = connection.next_send_segment(available, time_resend, entry);
+        let _resent = connection.next_send_segment(available, time_resend, entry);
     }
 }

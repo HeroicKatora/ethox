@@ -1,3 +1,7 @@
+//! The user facing packet interface.
+//!
+//! The interface differs from other layers in that the `In` packet has many different variants it
+//! represents, depending on the state of the underlying connection.
 use crate::layer::ip;
 use crate::wire::{Payload, PayloadMut};
 use crate::wire::{IpAddress, Ipv4Subnet, Ipv6Subnet, IpSubnet, IpProtocol};
@@ -35,13 +39,15 @@ pub enum In<'a, P: PayloadMut> {
     Stray(Stray<'a, P>),
 }
 
+/// A user defined (re-)transmission buffer.
+/// TODO: a better guide on how to customize
 pub trait SendBuf {
     /// Check the available data.
     ///
-    /// This should be the total of previously sent bytes and unsent bytes.
+    /// This should be the total of sent-but-unacknowledged bytes and unsent bytes.
     fn available(&self) -> AvailableBytes;
 
-    /// Fill in some retransmited data.
+    /// Fill in some (re-)transmitted data.
     ///
     /// The tcp connection layer will take care to never call this with a buffer outside the
     /// indicated available data length. Bytes that have already been sent are not supposed to
@@ -54,6 +60,8 @@ pub trait SendBuf {
     fn ack(&mut self, begin: TcpSeqNumber);
 }
 
+/// A user defined segment reassembly buffer.
+/// TODO: a better guide on how to customize
 pub trait RecvBuf {
     /// Accept some incoming data.
     ///
@@ -128,6 +136,7 @@ pub struct Sending<'a> {
 ///
 /// Same as `Sending`, the packet has already been prepared and queue.
 pub struct Closing<'a> {
+    #[allow(dead_code)] // This attribute exists for parity with other message structs.
     endpoint: &'a mut dyn Endpoint,
     previous: SlotKey,
     signals: UserSignals,
@@ -146,6 +155,9 @@ pub struct Closed<'a, P: PayloadMut> {
 /// An open connection on which we might want to send and receive data.
 ///
 /// Reading of incoming data and sending of ones own is largely independent of each other.
+///
+/// On the receiving path it is recommended to call `read` sometimes to ensure the remote is not
+/// stalled indefinitely (
 pub struct Open<'a, P: PayloadMut> {
     ip: ip::Handle<'a>,
     operator: Operator<'a>,
@@ -213,6 +225,7 @@ impl<'a, P: PayloadMut> Unhandled<'a, P> {
 }
 
 impl<'a, P: PayloadMut> In<'a, P> {
+    /// Handle an incoming TCP packet returning a representation indicating appropriate options.
     pub fn from_arriving(
         endpoint: &'a mut dyn Endpoint,
         ip_control: ip::Handle<'a>,
@@ -314,10 +327,12 @@ impl<'a, P: PayloadMut> In<'a, P> {
 }
 
 impl<'a, P: PayloadMut> Open<'a, P> {
+    /// Get the slot key of the connection corresponding to this packet.
     pub fn key(&self) -> SlotKey {
         self.operator.connection_key
     }
 
+    /// Receive data contained in the TCP segment.
     pub fn read(&mut self, with: &mut impl RecvBuf) {
         let connection = self.operator.connection_mut();
         connection.recv.update_window(with.window());
@@ -450,28 +465,36 @@ impl<'a, P: PayloadMut> Raw<'a, P> {
             _ => return Err(crate::layer::Error::Illegal),
         };
 
-        self.ip.handle().local_ip(source)
+        self.ip.handle.local_ip(source)
             .ok_or(crate::layer::Error::Unreachable)
     }
 }
 
 impl<'a> Sending<'a> {
+    /// Get a the slot key identifying the connection the sending segment belongs to.
     pub fn key(&self) -> SlotKey {
         self.operator.connection_key
     }
 }
 
 impl<'a> Closing<'a> {
+    /// Get a the slot key identifying the connection which closes.
     pub fn key(&self) -> SlotKey {
         self.previous
     }
 }
 
 impl<'a, P: PayloadMut> Closed<'a, P> {
+    /// Get a the slot key identifying the connection which just got closed.
     pub fn key(&self) -> SlotKey {
         self.previous
     }
 
+    /// Unwrap the packet buffer for reuse.
+    ///
+    /// Since there is no longer a connection, the attachement no longer has a purpose. It's also
+    /// not incredibly sensible to try and send more segments to the previously connected remote.
+    /// For most systems, the answer are resets or challenge ACKs.
     pub fn into_raw(self) -> Raw<'a, P> {
         let raw_ip = ip::RawPacket {
             handle: self.ip,
@@ -486,6 +509,10 @@ impl<'a, P: PayloadMut> Closed<'a, P> {
 }
 
 impl<'a, P: PayloadMut> Stray<'a, P> {
+    /// Unwrap the packet buffer for reuse.
+    ///
+    /// There was no connection that the packet belonged to and thus no response required. This
+    /// allows the user to use the packet buffer for arbitrary other communication.
     pub fn into_raw(self) -> Raw<'a, P> {
         let raw_ip = ip::RawPacket {
             handle: self.ip,

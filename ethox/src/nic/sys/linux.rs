@@ -5,12 +5,12 @@
 use super::{ifreq, Errno, LibcResult, IoctlResult};
 use libc;
 
-pub const ETH_P_ALL:    libc::c_short = 0x0003;
+pub(crate) const ETH_P_ALL:    libc::c_short = 0x0003;
 
 /// Adds a method to open a tap.
 ///
 /// This is an extension trait implemented for `ifreq` in Linux.
-pub trait TunSetIf {
+pub(crate) trait TunSetIf {
     /// Attach to an existing interface or create a new one.
     fn tun_set_if(&mut self, fd: libc::c_int, kind: libc::c_int) -> Result<(), Errno>;
 
@@ -19,21 +19,21 @@ pub trait TunSetIf {
 }
 
 /// Adds a method to interact with the mtu.
-pub trait NetdeviceMtu {
+pub(crate) trait NetdeviceMtu {
     fn get_mtu(&mut self, fd: libc::c_int) -> Result<libc::c_int, Errno>;
 }
 
-pub trait IfIndex {
+pub(crate) trait IfIndex {
     fn get_if_index(&mut self, fd: libc::c_int) -> Result<libc::c_int, Errno>;
 }
 
 impl ifreq {
-    pub const SIOCGIFMTU:   libc::c_ulong = 0x8921;
-    pub const SIOCGIFINDEX: libc::c_ulong = 0x8933;
+    pub(crate) const SIOCGIFMTU:   libc::c_ulong = 0x8921;
+    pub(crate) const SIOCGIFINDEX: libc::c_ulong = 0x8933;
 
-    pub const TUNSETIFF:    libc::c_ulong = 0x400454CA;
-    pub const IFF_TAP:      libc::c_int   = 0x0002;
-    pub const IFF_NO_PI:    libc::c_int   = 0x1000;
+    pub(crate) const TUNSETIFF:    libc::c_ulong = 0x400454CA;
+    pub(crate) const IFF_TAP:      libc::c_int   = 0x0002;
+    pub(crate) const IFF_NO_PI:    libc::c_int   = 0x1000;
 }
 
 impl TunSetIf for ifreq {

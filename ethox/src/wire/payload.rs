@@ -10,6 +10,9 @@ use crate::managed::Slice;
 /// is that the values in the referred to byte region will not appear differently, which is trivial
 /// when we guarantee that the byte region is part of our object and does not change.
 pub trait Payload {
+    /// Get the bytes wrapped in the `payload` newtype.
+    ///
+    /// [`payload`]: struct.payload.html
     fn payload(&self) -> &payload;
 }
 
@@ -41,8 +44,16 @@ pub trait PayloadMut: Payload {
     fn payload_mut(&mut self) -> &mut payload;
 }
 
+/// Groups parameters and utilities for payload reframing.
+///
+/// The term reframing means changing the outer embedding of a payload while preserving at least
+/// some part of its content. In contrast, resizing need never provide any guarantees besides a
+/// correct size. Intermediate layers will have to propagate a reframing call downwards and in the
+/// process overestimate the preserved region. Some utility methods for this case are provided.
 pub struct Reframe {
+    /// The desired length.
     pub length: usize,
+    /// The range in the current payload whose content must be preserved.
     pub range: ops::Range<usize>,
 }
 
@@ -52,6 +63,9 @@ byte_wrapper! {
     /// This type is seemingly just a `[u8]`. It is a newtype wrapper so that this crate can freely
     /// implement traits for it but also restrict the standard trait implementations to not be
     /// available.
+    ///
+    /// To create a `payload` use the provided `From` trait impls, to convert it back you can use
+    /// either of the synonyms `as_bytes` or `as_slice`, and their mutable variants.
     #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
     pub struct payload([u8]);
 }
@@ -59,23 +73,30 @@ byte_wrapper! {
 /// Error variants for resizing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Error {
+    /// Indicates the requested length could not be provided.
+    ///
+    /// The exact cause will depend on circumstances: the resource might be exhausted; the size
+    /// could be too small; or it is required that the size be divisible by a certain constant.
     BadSize,
 }
 
 impl payload {
+    /// Converts this payload to a standard byte slice. This is a no-op pointer conversion.
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
     
+    /// Converts this payload to a mutable byte slice. This is a no-op pointer conversion.
     pub fn as_bytes_mut(&mut self) -> &mut [u8] {
         &mut self.0
     }
 
-
+    /// Converts this payload to a standard byte slice. This is a no-op pointer conversion.
     pub fn as_slice(&self) -> &[u8] {
         &self.0
     }
 
+    /// Converts this payload to a mutable byte slice. This is a no-op pointer conversion.
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         &mut self.0
     }

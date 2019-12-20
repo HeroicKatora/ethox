@@ -5,13 +5,15 @@
 //! familiar nevertheless.
 //!
 //! The main difference is that many incoming events *require* soliciting an answer such as an ACK
-//! for received data. In effect, not all `In` packets can be turned into a `Raw` packet so send
-//! arbitrary data such as opening a new connection.
+//! for received data. In effect, not all `In` packets should be turned into a `Raw` packet and
+//! instead should be queued instantaneously. Note: *should*, not *must*. Dropping outgoing packet
+//! potentially starves the remote of ACKs and window updates, leading to highly inefficient
+//! communication or even resets but not catastrophic failure.
 //!
-//! Note that they make a number of simplifying assumptions which we must refute:
+//! There are a number of other simplifying assumptions which we must (but can) refute:
 //! * '2-The TCP endpoint has unlimited buffer space'
-//! 
-//!   This is simply not possible for an allocation free implementation. TODO: possible, just drop
+//!   
+//!   This is simply not feasible for an allocation free implementation. TODO: possible, just drop
 //!   the packet. This would at least allow it to be used as a `Raw` packet for example for sending
 //!   ones own data.
 //! * A timer timeout is used to retransmit queue packets. We have no such timer but instead can
@@ -21,12 +23,18 @@
 //! * Data can sometimes be piggy-backed on some packets that contain status communication. Note
 //!   however that for some networks there is a cost associated with large packet, mostly as higher
 //!   drop rates. This may be the case due to badly configured buffers but also congestion avoidance
-//!   mechanisms.
+//!   mechanisms. For these reasons, this is not required but the default `Client` implementation
+//!   tries to send as many data carrying segment as possible.
 //!
 //! ## Structure
 //!
-//! The main functionality of the 'endpoint' structure of this layer is storing the connection
-//! states, unlike other layers which mostly store configuration options.
+//! The main functionality of the ['Endpoint'] structure of this layer is storing the connection
+//! states, unlike other layers which mostly store configuration options. To this end it utilizes
+//! one generic map of connection tuples to [`SlotKey`]s (which behave similar to specialized file
+//! descriptors) and a slotmap of these indices to connections.
+//!
+//! [`Endpoint`]: struct.Endpoint.html
+//! [`SlotKey`]: struct.SlotKey.html
 //!
 //! Unlike standard stacks where state and user must be assumed to be in different protection
 //! domains and which manage their state opaquely, it poses no problem for this library to allow
@@ -35,13 +43,27 @@
 //!
 //! ## Creating a connection
 //!
-//! TODO
+//! An active open to a remote requires sending the initial SYN packet. Thus, the best way to
+//! perform this is within a send phase. This requires a [`Raw`] packet and the [`Endpoint`].
+//!
+//! [`Raw`]: struct.RawPacket.html
+//! [`Endpoint`]: struct.Endpoint.html
+//!
+//! The stack does not *currently* allow sending any data in a SYN packet as these are rarely
+//! accepted. They are incompatible with SYN-cookies and otherwise a security and stability risk.
+//! As such, they would be mostly useless. However, unlike many other implementations, the default
+//! client will already begin sending data in the same packet that acknowledges the reverse SYN.
 //!
 //! ## Accepting connections
 //!
 //! Accepting a connection is not unlike creating one but occurs as a reaction to an incoming
 //! packet instead of proactively. This motivates deferring that decision to the user, instead of
-//! remaining a question of policy within the tcp layer.
+//! remaining a question of policy within the tcp layer. You create a listening socket and with it
+//! reserve one connection state for a port but it will accept only a single (successful)
+//! connection attempt. The handler of the then produced [`Open`] packet needs to create more
+//! reserved connection states.
+//!
+//! [`Open`]: struct.Open.html
 //!
 //! ## Deviations
 //!
@@ -71,8 +93,9 @@
 //! A listening socket is designed to accept all connection request. That is not necessarily true
 //! and we want to be indistinguishable from a closed socket else.
 //!
-//! SYN packet may contain data. 
-//!
+//! Data sent in SYN packet is ignored for now but that may change in the future. If the connection
+//! was initiated actively then there is virtually no difference for the handling of contained
+//! segment data within the library.
 use crate::wire::PayloadMut;
 
 mod connection;
@@ -88,6 +111,7 @@ pub use connection::{
     ReceivedSegment};
 
 pub use endpoint::{
+    FourTuple,
     Slot,
     SlotKey,
     Endpoint};
@@ -108,10 +132,31 @@ pub use socket::{
 // publically exposed for initialization.
 pub use siphash::IsnGenerator;
 
+/// A TCP receiver.
+///
+/// Processes incoming TCP traffic and automatic answers and is encouraged to generate additional
+/// packets when the buffer is not needed for protocol internal messages.
 pub trait Recv<P: PayloadMut> {
+    /// Inspect one incoming packet buffer.
+    ///
+    /// The variant of `InPacket` gives more information on the available options. Note that the
+    /// original packet might have been modified already if it contained no user information but
+    /// necessitated a TCP specific answer.
+    ///
+    /// Valid received segments should be processed with the user chosen re-assembly buffer and do
+    /// not affect (most of) the connection state until that point. This includes progress of the
+    /// incoming data stream.
     fn receive(&mut self, frame: InPacket<P>);
 }
 
+/// A TCP sender.
+///
+/// Utilize raw TCP buffers to open connections or send on existing ones.
 pub trait Send<P: PayloadMut> {
+    /// Fill in one available packet buffer.
+    ///
+    /// Utilize one of the methods to create a new connection or produce packets on an already
+    /// existing one. Directly modifying the endpoint is not intended and should instead be done
+    /// outside the `Send` trait.
     fn send(&mut self, raw: RawPacket<P>);
 }

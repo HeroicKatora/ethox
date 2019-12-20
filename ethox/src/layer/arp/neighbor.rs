@@ -32,6 +32,13 @@ pub enum Answer {
     RateLimited,
 }
 
+/// One mapped value of an entry in the neighbor cache.
+///
+/// A valid physical address is only one possible variant. To ensure that an outgoing probe can
+/// receive an answer, we reserve a slot while the outstanding request has not timed out. And since
+/// we might not have a packet buffer when a request should be sent, or due to rate limiting, there
+/// also exists a state for requests that have not yet been sent but which are necessary for upper
+/// layer progress.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Mapping {
     /// An address is present.
@@ -50,6 +57,7 @@ impl Default for Mapping {
     }
 }
 
+/// Errors that can occur when adding a new ARP result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
     /// There as no space to add the entry.
@@ -73,7 +81,7 @@ pub enum Error {
 /// ```rust
 /// # #[cfg(feature = "std")] {
 /// // Only available with feature = "std"
-/// use ethox::layer::eth::{Neighbor, NeighborCache};
+/// use ethox::layer::arp::{Neighbor, NeighborCache};
 ///
 /// let mut entry_set = vec![Neighbor::default(); 10];
 /// let mut neighbor_cache = NeighborCache::new(entry_set);
@@ -83,11 +91,18 @@ pub enum Error {
 /// On systems without heap, use:
 ///
 /// ```rust
-/// use ethox::layer::eth::{Neighbor, NeighborCache};
+/// use ethox::layer::arp::{Neighbor, NeighborCache};
 ///
 /// let mut neighbor_cache_storage = [Neighbor::default(); 10];
 /// let mut neighbor_cache = NeighborCache::new(&mut neighbor_cache_storage[..]);
 /// ```
+///
+/// ## Details
+///
+/// The map in the background is an ordered slice, optimized for use in small local networks. This
+/// makes insertion and deletion potentially costly but it is bounded by the size of the slice
+/// which is chosen by the user. If your use case requires a different performance characteristic,
+/// feel free to change the code (and upstream your improvement if possible).
 #[derive(Debug)]
 pub struct Cache<'a> {
     storage:      Ordered<'a, Neighbor>,
@@ -205,12 +220,6 @@ impl<'a> Cache<'a> {
                 }
             }
 
-            /*
-            println!("Refreshed entry {}: {:?} - expiry: {:?}", 
-                 new_neighbor.protocol_addr,
-                 new_neighbor.hardware_addr,
-                 new_neighbor.expires_at);
-                 */
             let _old = self.storage.replace_at(index, new_neighbor)
                 .expect("Sorting didn't change since we only have one entry per protocol addr");
             return Ok(());
@@ -256,6 +265,11 @@ impl Table {
         unsafe { &*(data as *const [Neighbor] as *const Self) }
     }
 
+    /// Perform one IpAddress to EthernetAddress translation.
+    ///
+    /// This will ignore any existing mapping other than a valid address. Use it in case it is not
+    /// required to know if the protocol address is currently being queried or the request is
+    /// currently rate limited. If this *is* required, use `lookup` instead.
     pub fn lookup_pure(
         &self,
         protocol_addr: IpAddress,
@@ -267,6 +281,11 @@ impl Table {
         }
     }
 
+    /// Resolve one protocol address to the state reserved for it.
+    ///
+    /// The variants of the returned enum allows one to deduce if the protocol address is currently
+    /// being queried and ifaa request has been sent or is currently rate limited. If only address
+    /// information is desired, use `lookup_pure` instead.
     pub fn lookup(
         &self,
         protocol_addr: IpAddress,
@@ -288,6 +307,7 @@ impl Table {
         Some(entry.hardware_addr)
     }
 
+    /// An iterator over entries with no response yet.
     pub fn missing(&self) -> Missing {
         Missing {
             inner: self.0.iter(),
@@ -296,10 +316,12 @@ impl Table {
 }
 
 impl Neighbor {
+    /// Get the protocol address stored in this entry.
     pub fn protocol_addr(&self) -> IpAddress {
         self.protocol_addr
     }
 
+    /// Get the physical address this protocol address is mapped to.
     pub fn hardware_addr(&self) -> Option<EthernetAddress> {
         match self.hardware_addr {
             Mapping::Address(addr) => Some(addr),
@@ -308,10 +330,16 @@ impl Neighbor {
         }
     }
 
+    /// Check if the entry should still be considered valid.
+    ///
+    /// This is the negation of `is_expired`.
     pub fn is_alive(&self, ts: Instant) -> bool {
         Expiration::When(ts) <= self.expires_at
     }
 
+    /// Check if the entry expired.
+    ///
+    /// This is the negation of `is_alive`.
     pub fn is_expired(&self, ts: Instant) -> bool {
         !self.is_alive(ts)
     }

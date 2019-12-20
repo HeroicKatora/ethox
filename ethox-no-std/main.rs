@@ -6,8 +6,8 @@
 #![no_main]
 
 use ethox::managed::Slice;
-use ethox::nic::{Device, TapInterface};
-use ethox::layer::{eth, ip, icmp};
+use ethox::nic::{Device, sys::TapInterface};
+use ethox::layer::{arp, eth, ip, icmp};
 use ethox::wire::{Ipv4Address, Ipv4Cidr, EthernetAddress};
 
 #[no_mangle]
@@ -19,12 +19,12 @@ pub extern fn main(_nargs: i32, _args: *const *const u8) -> i32 {
 
     let mut eth = eth::Endpoint::new(hostmac);
 
-    let mut neighbors = [eth::Neighbor::default(); 10];
+    let mut neighbors = [arp::Neighbor::default(); 10];
     let mut ip = ip::Endpoint::new(Slice::One(host.into()),
         // No routes at all
         ip::Routes::new(Slice::empty()), 
         // But do automatic arp
-        eth::NeighborCache::new(&mut neighbors[..]));
+        arp::NeighborCache::new(&mut neighbors[..]));
 
     let mut icmp = icmp::Endpoint::new();
 

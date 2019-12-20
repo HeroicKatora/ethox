@@ -186,16 +186,16 @@ byte_wrapper! {
 mod field {
     use crate::wire::field::Field;
 
-    pub const TYPE:       usize = 0;
-    pub const CODE:       usize = 1;
-    pub const CHECKSUM:   Field = 2..4;
+    pub(crate) const TYPE:       usize = 0;
+    pub(crate) const CODE:       usize = 1;
+    pub(crate) const CHECKSUM:   Field = 2..4;
 
-    pub const UNUSED:     Field = 4..8;
+    pub(crate) const UNUSED:     Field = 4..8;
 
-    pub const ECHO_IDENT: Field = 4..6;
-    pub const ECHO_SEQNO: Field = 6..8;
+    pub(crate) const ECHO_IDENT: Field = 4..6;
+    pub(crate) const ECHO_SEQNO: Field = 6..8;
 
-    pub const HEADER_END: usize = 8;
+    pub(crate) const HEADER_END: usize = 8;
 }
 
 impl icmpv4 {

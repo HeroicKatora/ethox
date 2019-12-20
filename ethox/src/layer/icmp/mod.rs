@@ -49,10 +49,22 @@ pub use packet::{
     Raw as RawPacket,
 };
 
+
+/// An ICMP receiver.
+///
+/// Processes incoming ICMP traffic with the option of generating automatic answers or some basic
+/// customized handling.
 pub trait Recv<P: Payload> {
+    /// Inspect one incoming packet buffer.
     fn receive(&mut self, frame: InPacket<P>);
 }
 
+/// A ICMP sender.
+///
+/// Utilize raw packet buffers to send ICMP probes such as echo request or advertisements, or to
+/// advise remotes of unreachable routes where `ethox` does not do so in a satisfactory manner
+/// itself.
 pub trait Send<P: Payload> {
+    /// Fill in one available packet buffer.
     fn send(&mut self, raw: RawPacket<P>);
 }

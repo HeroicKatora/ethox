@@ -2,7 +2,7 @@
 // Copyright (C) 2016 whitequark@whitequark.org
 // Copyright (C) 2019 Andreas Molzer <andreas.molzer@tum.de>
 //
-// in large parts from `smoltcp` originally distributed under 0-clause BSD
+// in many parts from `smoltcp` originally distributed under 0-clause BSD
 //
 // Applies to files in this folder unless otherwise noted. These are:
 // * `bpf.rs`
@@ -86,13 +86,13 @@ pub fn wait(fd: RawFd, duration: Option<Duration>) -> Result<(), Errno> {
 pub struct Errno(pub libc::c_int);
 
 #[derive(Clone, Copy)]
-struct FdResult(pub libc::c_int);
+struct FdResult(libc::c_int);
 
 #[derive(Clone, Copy)]
-struct IoLenResult(pub libc::ssize_t);
+struct IoLenResult(libc::ssize_t);
 
 #[derive(Clone, Copy)]
-struct ClockResult(pub libc::c_int);
+struct ClockResult(libc::c_int);
 
 type IoctlResult = FdResult;
 #[allow(non_snake_case)] // Emulate type alias also importing constructor.
@@ -126,6 +126,7 @@ trait LibcResult: Copy {
 }
 
 impl Errno {
+    /// Retrieve the current value of `errno`.
     pub fn new() -> Errno {
         Errno(unsafe { *libc::__errno_location() })
     }

@@ -7,8 +7,8 @@ use std::net;
 use structopt::StructOpt;
 
 use ethox::managed::{List, Map, SlotMap, Slice};
-use ethox::nic::{Device, RawSocket, Protocol};
-use ethox::layer::{eth, ip, tcp};
+use ethox::nic::{Device, sys::RawSocket, Protocol};
+use ethox::layer::{arp, eth, ip, tcp};
 use ethox::wire::{Ipv4Address, Ipv4Cidr, EthernetAddress};
 
 fn main() {
@@ -24,12 +24,12 @@ fn main() {
     let mut eth = eth::Endpoint::new(hostmac);
 
     // Buffer space for arp neighbor cache
-    let mut neighbors = [eth::Neighbor::default(); 1];
+    let mut neighbors = [arp::Neighbor::default(); 1];
     // Buffer space for routes, we only have a single state one.
     let mut routes = [ip::Route::new_ipv4_gateway(gateway.address()); 1];
     let mut ip = ip::Endpoint::new(Slice::One(host.into()),
         ip::Routes::import(List::new_full(routes.as_mut().into())),
-        eth::NeighborCache::new(&mut neighbors[..]));
+        arp::NeighborCache::new(&mut neighbors[..]));
 
     let mut tcp = tcp::Endpoint::new(
         Map::Pairs(List::new(Slice::One(Default::default()))),

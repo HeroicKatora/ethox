@@ -1,5 +1,7 @@
+//! Provides packet reassembly utilities.
 use core::{borrow, fmt, ops};
 
+/// A list of contiguous data chunks and holes.
 #[derive(Debug, PartialEq, Eq)]
 #[repr(transparent)]
 #[allow(non_camel_case_types)]
@@ -8,12 +10,38 @@ pub struct assembly {
 }
 
 /// A buffer (re)assembler.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// Use this to keep track of available ranges of fragmented data. The underlying buffer provides
+/// a slice of [`Contig`] ranges filled with information on available data and holes between these
+/// segments. The structure can then be joined with the fragments of new incoming packets after
+/// which the fully reconstructed prefix is emitted.
+///
+/// This is useful for custom TCP reassembly buffer implementations or other fragment mechanisms.
+///
+/// ```
+/// # use ethox::storage::assembler::{Assembler, Contig};
+/// let mut asm = Assembler::new([Contig::default(); 10]);
+///
+/// // Data added in front is returned immediately.
+/// assert_eq!(asm.add(0, 10), Ok(10));
+///
+/// // When the fragment does not start at the front ...
+/// assert_eq!(asm.add(5, 5), Ok(0));
+/// // ... its data is returned when the front is filled.
+/// assert_eq!(asm.add(0, 5), Ok(10));
+///
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct Assembler<C> {
     container: C,
 }
 
+/// An iterator over the data ranges in an `assembly`.
+///
+/// This is create with the [`iter`].
+///
+/// [`iter`]: struct.assembly.html#method.iter
 pub struct AssemblerIter<'a> {
     assembler: &'a assembly,
     index: usize,
@@ -148,7 +176,9 @@ impl assembly {
 
     /// Add a new contiguous range to the assembler.
     ///
-    /// Returns the number of bytes that became assembled from the range.
+    /// Returns the number of bytes that became assembled from the range, or `Err(())` if it was not
+    /// possible to store the range. If this operation returns an error then it did not modify the
+    /// `Assembler` at all.
     ///
     /// ## Example
     ///
@@ -341,18 +371,20 @@ impl assembly {
     /// ```
     ///
     /// This would return the ranges: ``(100, 200), (300, 400)``
-    pub fn iter_data<'a>(&'a self) -> AssemblerIter<'a> {
+    pub fn iter<'a>(&'a self) -> AssemblerIter<'a> {
         AssemblerIter::new(self)
     }
 }
 
 impl<C> Assembler<C> {
+    /// Create a new assembler utilizing the container's assembly space.
     pub fn new(container: C) -> Self
         where C: borrow::BorrowMut<[Contig]>,
     {
         Assembler { container }
     }
 
+    /// Unwrap the inner container.
     pub fn into_inner(self) -> C {
         self.container
     }
@@ -555,56 +587,56 @@ mod test {
     #[test]
     fn test_iter_empty() {
         let assr = Assembler::new(vec![Contig::default(); 1]);
-        let segments: Vec<_> = assr.iter_data().collect();
+        let segments: Vec<_> = assr.iter().collect();
         assert_eq!(segments, vec![]);
     }
 
     #[test]
     fn test_iter_full() {
         let assr = contigs![(0, 16)];
-        let segments: Vec<_> = assr.iter_data().collect();
+        let segments: Vec<_> = assr.iter().collect();
         assert_eq!(segments, vec![(0, 16)]);
     }
 
     #[test]
     fn test_iter_one_front() {
         let assr = contigs![(0, 4)];
-        let segments: Vec<_> = assr.iter_data().collect();
+        let segments: Vec<_> = assr.iter().collect();
         assert_eq!(segments, vec![(0, 4)]);
     }
 
     #[test]
     fn test_iter_one_back() {
         let assr = contigs![(12, 4)];
-        let segments: Vec<_> = assr.iter_data().collect();
+        let segments: Vec<_> = assr.iter().collect();
         assert_eq!(segments, vec![(12, 16)]);
     }
 
     #[test]
     fn test_iter_one_mid() {
         let assr = contigs![(4, 8)];
-        let segments: Vec<_> = assr.iter_data().collect();
+        let segments: Vec<_> = assr.iter().collect();
         assert_eq!(segments, vec![(4, 12)]);
     }
 
     #[test]
     fn test_iter_one_trailing_gap() {
         let assr = contigs![(4, 8), (4, 0)];
-        let segments: Vec<_> = assr.iter_data().collect();
+        let segments: Vec<_> = assr.iter().collect();
         assert_eq!(segments, vec![(4, 12)]);
     }
 
     #[test]
     fn test_iter_two_split() {
         let assr = contigs![(2, 6), (4, 1), (1, 0)];
-        let segments: Vec<_> = assr.iter_data().collect();
+        let segments: Vec<_> = assr.iter().collect();
         assert_eq!(segments, vec![(2, 8), (12, 13)]);
     }
 
     #[test]
     fn test_iter_three_split() {
         let assr = contigs![(2, 6), (2, 1), (2, 2), (1, 0)];
-        let segments: Vec<_> = assr.iter_data().collect();
+        let segments: Vec<_> = assr.iter().collect();
         assert_eq!(segments, vec![(2, 8), (10, 11), (13, 15)]);
     }
 

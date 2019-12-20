@@ -11,9 +11,17 @@ pub struct EnqueueFlag {
     info: PacketInfo,
 }
 
+/// A static representation of packet/network interface metadata.
+///
+/// This implements [`Info`] and can be used for interface implementations where that information is
+/// not dynamic.
+///
+/// [`Info`]: ../trait.Info.html
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PacketInfo {
+    /// The associated timestamp of the packet.
     pub timestamp: Instant,
+    /// The capabilities offered for a packet buffer.
     pub capabilities: Capabilities,
 }
 
@@ -24,6 +32,7 @@ enum FlagState {
 }
 
 impl EnqueueFlag {
+    /// Create a flag signalling that the buffer can not be queued.
     pub fn not_possible(info: PacketInfo) -> Self {
         EnqueueFlag {
             flag: FlagState::NotPossible,
@@ -31,6 +40,7 @@ impl EnqueueFlag {
         }
     }
 
+    /// Create a flag that can be set to queue a buffer.
     pub fn set_true(info: PacketInfo) -> Self {
         EnqueueFlag {
             flag: FlagState::SetTrue(false),
@@ -38,13 +48,16 @@ impl EnqueueFlag {
         }
     }
 
+    /// Query if the flag has been set to queue a buffer.
+    ///
+    /// This can only return `true` if the flag was created with `set_true`.
     pub fn was_sent(&self) -> bool {
         self.flag.was_sent()
     }
 }
 
 impl FlagState {
-    pub fn was_sent(&self) -> bool {
+    pub(crate) fn was_sent(&self) -> bool {
         match self {
             FlagState::NotPossible => false,
             FlagState::SetTrue(b) => *b,

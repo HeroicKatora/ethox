@@ -70,10 +70,12 @@ impl Personality {
         }
     }
 
+    /// Check the capabilities of the interface.
     pub fn capabilities(&self) -> &Capabilities {
         &self.capabilities
     }
 
+    /// Mutably get the capabilities which allows for modifications.
     pub fn capabilities_mut(&mut self) -> &mut Capabilities {
         &mut self.capabilities
     }
@@ -92,36 +94,46 @@ impl Capabilities {
         }
     }
 
+    /// Check ICMPv4 support descriptor.
     pub fn icmpv4(&self) -> &Protocol {
         &self.icmpv4
     }
 
+    /// Check IPv4 support descriptor.
     pub fn ipv4(&self) -> &Protocol {
         &self.ipv4
     }
 
+    /// Mutably get IPv4 support descriptor.
     pub fn ipv4_mut(&mut self) -> &mut Protocol {
         &mut self.ipv4
     }
 
+    /// Check UDP support descriptor.
     pub fn udp(&self) -> &Udp {
         &self.udp
     }
 
+    /// Mutably get UDP support descriptor.
     pub fn udp_mut(&mut self) -> &mut Udp {
         &mut self.udp
     }
 
+    /// Check TCP support descriptor.
     pub fn tcp(&self) -> &Tcp {
         &self.tcp
     }
 
+    /// Mutably get TCP support descriptor.
     pub fn tcp_mut(&mut self) -> &mut Tcp {
         &mut self.tcp
     }
 }
 
 impl Protocol {
+    /// Create a protocol support descriptor without any supported feature.
+    ///
+    /// This means that the stack needs to perform all checksums manually.
     pub fn no_support() -> Self {
         Protocol {
             send: Checksum::Manual,
@@ -141,24 +153,29 @@ impl Protocol {
         }
     }
 
+    /// Get the receive checksum descriptor.
     pub fn rx_checksum(&self) -> Checksum {
         self.receive
     }
 
+    /// Mutably get the receive checksum descriptor.
     pub fn rx_checksum_mut(&mut self) -> &mut Checksum {
         &mut self.receive
     }
 
+    /// Get the transmit checksum descriptor.
     pub fn tx_checksum(&self) -> Checksum {
         self.send
     }
 
+    /// Mutably get the transmit checksum descriptor.
     pub fn tx_checksum_mut(&mut self) -> &mut Checksum {
         &mut self.send
     }
 }
 
 impl Udp {
+    /// Create a UDP descriptor with no supported features.
     pub fn no_support() -> Self {
         Udp {
             inner: Protocol::no_support(),
@@ -197,6 +214,7 @@ impl Udp {
 }
 
 impl Tcp {
+    /// Create a TCP descriptor with no supported features.
     pub fn no_support() -> Self {
         Tcp {
             inner: Protocol::no_support(),

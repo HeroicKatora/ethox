@@ -5,8 +5,10 @@ pub mod common;
 pub mod loopback;
 pub mod external;
 mod personality;
+
 #[cfg(feature = "sys")]
-mod sys;
+#[path="sys/mod.rs"]
+mod sys_internal;
 
 use crate::wire::Payload;
 use crate::layer::{Result, FnHandler};
@@ -20,23 +22,30 @@ pub use self::personality::{
     Protocol};
 
 #[cfg(feature = "sys")]
-pub use self::sys::exports::*;
+pub use self::sys_internal::exports as sys;
 
 pub use crate::layer::loss::{Lossy, PrngLoss};
 
 /// A reference to memory holding packet data and a handle.
 ///
-/// The `Payload` is as an interfance into internal library types for packet parsing while the
+/// The `Payload` is as an interface into internal library types for packet parsing while the
 /// `Handle` is an interface to the device to provide operations for packet handling.
 pub struct Packet<'a, H, P>
 where
     H: Handle + ?Sized + 'a,
     P: Payload + ?Sized + 'a,
 {
+    /// A control handle to the network interface and current buffer.
     pub handle: &'a mut H,
+    /// One buffer containing an Ethernet frame.
     pub payload: &'a mut P,
 }
 
+/// A controller for the network operations of the payload buffer.
+///
+/// Provides the meta data of the payload. This trait is split from the main payload since it must
+/// be possible to use its method even while the payload itself is borrowed (e.g. within a parsed
+/// packet representation).
 pub trait Handle {
     /// Queue this packet to be sent.
     ///
@@ -54,8 +63,15 @@ pub trait Handle {
     // TODO: multiple interfaces (=zerocopy forwarding).
 }
 
+/// The metadata associated with a packet buffer.
+///
+/// This is the central source of information for the ethox implementation that can be customized
+/// by the network interface. The data can differ per buffer, although certain constraints should
+/// hold such as the timestamp should also be monotonically increasing. Violating them is not a
+/// memory safety concern but could hinder forward progress or harm performance, trough discarded
+/// caches or otherwise.
 pub trait Info {
-    /// The reference timestamp for this packet.
+    /// The reference time stamp for this packet.
     fn timestamp(&self) -> Instant;
 
     /// Capabilities used for the packet.
@@ -65,8 +81,17 @@ pub trait Info {
     fn capabilities(&self) -> Capabilities;
 }
 
+/// A layer 2 device.
 pub trait Device {
+    /// The control handle type also providing packet meta information.
     type Handle: Handle + ?Sized;
+    /// The payload buffer type of this device.
+    ///
+    /// It can be an owning buffer such as `Vec<u8>` or a non-owning buffer or even only emulate a
+    /// buffer containing an Ethernet packet. Note that the buffer trait should stay a type
+    /// parameter so that upper layers can make use of additional methods and not be constrained to
+    /// the `Payload` trait. (Although smart use of `Any` might in some cases suffice in a real,
+    /// specific network stack that is not this library).
     type Payload: Payload + ?Sized;
 
     /// A description of the device.
@@ -75,13 +100,22 @@ pub trait Device {
     /// implementation does not take advantage of this fact.
     fn personality(&self) -> Personality;
 
+    /// Transmit some packets utilizing the `sender`.
+    ///
+    /// Up to `max` packet buffers are chosen by the device. They are provided to the sender callback
+    /// which may initialize their contents and decide to queue them. Afterwards, the device is
+    /// responsible for cleaning up unused buffers and physically sending queued buffers.
     fn tx(&mut self, max: usize, sender: impl Send<Self::Handle, Self::Payload>)
         -> Result<usize>;
 
-    fn rx(&mut self, max: usize, receptor: impl Recv<Self::Handle, Self::Payload>)
+    /// Receive packet utilizing the `receptor`.
+    ///
+    /// Dequeue up to `max` received packets and provide them to the receiver callback.
+    fn rx(&mut self, max: usize, receiver: impl Recv<Self::Handle, Self::Payload>)
         -> Result<usize>;
 }
 
+/// A raw network packet receiver.
 pub trait Recv<H: Handle + ?Sized, P: Payload + ?Sized> {
     /// Receive a single packet.
     ///
@@ -101,9 +135,14 @@ pub trait Recv<H: Handle + ?Sized, P: Payload + ?Sized> {
     }
 }
 
+/// A raw network packet sender.
 pub trait Send<H: Handle + ?Sized, P: Payload + ?Sized> {
+    /// Fill a single packet for sending.
     fn send(&mut self, packet: Packet<H, P>);
 
+    /// Vectored sending.
+    ///
+    /// The default implementation will simply send all packets in sequence.
     fn sendv<'a>(&mut self, packets: impl IntoIterator<Item=Packet<'a, H, P>>)
         where P: 'a, H: 'a
     {
@@ -175,7 +214,7 @@ mod tests {
 
     /// Sender and receiver verifying packet lengths.
     #[derive(Copy, Clone)]
-    pub struct LengthIo;
+    pub(crate) struct LengthIo;
 
     impl LengthIo {
         fn signature<P: Payload + ?Sized>(&mut self, payload: &P) -> [u8; 8] {

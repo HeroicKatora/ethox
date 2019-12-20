@@ -16,19 +16,41 @@ use crate::wire::PayloadMut;
 
 mod tap_traits {
     #[cfg(target_os = "linux")]
-    pub use super::linux::IfIndex;
+    pub(crate) use super::linux::IfIndex;
     #[cfg(target_os = "linux")]
-    pub use super::linux::NetdeviceMtu;
+    pub(crate) use super::linux::NetdeviceMtu;
+
+    // for other OS's, other traits might be used instead.
 }
 
 use tap_traits::{IfIndex, NetdeviceMtu};
 
+/// A static descriptor for interacting with a raw socket.
+///
+/// Contains the file descriptor and a pre-filled `ifreq` structure with the interface name that is
+/// required for `ioctl` calls. This offers the raw methods for reading and writing but does not
+/// encapsulate an actual `nic::Device`. Wrap it in a [`RawSocket`] with a buffer for this.
+///
+/// [`RawSocket`]: struct.RawSocket.html
 #[derive(Debug)]
 pub struct RawSocketDesc {
     lower: libc::c_int,
     ifreq: ifreq
 }
 
+/// A raw socket with buffer, usable as a network device.
+///
+/// Uses the errno principle for storing the last underlying error on a failed operation.
+///
+/// The device capabilities are mutable and not automatically deduced. For example, a local veth
+/// pair (connecting two network namespaces) could be allowed to elide all checksums.
+///
+/// The `nic::Device` implementation always sends and receives at most one buffer at a time. It
+/// will also block on sending but is non-blocking during receiving. This is not quite a bug. It's
+/// intended as while the buffer is filled for sending, there are no resources for any other
+/// operation. But it arguably could instead simply yield no buffer in any rx-tx block while the
+/// buffer is already in-use. However, this implementation was slightly simpler and tap interface
+/// is not the main use case. Patches are accepted.
 #[derive(Debug)]
 pub struct RawSocket<C> {
     inner: RawSocketDesc,
@@ -58,6 +80,12 @@ impl<C> AsRawFd for RawSocket<C> {
 }
 
 impl RawSocketDesc {
+    /// Try to open a socket for the named interface.
+    ///
+    /// Note that this does *not* yet bind the interface to the socket, it only creates the
+    /// necessary structures involved in doing so. Call [`bind_interface`] afterwards.
+    ///
+    /// [`bind_interface`]: #method.bind_interface
     pub fn new(name: &str) -> Result<RawSocketDesc, Errno> {
         let lower = unsafe {
             libc::socket(
@@ -74,11 +102,16 @@ impl RawSocketDesc {
         })
     }
 
+    /// Query the interface MTU, as reported by the OS.
     pub fn interface_mtu(&mut self) -> Result<usize, Errno> {
         self.ifreq.get_mtu(self.lower)
             .map(|mtu| mtu as usize)
     }
 
+    /// Update the file descriptor to the named interface.
+    ///
+    /// See `bind` with `AF_PACKET` and `ETH_P_ALL` for error and a discussion of platform
+    /// requirements and checks.
     pub fn bind_interface(&mut self) -> Result<(), Errno> {
         let sockaddr = libc::sockaddr_ll {
             sll_family:   libc::AF_PACKET as u16,
@@ -100,6 +133,10 @@ impl RawSocketDesc {
         FdResult(res).errno()
     }
 
+    /// Receive a single frame into the buffer.
+    ///
+    /// Note that the socket will have been opened with `O_NONBLOCK` so that this only returns an
+    /// `Ok` when a buffer is ready.
     pub fn recv(&mut self, buffer: &mut [u8]) -> Result<usize, Errno> {
         let len = unsafe {
             libc::recv(
@@ -112,6 +149,7 @@ impl RawSocketDesc {
         Ok(len as usize)
     }
 
+    /// Send a single frame from a buffer.
     pub fn send(&mut self, buffer: &[u8]) -> Result<usize, Errno> {
         let len = unsafe {
             libc::send(
@@ -126,9 +164,21 @@ impl RawSocketDesc {
 }
 
 impl<C: PayloadMut> RawSocket<C> {
+    /// Open a raw socket by name with one buffer for packets.
     pub fn new(name: &str, buffer: C) -> Result<Self, Errno> {
         let mut inner = RawSocketDesc::new(name)?;
         inner.bind_interface()?;
+        Self::with_descriptor(inner, buffer)
+    }
+
+    /// Wrap an existing descriptor and buffer into a device.
+    ///
+    /// The socket needs to already be bound to the interface otherwise errors to all calls will be
+    /// the consequence.
+    pub fn with_descriptor(
+        inner: RawSocketDesc,
+        buffer: C,
+    ) -> Result<Self, Errno> {
         Ok(RawSocket {
             inner,
             buffer: Partial::new(buffer),

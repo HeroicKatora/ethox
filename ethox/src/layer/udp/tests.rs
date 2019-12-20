@@ -1,6 +1,6 @@
 use crate::managed::Slice;
 use crate::nic::{external::External, Device};
-use crate::layer::{eth, ip, udp};
+use crate::layer::{arp, eth, ip, udp};
 use crate::wire::{EthernetAddress, Ipv4Address, IpCidr, IpSubnet, Ipv4Subnet, Payload, PayloadMut};
 use crate::wire::{ethernet_frame, ipv4_packet};
 
@@ -46,9 +46,9 @@ fn simple() {
 
     let mut eth = eth::Endpoint::new(MAC_ADDR_SRC);
 
-    let mut neighbors = [eth::Neighbor::default(); 1];
+    let mut neighbors = [arp::Neighbor::default(); 1];
     let neighbors = {
-        let mut eth_cache = eth::NeighborCache::new(&mut neighbors[..]);
+        let mut eth_cache = arp::NeighborCache::new(&mut neighbors[..]);
         eth_cache.fill(IP_ADDR_DST.into(), MAC_ADDR_DST, None).unwrap();
         eth_cache
     };

@@ -15,5 +15,6 @@ pub use self::ring_buffer::RingBuffer;
 ///
 /// In-place analog of Default.
 pub trait Resettable {
+    /// Clear or set all elements to a default value.
     fn reset(&mut self);
 }

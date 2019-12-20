@@ -1,7 +1,10 @@
 //! Receiving and sending ARP messages.
 //!
 //! Restricted to simple use of answering and sending arp based on the required addresses of the
-//! ip/ipv4 layer.
+//! ip/ipv4 layer. You might not need to use this directly as it is embedded into the IP layer for
+//! its use in IPv4 addressing.
+//!
+//! Its code could be more generic and might in the future be reused for other protocols.
 mod endpoint;
 mod neighbor;
 mod packet;

@@ -10,7 +10,9 @@ use crate::wire::{Icmpv4Packet, Icmpv4Repr, icmpv4_packet};
 /// will only receive packets that could not be handled natively by the network library. Pings can
 /// be answered in-place without involving the upper layer if supported by the nic.
 pub struct In<'a, P: Payload> {
+    /// A reference to the ICMP endpoint state.
     pub handle: Handle<'a>,
+    /// The valid packet inside the buffer.
     pub packet: Icmpv4Packet<ip::V4Packet<'a, P>>,
 }
 
@@ -26,7 +28,9 @@ pub struct Out<'a, P: Payload> {
 
 /// A buffer into which a packet can be placed.
 pub struct Raw<'a, P: Payload> {
+    /// A reference to the ICMP endpoint state.
     pub handle: Handle<'a>,
+    /// A mutable reference to the payload buffer.
     pub payload: &'a mut P,
 }
 
@@ -39,12 +43,30 @@ pub struct Handle<'a> {
     pub(crate) inner: ip::Handle<'a>,
 }
 
+/// A helper struct for packet initialization.
+///
+/// In other layers the equivalent utilizes the endpoint itself for specialized initialization but
+/// the ICMP endpoint has almost no state. The [`RawPacket::prepare`] method thus mostly wraps
+/// packet buffer initialization that could be implemented by the user, in a slightly more
+/// ergonomic interface.
 pub enum Init {
+    /// An initializer for an echo request, expecting an echo response by the identified remote
+    /// party.
     EchoRequest {
+        /// The network source address to use.
+        ///
+        /// You likely want to use an address that was configured in the IP layer so that the
+        /// response will actually be forwarded accordingly.
         source: ip::Source,
+        /// The network destination address to query.
         dst_addr: IpAddress,
+        /// An arbitrary identifier for the requested.
         ident: u16,
+        /// A sequence number for repeated requests.
         seq_no: u16,
+        /// The length of user defined payload.
+        ///
+        /// The content is likely ignored by the receiver, other than being echoed back.
         payload: usize,
     },
 }
@@ -81,6 +103,8 @@ impl<'a, P: Payload> In<'a, P> {
             packet,
         }
     }
+
+    /// Deconstruct the packet into the reusable buffer.
     pub fn deinit(self) -> Raw<'a, P>
         where P: PayloadMut,
     {
@@ -149,6 +173,12 @@ impl<'a, P: Payload> Out<'a, P> {
 }
 
 impl<'a, P: PayloadMut> Out<'a, P> {
+    /// A mutable slice containing the payload of the icmp message.
+    ///
+    /// The semantics of the payload differ for the defined operations. See a guide to ICMP for the
+    /// details.
+    ///
+    /// This function will also work for ICMPv6 (currently unimplemented).
     pub fn payload_mut_slice(&mut self) -> &mut [u8] {
         self.packet.payload_mut_slice()
     }

@@ -8,11 +8,28 @@ use super::endpoint::FourTuple;
 use crate::time::Instant;
 use crate::wire::{IpAddress, Ipv6Address, TcpSeqNumber};
 
+/// An initial sequence number generator based on SipHash-2-4.
+///
+/// Implements most RFC6528 but with a particular choice of keyed hash function (instead of MD5).
+/// Also, instead of hashing the secret as the last parameter the hash function already provides a
+/// setup for keyed use that can be precomputed.
+///
+/// > ISN = M + SipHash-2-4(secretkey, localip, localport, remoteip, remoteport)
+///
+/// The security of 2-4 might be better than what is required for some usecases and in some cases a
+/// SipHash-1-3 might instead be adequate. If this is indeed the case for Your use then You are
+/// invited to provide a PR introducing such a switch of hash function internally.
+///
+/// Parameters that are unlikely to be accepted: 
+/// * SipHash-4-8, the conservative proposed variant for cryptographic MAC, is twice as expensive
+///   to compute and unlikely to have a practical advantage. Note that any attacker is highly limited
+///   in modifications to the hash input and a collision (second pre-image) is not her goal.
+/// * SipHash-0-x, there exist key recovery attacks and it only has marginal extra 
 pub struct IsnGenerator {
     keys: (u64, u64),
 }
 
-// Yes, that's the initial values.
+// Yes, that's the initial values, as ASCII text.
 const IV: [&[u8; 8]; 4] = [
     b"somepseu",
     b"dorandom",
@@ -27,6 +44,11 @@ struct State {
 }
 
 impl IsnGenerator {
+    /// Create a generator by deriving a key from the standard `RandomState`.
+    ///
+    /// This is done by individually hashing the numbers `0u64` and `1u64` each with the same
+    /// hasher created from a new instance of `RandomState`. The two output tags are then used as
+    /// the internal key state.
     #[cfg(feature = "std")]
     pub fn from_std_hash() -> Self {
         use std::hash::{Hasher, BuildHasher};
@@ -49,6 +71,18 @@ impl IsnGenerator {
         }
     }
 
+    /// Create a generator with some pre-defined secret key.
+    ///
+    /// Really, create the key with some cryptographic random means or derive them from some other
+    /// key with a key derivation function.
+    pub fn from_secret_key_bytes(bytes: [u8; 16]) -> Self {
+        use core::convert::TryInto;
+        let a = u64::from_le_bytes(bytes[..8].try_into().unwrap());
+        let b = u64::from_le_bytes(bytes[8..].try_into().unwrap());
+        IsnGenerator { keys: (a, b), }
+    }
+
+    /// Create a generator with a pre-defined key.
     #[cfg(test)]
     pub fn from_key(a: u64, b: u64) -> Self {
         IsnGenerator { keys: (a, b), }
@@ -57,6 +91,12 @@ impl IsnGenerator {
     /// Get the initial sequence number for a connection.
     ///
     /// The value varies every 4ms or when the underlying secret key is updated.
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the connection tuple contains anything other than an IPv4 and IPv6
+    /// connection pair (i.e. the Invalid state). This may be statically checked in the future
+    /// through some other connection representation.
     pub fn get_isn(&self, connection: FourTuple, time: Instant) -> TcpSeqNumber {
         let mut state = State::init(self.keys.0, self.keys.1);
 
@@ -160,12 +200,17 @@ impl State {
     }
 
     /// Process a single portion of the message.
+    ///
+    /// Note that all users need to manually add absorbing the length in the last block. This is
+    /// slightly easier to read since it arranges the input to only have 8-btye blocks in all cases
+    /// which separates the length block completely and makes it a constant.
     fn absorb(&mut self, m: u64) {
         self.v3 ^= m;
         (0..Self::SIP_C).for_each(|_| self.round());
         self.v0 ^= m;
     }
 
+    /// Do the finalization rounds.
     fn finalize(mut self) -> u64 {
         self.v2 ^= 0xff;
         (0..Self::SIP_D).for_each(|_| self.round());

@@ -2,7 +2,7 @@ use core::fmt;
 
 use super::{Error, Result};
 use super::ipv6option::Ipv6OptionsIterator;
-pub use super::IpProtocol as Protocol;
+pub(crate) use super::IpProtocol as Protocol;
 
 /// A read/write wrapper around an IPv6 Hop-by-Hop Options Header.
 #[derive(Debug, PartialEq)]
@@ -30,18 +30,18 @@ mod field {
     use crate::wire::field::Field;
 
     // Minimum size of the header.
-    pub const MIN_HEADER_SIZE:  usize = 8;
+    pub(crate) const MIN_HEADER_SIZE:  usize = 8;
 
     // 8-bit identifier of the header immediately following this header.
-    pub const NXT_HDR:          usize = 0;
+    pub(crate) const NXT_HDR:          usize = 0;
     // 8-bit unsigned integer. Length of the OPTIONS field in 8-octet units,
     // not including the first 8 octets.
-    pub const LENGTH:           usize = 1;
+    pub(crate) const LENGTH:           usize = 1;
     // Variable-length field. Option-Type-specific data.
     //
     // Length of the header is in 8-octet units, not including the first 8 octets. The first two
     // octets are the next header type and the header length.
-    pub fn OPTIONS(length_field: u8) -> Field {
+    pub(crate) fn OPTIONS(length_field: u8) -> Field {
         let bytes = length_field * 8 + 8;
         2..bytes as usize
     }

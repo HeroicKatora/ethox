@@ -1,3 +1,4 @@
+//! Implementation of a software loop-back device.
 use crate::managed::Slice;
 use crate::time::Instant;
 use crate::wire::PayloadMut;
@@ -5,6 +6,9 @@ use crate::wire::PayloadMut;
 use super::common::{EnqueueFlag, PacketInfo};
 use super::{Capabilities, Info, Personality, Recv, Send, Result};
 
+/// A software loop-back device.
+///
+/// Maintains a ring buffer of packet buffers in flight.
 pub struct Loopback<'r, C> {
     buffer: Slice<'r, C>,
     next_recv: usize,
@@ -12,6 +16,10 @@ pub struct Loopback<'r, C> {
     info: PacketInfo,
 }
 
+/// A newtype wrapper for the `nic::Handle` of `Loopback`.
+///
+/// This is only to ensure that future changes and additions can be done without relying on the
+/// internal representation.
 pub struct Handle(EnqueueFlag);
 
 struct AckRecv<'a>(&'a mut usize, usize, &'a mut usize);
@@ -19,7 +27,7 @@ struct AckRecv<'a>(&'a mut usize, usize, &'a mut usize);
 struct AckSend<'a>(&'a mut usize);
 
 impl<'r, C: PayloadMut> Loopback<'r, C> {
-    /// Create a loopback device with mtu.
+    /// Create a loop-back device with mtu.
     ///
     /// It will divide the packet buffer into chunks of the provided mtu and keep track of free and
     /// used buffers

@@ -2,8 +2,6 @@ use super::List;
 use crate::alloc::collections::btree_map;
 
 /// A map on owned or non-owned data.
-///
-///
 pub enum Map<'a, K: Ord, V> {
     /// The primitive option for a map, a list of pairs.
     ///
@@ -35,6 +33,9 @@ pub enum Entry<'map, 'a, K: Ord, V> {
     Full,
 }
 
+/// A reference to an entry of a map.
+///
+/// Provides modification methods, replacement, and removal.
 pub struct OccupiedEntry<'map, 'a, K: Ord, V> {
     inner: Occupied<'map, 'a, K, V>,
 }
@@ -48,6 +49,10 @@ enum Occupied<'map, 'a, K, V> {
     Btree(btree_map::OccupiedEntry<'map, K, V>),
 }
 
+/// A reference to a missing entry of a map.
+///
+/// Guarantees insertion at a lower cost than a separate insert call and contains an already
+/// reserved slot for that insertion, guaranteeing no resource exhaustion prevents the insertion.
 pub struct VacantEntry<'map, 'a, K: Ord, V> {
     inner: Vacant<'map, 'a, K, V>,
 }
@@ -62,6 +67,7 @@ enum Vacant<'map, 'a, K, V> {
 
 
 impl<K: Ord, V> Map<'_, K, V> {
+    /// Returns a reference to the value corresponding to the key.
     pub fn get(&self, key: &K) -> Option<&V> {
         match self {
             Map::Pairs(list) => list
@@ -72,9 +78,22 @@ impl<K: Ord, V> Map<'_, K, V> {
             Map::Btree(tree) => tree.get(key),
         }
     }
+
+    /// Returns a mutable reference to the value corresponding to the key.
+    pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
+        match self {
+            Map::Pairs(list) => list
+                .as_mut_slice()
+                .iter_mut()
+                .find(|(k, _)| k == key)
+                .map(|(_, val)| val),
+            Map::Btree(tree) => tree.get_mut(key),
+        }
+    }
 }
 
 impl<'a, K: Ord, V> Map<'a, K, V> {
+    /// Gets the entry corresponding to the key.
     pub fn entry(&mut self, key: K) -> Entry<'_, 'a, K, V> {
         match self {
             Map::Pairs(list) => {
@@ -136,6 +155,7 @@ impl<'map, 'a, K: Ord, V> Entry<'map, 'a, K, V> {
 }
 
 impl<'map, K: Ord, V> OccupiedEntry<'map, '_, K, V> {
+    /// Returns a reference to the value of the entry.
     pub fn get(&self) -> &V {
         match &self.inner {
             Occupied::Pairs { list, index, .. } => &list[*index].1,
@@ -143,6 +163,7 @@ impl<'map, K: Ord, V> OccupiedEntry<'map, '_, K, V> {
         }
     }
 
+    /// Returns a mutable reference to the value of the entry.
     pub fn get_mut(&mut self) -> &mut V {
         match &mut self.inner {
             Occupied::Pairs { list, index, .. } => &mut list[*index].1,
@@ -150,6 +171,12 @@ impl<'map, K: Ord, V> OccupiedEntry<'map, '_, K, V> {
         }
     }
 
+    /// Get a mutable reference to the value with the lifetime of the map.
+    ///
+    /// This allows an occupied entry to emulate having called [`Map::get_mut`] instead, allowing
+    /// conditional entry manipulation followed by value modification.
+    ///
+    /// [`Map::get_mut`]: struct.Map.html#method.get_mut
     pub fn into_mut(self) -> &'map mut V {
         match self.inner {
             Occupied::Pairs { list, index, .. } => &mut list[index].1,
@@ -182,6 +209,7 @@ impl<'map, K: Ord, V> OccupiedEntry<'map, '_, K, V> {
 }
 
 impl<'map, K: Ord, V> VacantEntry<'map, '_, K, V> {
+    /// Take ownership of the key used to create this entry.
     pub fn into_key(self) -> K {
         match self.inner {
             Vacant::Pairs { key, .. } => key,
@@ -189,6 +217,7 @@ impl<'map, K: Ord, V> VacantEntry<'map, '_, K, V> {
         }
     }
 
+    /// Insert a new entry with the key of the `VacantEntry`, and return a mutable reference to it.
     pub fn insert(self, value: V) -> &'map mut V {
         match self.inner {
             Vacant::Pairs { list, key } => {

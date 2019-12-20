@@ -6,8 +6,17 @@ use crate::time::Instant;
 use super::{Capabilities, Info, Personality, Recv, Send, Result};
 use super::common::{EnqueueFlag, PacketInfo};
 
+/// The [`nic::Handle`] of [`External`].
+///
+/// [`nic::Handle`]: ../trait.Handle.html
+/// [`External`]: struct.External.html
 pub struct Handle(EnqueueFlag);
 
+/// An interface with buffers managed externally.
+///
+/// This implementation can be used in a number of ways. Firstly, it is good to mock a real
+/// interface in tests, allowing full control over the behaviour between operations. Secondly, it
+/// can be used as a temporary software buffer for virtualization purposes.
 pub struct External<T> {
     /// Backing buffer, accessible as a slice of packet payloads.
     buffer: T,
@@ -98,10 +107,12 @@ impl<T, P> External<T> where T: Deref<Target=[P]> {
         self.reset_send();
     }
 
+    /// Get a reference to the buffer as the specified index.
     pub fn get(&self, idx: usize) -> Option<&P> {
         self.buffer.get(idx)
     }
 
+    /// Get a mutable reference to the buffer as the specified index.
     pub fn get_mut(&mut self, idx: usize) -> Option<&mut P> 
         where T: DerefMut,
     {
@@ -113,10 +124,12 @@ impl<T, P> External<T> where T: Deref<Target=[P]> {
         self.info.timestamp = instant;
     }
 
+    /// Returns the index of the next to be received packet.
     fn next_recv(&self) -> usize {
         self.recv
     }
 
+    /// Returns the index of the next buffer to use for sending.
     fn next_send(&self) -> usize {
         self.split + self.sent
     }

@@ -4,7 +4,7 @@ The `time` module contains structures used to represent both
 absolute and relative time.
 
  - [Instant] is used to represent absolute time.
- - [Duration] is used to represet relative time.
+ - [Duration] is used to represent relative time.
 
 [Instant]: struct.Instant.html
 [Duration]: struct.Duration.html
@@ -14,26 +14,31 @@ pub use core::time::Duration;
 
 /// A representation of an absolute time value.
 ///
-/// The `Instant` type is a wrapper around a `i64` value that
-/// represents a number of milliseconds, monotonically increasing
-/// since an arbitrary moment in time, such as system startup.
+/// The `Instant` type is a wrapper around a `i64` value that represents a number of milliseconds,
+/// monotonically increasing since an arbitrary moment in time, such as system startup. Note that
+/// not all `Instant` need to reference the same epoch.
 ///
 /// * A value of `0` is inherently arbitrary.
-/// * A value less than `0` indicates a time before the starting
-///   point.
+/// * A value less than `0` indicates a time before the starting point.
 ///
 /// Instants from different sources should not be mixed as their reference points may be different
 /// and thus yield surprising durations. They may not even advance at the same rate or be steady at
 /// all.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Instant {
+    /// Milliseconds since the epoch.
     pub millis: i64,
 }
 
 /// An expiration time, inversion of `Option`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Expiration {
+    /// Some finite point in time.
     When(Instant),
+
+    /// An expiration that will never happen, or is infinitely far away.
+    ///
+    /// This variant always compares greater or equal to all other possible values of `Expiration`.
     Never,
 }
 
@@ -61,20 +66,17 @@ impl Instant {
         Self::from(::std::time::SystemTime::now())
     }
 
-    /// The fractional number of milliseconds that have passed
-    /// since the beginning of time.
+    /// The fractional number of milliseconds that have passed the epoch.
     pub fn millis(&self) -> i64 {
         self.millis % 1000
     }
 
-    /// The number of whole seconds that have passed since the
-    /// beginning of time.
+    /// The number of whole seconds that have passed since the epoch.
     pub fn secs(&self) -> i64 {
         self.millis / 1000
     }
 
-    /// The total number of milliseconds that have passed since
-    /// the biginning of time.
+    /// The total number of milliseconds that have passed since the epoch.
     pub fn total_millis(&self) -> i64 {
         self.millis
     }
@@ -84,7 +86,7 @@ impl Instant {
 /// Convert from a standard time.
 ///
 /// Note that this conversion is not completely trivial. Although there is no defined epoch, all
-/// timestamps converted in this manner will be based on the same reference timestamp. The standard
+/// timestamps converted in this manner will be based on the same reference time stamp. The standard
 /// library further guarantees that the timestamps are in fact monotonically increasing. This comes
 /// at a performance price of one `Once` (in addition to the possible `Mutex` in the standard
 /// library in the `Instant::now()` call).

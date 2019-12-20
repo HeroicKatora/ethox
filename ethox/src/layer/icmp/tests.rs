@@ -1,6 +1,6 @@
 use crate::managed::Slice;
 use crate::nic::{loopback::Loopback, Device};
-use crate::layer::{eth, ip, icmp};
+use crate::layer::{arp, eth, ip, icmp};
 use crate::wire::{EthernetAddress, Ipv4Address, IpCidr, PayloadMut};
 
 const MAC_ADDR_HOST: EthernetAddress = EthernetAddress([0, 1, 2, 3, 4, 5]);
@@ -27,9 +27,9 @@ fn answer_ping() {
 
     let mut eth = eth::Endpoint::new(MAC_ADDR_HOST);
     
-    let mut neighbors = [eth::Neighbor::default(); 1];
+    let mut neighbors = [arp::Neighbor::default(); 1];
     let neighbors = {
-        let mut eth_cache = eth::NeighborCache::new(&mut neighbors[..]);
+        let mut eth_cache = arp::NeighborCache::new(&mut neighbors[..]);
         eth_cache.fill(IP_ADDR_OTHER.into(), MAC_ADDR_OTHER, None).unwrap();
         eth_cache
     };
@@ -68,9 +68,9 @@ fn queue_ping(nic: &mut Loopback<Vec<u8>>) {
 
     let mut eth = eth::Endpoint::new(MAC_ADDR_OTHER);
 
-    let mut neighbors = [eth::Neighbor::default(); 1];
+    let mut neighbors = [arp::Neighbor::default(); 1];
     let neighbors = {
-        let mut eth_cache = eth::NeighborCache::new(&mut neighbors[..]);
+        let mut eth_cache = arp::NeighborCache::new(&mut neighbors[..]);
         eth_cache.fill(IP_ADDR_HOST.into(), MAC_ADDR_HOST, None).unwrap();
         eth_cache
     };
