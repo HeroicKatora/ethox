@@ -34,6 +34,7 @@ pub type List<'a, T> = Partial<Slice<'a, T>>;
 /// present in the code.
 #[cfg(all(
     not(feature = "std"),
-    not(test)))]
+    not(test),
+    not(doctest)))]
 #[path = "phantom_alloc/mod.rs"]
 pub mod alloc;
