@@ -379,7 +379,7 @@ impl<P: PayloadMut> ip::Send<P> for Iperf3 {
     }
 }
 
-impl<P: PayloadMut> udp::Recv<P> for &'_ mut Handshake {
+impl<P: PayloadMut> udp::Recv<P> for Handshake {
     fn receive(&mut self, packet: udp::Packet<P>) {
         if packet.packet.repr().dst_port == 0 {
             self.shaken = true;

@@ -44,3 +44,19 @@ pub trait Send<P: Payload> {
     /// Fill in one available packet buffer.
     fn send(&mut self, raw: RawPacket<P>);
 }
+
+impl<P, C> Recv<P> for &'_ mut C
+    where P: Payload, C: Recv<P>,
+{
+    fn receive(&mut self, frame: Packet<P>) {
+        (**self).receive(frame)
+    }
+}
+
+impl<P, C> Send<P> for &'_ mut C
+    where P: Payload, C: Send<P>,
+{
+    fn send(&mut self, frame: RawPacket<P>) {
+        (**self).send(frame)
+    }
+}

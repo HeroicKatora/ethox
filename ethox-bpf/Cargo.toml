@@ -1,0 +1,15 @@
+[package]
+name = "ethox-bpf"
+description = "Provides an ethernet layer bpf for ethox"
+version = "0.0.1-wip"
+authors = ["Andreas Molzer <andreas.molzer@gmx.de>"]
+edition = "2018"
+publish = false
+
+[workspace]
+# Requires libpcap so barred from the workspace.
+members = ["."]
+
+[dependencies]
+bpfjit-sys = "2.0"
+ethox = { path = "../ethox" }
