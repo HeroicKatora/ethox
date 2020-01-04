@@ -2,8 +2,10 @@
 # Copyright (c) 2018 Hyperion Gray
 # Copyright (c) 2018 Andreas Molzer
 import base64
+import glob
 import logging
 import os
+import os.path
 import sys
 
 from cdp import emulation, page, target
@@ -16,12 +18,7 @@ logger = logging.getLogger('pdf-exporter')
 logging.getLogger('trio-websocket').setLevel(logging.WARNING)
 
 async def main():
-    path = sys.argv[2]
-    outpath = sys.argv[3]
-
-    print_parameters = r"""
-    <span class=title>Ethox documentation</span>
-    """;
+    ethox_doc = "../target/doc/ethox"
 
     async with open_cdp_connection(sys.argv[1]) as conn:
         logger.info('Listing targets')
@@ -39,18 +36,29 @@ async def main():
         logger.info('Enabling page events')
         await session.execute(page.enable())
 
-        logger.info('Navigating to %s', sys.argv[2])
-        async with session.wait_for(page.LoadEventFired):
-            await session.execute(page.navigate(url=sys.argv[2]))
+        logger.info('Starting to crawl documentation')
+        for doc_page in glob.iglob(os.path.join(ethox_doc, '**', '*.html'), recursive=True):
+            await convert_page(session, doc_page)
 
-        printer = page.print_to_pdf(header_template=print_parameters)
-        (pdf_data, _) = await session.execute(printer)
+async def convert_page(session, path):
+    print_parameters = r"""
+    <span class=title>Ethox documentation</span>
+    """;
 
-        async with await trio.open_file(outpath, 'wb') as outfile:
-            await outfile.write(base64.b64decode(pdf_data))
+    outpath = 'pdf_docs/' + path.translate(str.maketrans('./', '__')) + '.pdf'
+    urlpath = 'file://' + os.path.abspath(path)
+    logger.info('Navigating to %s', urlpath)
+    async with session.wait_for(page.LoadEventFired):
+        await session.execute(page.navigate(url=urlpath))
+
+    printer = page.print_to_pdf(header_template=print_parameters)
+    (pdf_data, _) = await session.execute(printer)
+
+    async with await trio.open_file(outpath, 'wb') as outfile:
+        await outfile.write(base64.b64decode(pdf_data))
 
 if __name__ == '__main__':
-    if len(sys.argv) != 4:
-        sys.stderr.write('Usage: cargo_doc.py <browser url> <target url> <pdf url>')
+    if len(sys.argv) != 2:
+        sys.stderr.write('Usage: cargo_doc.py <browser url>')
         sys.exit(1)
     trio.run(main, restrict_keyboard_interrupt_to_checkpoints=True)
