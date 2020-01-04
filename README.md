@@ -24,12 +24,6 @@ The initial feature set will be `eth+(ipv4|ipv6)+(udp+tcp)`. Also `arp` and
 
 ## Usage
 
-```
-# Cargo.toml
-# Pin the version to a specific commit with `rev = "…"`.
-ethox = { git = "https://github.com/HeroicKatora/ethox" }
-```
-
 The main interface of **Ethox** is built around zero-copy, for as long as
 possible. It is *not* socket oriented but based on a dynamically built tree of
 trait implementors which offer callbacks for layer specific functionality and
