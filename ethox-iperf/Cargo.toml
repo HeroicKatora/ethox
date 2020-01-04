@@ -1,11 +1,11 @@
 [package]
 name = "ethox-iperf"
 description = "Implementation of iperf with ethox"
+authors = ["Andreas Molzer <andreas.molzer@gmx.de>"]
+license = "AGPL-3.0-only"
 publish = false
 version = "0.0.1-wip"
-authors = ["Andreas Molzer <andreas.molzer@gmx.de>"]
 edition = "2018"
-license = "GPL-3.0-only"
 
 [dependencies]
 ethox = { path = "../ethox", default-features = false, features = ["std", "sys"] }

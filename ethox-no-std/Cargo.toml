@@ -1,11 +1,11 @@
 [package]
 name = "ethox-no-std"
 description = "Showing ethox without std"
+authors = ["Andreas Molzer <andreas.molzer@gmx.de>"]
+license = "AGPL-3.0-only"
 publish = false
 version = "0.0.0"
-authors = ["Andreas Molzer <andreas.molzer@gmx.de>"]
 edition = "2018"
-license = "GPL-3.0-only"
 
 [workspace]
 # Our own workspace since we want to control over the profile etc.
