@@ -1,4 +1,3 @@
 # Ignore the output folder and venv (a convenient virtualenv location)
-pdf_docs
 venv
-
+cargo_doc.pdf

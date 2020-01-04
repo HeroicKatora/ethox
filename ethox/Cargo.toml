@@ -1,12 +1,19 @@
 [package]
 name = "ethox"
 description = "A standalone network stack for user-space networking and unikernels"
-version = "0.0.1-beta"
 authors = ["Andreas Molzer <andreas.molzer@gmx.de>"]
+license = "AGPL-3.0-only"
+version = "0.0.1"
 edition = "2018"
-license = "GPL-3.0-only"
+
 documentation = "https://docs.rs/ethox"
+repository = "https://github.com/HeroicKatora/ethox"
+keywords = ["network", "ethernet", "tcp"]
 categories = ["network-programming", "no-std"]
+
+[badges]
+cirrus-ci = { repository = "https://github.com/HeroicKatora/ethox" }
+maintenance = { status = "passively-maintained" }
 
 [dependencies]
 byteorder = { version = "1.0", default-features = false }

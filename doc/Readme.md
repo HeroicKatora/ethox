@@ -11,7 +11,7 @@ or do your favorite other waiting activity (also needs ~2G of memory on my
 machine).
 
 ```
-pip install -r requirements.txt`
+pip install -r requirements.txt
 make
 ```
 

@@ -18,17 +18,11 @@ The initial feature set will be `eth+(ipv4|ipv6)+(udp+tcp)`. Also `arp` and
 
 <!--[![crates.io](https://img.shields.io/crates/v/image.svg)](https://crates.io/crates/image) -->
 [![CI Status](https://api.cirrus-ci.com/github/HeroicKatora/ethox.svg)](https://cirrus-ci.com/github/HeroicKatora/ethox)
-[![License](https://img.shields.io/badge/license-GPLv3-blue.svg)](COPYING)
+[![License](https://img.shields.io/badge/license-AGPLv3-blue.svg)](COPYING)
 [![Scc lines of code](https://sloc.xyz/github/HeroicKatora/ethox?category=code)](#Ethox)
 [![Scc comments](https://sloc.xyz/github/HeroicKatora/ethox?category=comments)](#Ethox)
 
 ## Usage
-
-```
-# Cargo.toml
-# Pin the version to a specific commit with `rev = "…"`.
-ethox = { git = "https://github.com/HeroicKatora/ethox" }
-```
 
 The main interface of **Ethox** is built around zero-copy, for as long as
 possible. It is *not* socket oriented but based on a dynamically built tree of
@@ -41,15 +35,17 @@ the layers above that.
 
 ## License
 
-**Ethox** is distributed under the GPLv3. Code contributions are only accepted
-under waiver of copyright, at the moment, to allow freely choosing other
-licensing options further down the road. These conditions may be opened up a
-bit in the future.
+**Ethox** is distributed under the AGPLv3 ([Why][WHY-AGPL]). Code contributions
+are only accepted under waiver of copyright, at the moment, to allow freely
+choosing other licensing options further down the road. These conditions may be
+opened up a bit in the future.
 
 A significant but shrinking portion of the original network code comes from
 `smoltcp`, copyright `whitequark@whitequark.org`, and reproduced and modified
 here under the terms allowed by its 0-clause BSD license. It may have changed a
 lot by the time you read this.
+
+[WHY-AGPL]: #Why-AGPL
 
 ## Details
 
@@ -130,3 +126,13 @@ Neighbor discovery is **not** supported.
 
 * Header checksum is generated, validated, can be elided, may be ignored.
 * Zero-copy receiving and sending of messages
+
+## Why AGPL
+
+I will likely at some point want to relicense the whole lot under the most
+permissive license possible in the spirit of the original library. However, I
+can not commit to actively developing this library at the moment. It is my hope
+that the license encourages users, and especially those with finished products,
+to contribute code back and expand the scope. If you disagree with this stance,
+ethically or legally or otherwise, then a friendly e-mail detailing your point
+of view is most welcome.
