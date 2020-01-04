@@ -4,7 +4,7 @@ description = "Implementation of iperf with ethox"
 authors = ["Andreas Molzer <andreas.molzer@gmx.de>"]
 license = "AGPL-3.0-only"
 publish = false
-version = "0.0.1-wip"
+version = "0.1.0"
 edition = "2018"
 
 [dependencies]

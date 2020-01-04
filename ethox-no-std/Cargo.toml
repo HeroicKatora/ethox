@@ -4,11 +4,12 @@ description = "Showing ethox without std"
 authors = ["Andreas Molzer <andreas.molzer@gmx.de>"]
 license = "AGPL-3.0-only"
 publish = false
-version = "0.0.0"
+version = "0.1.0"
 edition = "2018"
 
-[workspace]
 # Our own workspace since we want to control over the profile etc.
+[workspace]
+members = ["."]
 
 [dependencies]
 ethox = { path = "../ethox", default-features = false, features = ["sys"] }
