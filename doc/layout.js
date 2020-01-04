@@ -30,6 +30,24 @@
 		el.dispatchEvent(ev);
 	}
 
+	function removeForeignTraitImpls() {
+		var all_impls = document.getElementById('implementations-list');
+		all_impls.querySelectorAll('h3').forEach((impl) => {
+			var name_link = impl.querySelector('code>a');
+			if(name_link === null) {
+				return;
+			}
+			var link_target = name_link.href;
+			if(link_target === null) {
+				return;
+			}
+			if(link_target.startsWith('file:')) {
+				return;
+			}
+			all_impls.removeChild(impl);
+		});
+	}
+
 	// Remove a bunch of decoration elements.
 	removeElementByClass('sub');
 	removeElementByClass('sidebar');
@@ -42,11 +60,8 @@
 	removeElementById('blanket-implementations');
 	removeElementById('blanket-implementations-list');
 
-	// And a few specific impls
-	removeElementById('impl-Clone');
-	removeElementById('impl-Copy');
-	removeElementById('impl-Debug');
-	removeElementById('impl-Display');
+	// And foreign trait impls. Don't care about Clone etc.
+	removeForeignTraitImpls();
 
 	// Remove impl list if no more remain
 	var impls_list = document.getElementById('implementations-list');
@@ -55,10 +70,8 @@
 		removeElementById('implementations-list');
 	}
 
-	main = document.getElementById('main');
-	if(main !== null) {
-		// Open the main declaration.
-		toggle = main.getElementsByClassName('collapse-toggle')[0];
-		click(toggle);
-	}
+	// Open the description
+	document.querySelectorAll('#main>.hidden-by-usual-hider').forEach((hidden) => {
+		hidden.classList.remove('hidden-by-usual-hider');
+	})
 })();
