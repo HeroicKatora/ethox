@@ -62,7 +62,8 @@
 // tests should be able to use `std`
 #![cfg_attr(all(
     not(feature = "std"),
-    not(test)),
+    not(test),
+    not(doctest)),
 no_std)]
 
 pub mod nic;
@@ -76,10 +77,12 @@ pub mod wire;
 /// The `alloc` crate, or a replacement without feature `"std"`.
 #[cfg(any(
     feature = "alloc",
-    test))]
+    test,
+    doctest))]
 pub extern crate alloc;
 
 #[cfg(all(
     not(feature = "alloc"),
-    not(test)))]
+    not(test),
+    not(doctest)))]
 pub use self::managed::alloc;

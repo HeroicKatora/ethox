@@ -194,7 +194,6 @@ impl<Buffer: Borrow<[u8]>> SendFrom<Buffer> {
     /// This method has been named [`bump`].
     ///
     /// [`bump`]: #method.bump
-    /// ```
     pub fn bump_external(&mut self, amount: usize) {
         self.consumed = self.consumed.checked_sub(amount)
             .expect("Tried bumping send buffer into sent region");
