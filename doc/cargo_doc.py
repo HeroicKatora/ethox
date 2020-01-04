@@ -8,7 +8,7 @@ import os
 import os.path
 import sys
 
-from cdp import emulation, page, target
+from cdp import emulation, page, target, runtime
 import trio
 from trio_cdp import open_cdp_connection
 
@@ -19,6 +19,10 @@ logging.getLogger('trio-websocket').setLevel(logging.WARNING)
 
 async def main():
     ethox_doc = "../target/doc/ethox"
+
+    # Read the code used to layout the page
+    async with await trio.open_file('layout.js', 'r') as layout:
+        reduction_code = await layout.read()
 
     async with open_cdp_connection(sys.argv[1]) as conn:
         logger.info('Listing targets')
@@ -38,9 +42,9 @@ async def main():
 
         logger.info('Starting to crawl documentation')
         for doc_page in glob.iglob(os.path.join(ethox_doc, '**', '*.html'), recursive=True):
-            await convert_page(session, doc_page)
+            await convert_page(session, doc_page, reduction_code)
 
-async def convert_page(session, path):
+async def convert_page(session, path, reduction_code):
     print_parameters = r"""
     <span class=title>Ethox documentation</span>
     """;
@@ -50,6 +54,8 @@ async def convert_page(session, path):
     logger.info('Navigating to %s', urlpath)
     async with session.wait_for(page.LoadEventFired):
         await session.execute(page.navigate(url=urlpath))
+
+    (_, exc) = await session.execute(runtime.evaluate(reduction_code))
 
     printer = page.print_to_pdf(header_template=print_parameters)
     (pdf_data, _) = await session.execute(printer)
