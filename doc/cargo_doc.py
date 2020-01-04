@@ -1,0 +1,56 @@
+# Based on an example from: https://github.com/HyperionGray/trio-chrome-devtools-protocol/ (Under MIT license)
+# Copyright (c) 2018 Hyperion Gray
+# Copyright (c) 2018 Andreas Molzer
+import base64
+import logging
+import os
+import sys
+
+from cdp import emulation, page, target
+import trio
+from trio_cdp import open_cdp_connection
+
+log_level = os.environ.get('LOG_LEVEL', 'info').upper()
+logging.basicConfig(level=getattr(logging, log_level))
+logger = logging.getLogger('pdf-exporter')
+logging.getLogger('trio-websocket').setLevel(logging.WARNING)
+
+async def main():
+    path = sys.argv[2]
+    outpath = sys.argv[3]
+
+    print_parameters = r"""
+    <span class=title>Ethox documentation</span>
+    """;
+
+    async with open_cdp_connection(sys.argv[1]) as conn:
+        logger.info('Listing targets')
+        targets = await conn.execute(target.get_targets())
+        target_id = targets[0].target_id
+
+        logger.info('Attaching to target id=%s', target_id)
+        session = await conn.open_session(target_id)
+
+        logger.info('Setting device emulation')
+        await session.execute(emulation.set_device_metrics_override(
+            width=800, height=600, device_scale_factor=1, mobile=False
+        ))
+
+        logger.info('Enabling page events')
+        await session.execute(page.enable())
+
+        logger.info('Navigating to %s', sys.argv[2])
+        async with session.wait_for(page.LoadEventFired):
+            await session.execute(page.navigate(url=sys.argv[2]))
+
+        printer = page.print_to_pdf(header_template=print_parameters)
+        (pdf_data, _) = await session.execute(printer)
+
+        async with await trio.open_file(outpath, 'wb') as outfile:
+            await outfile.write(base64.b64decode(pdf_data))
+
+if __name__ == '__main__':
+    if len(sys.argv) != 4:
+        sys.stderr.write('Usage: cargo_doc.py <browser url> <target url> <pdf url>')
+        sys.exit(1)
+    trio.run(main, restrict_keyboard_interrupt_to_checkpoints=True)
