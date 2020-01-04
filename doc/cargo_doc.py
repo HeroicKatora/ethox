@@ -2,10 +2,12 @@
 # Copyright (c) 2018 Hyperion Gray
 # Copyright (c) 2018 Andreas Molzer
 import base64
+from contextlib import ExitStack
 import glob
 import logging
 import os
 import os.path
+import subprocess
 import sys
 
 from cdp import dom, emulation, page, target, runtime
@@ -24,7 +26,13 @@ async def main():
     async with await trio.open_file('layout.js', 'r') as layout:
         reduction_code = await layout.read()
 
-    async with open_cdp_connection(sys.argv[1]) as conn:
+    (chromium, ws_addr) = await start_chromium()
+    logging.debug('Started server at %s', ws_addr)
+    with chromium:
+        await merge_pages_in(ethox_doc, ws_addr, reduction_code)
+
+async def merge_pages_in(ethox_doc, ws_addr, reduction_code):
+    async with open_cdp_connection(ws_addr) as conn:
         logger.info('Listing targets')
         targets = await conn.execute(target.get_targets())
         target_id = targets[0].target_id
@@ -59,6 +67,30 @@ async def main():
 
         await print_page(session, 'cargo_doc.pdf')
 
+async def start_chromium():
+    chromium = ['chromium', '--headless', '--remote-debugging-port=9000']
+    with ExitStack() as stack:
+        chromium = await trio.open_process(chromium, stderr=subprocess.PIPE)
+        stack.callback(chromium.terminate)
+        with trio.fail_after(5):
+            address = await read_websocket_addr(chromium.stderr)
+        running = stack.pop_all()
+    return (running, address)
+
+async def read_websocket_addr(stream):
+    data = ''
+    while True:
+        data = data + bytes.decode(await stream.receive_some())
+        lines = data.split('\n')
+        (lines, data) = (lines[:-1], lines[-1:])
+        try:
+            line = next(line for line in lines if line.find('ws://') > 0)
+        except StopIteration:
+            continue
+        start = line.index('ws://')
+        return line[start:]
+
+
 async def convert_page(session, path, reduction_code):
     urlpath = 'file://' + os.path.abspath(path)
     logger.info('Navigating to %s', urlpath)
@@ -83,7 +115,7 @@ async def print_page(session, outpath):
         await outfile.write(base64.b64decode(pdf_data))
 
 if __name__ == '__main__':
-    if len(sys.argv) != 2:
-        sys.stderr.write('Usage: cargo_doc.py <browser url>')
+    if len(sys.argv) != 1:
+        sys.stderr.write('Usage: cargo_doc.py')
         sys.exit(1)
     trio.run(main, restrict_keyboard_interrupt_to_checkpoints=True)
