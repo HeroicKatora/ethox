@@ -3,7 +3,7 @@ main_task:
     image: rust:latest
   cargo_cache:
     folder: $CARGO_HOME/registry
-    fingerprint_script: cat Cargo.lock
+    fingerprint_script: cargo update && cat Cargo.lock
   env:
     matrix:
       - ETHOX_FEATURES:
@@ -25,9 +25,10 @@ side_crates_task:
     image: rust:latest
   cargo_cache:
     folder: $CARGO_HOME/registry
-    fingerprint_script: cat Cargo.lock
+    fingerprint_script: cargo update && cat Cargo.lock
   iperf_script:
     - cd ethox-iperf
+    - cargo build --examples --bins
     - cargo test
   no_std_script:
     - cd ethox-no-std
@@ -46,7 +47,7 @@ nightly_task:
     image: rustlang/rust:nightly
   cargo_cache:
     folder: $CARGO_HOME/registry
-    fingerprint_script: cat Cargo.lock
+    fingerprint_script: cargo update && cat Cargo.lock
   test_all_script:
     - cd ethox
     - cargo test --all-features
