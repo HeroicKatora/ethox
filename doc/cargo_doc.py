@@ -52,8 +52,8 @@ async def merge_pages_in(ethox_doc, ws_addr, reduction_code):
 
         contents = {}
         for doc_page in glob.iglob(os.path.join(ethox_doc, '**', '*.html'), recursive=True):
-            main_contents = await convert_page(session, doc_page, reduction_code)
-            contents[doc_page] = main_contents
+            (target_item, main_contents) = await convert_page(session, doc_page, reduction_code)
+            contents[target_item] = main_contents
 
         await convert_page(session, os.path.join(ethox_doc, 'index.html'), reduction_code)
         root_id = (await session.execute(dom.get_document())).node_id
@@ -101,7 +101,11 @@ async def convert_page(session, path, reduction_code):
 
     root_id = (await session.execute(dom.get_document())).node_id
     main_id = await session.execute(dom.query_selector(root_id, '#main'))
-    return await session.execute(dom.get_outer_html(main_id))
+
+    target_item_id = await session.execute(dom.query_selector(main_id, 'h1'))
+    target_item = await session.execute(dom.get_outer_html(target_item_id))
+    content_html = await session.execute(dom.get_outer_html(main_id))
+    return (target_item, content_html) 
 
 async def print_page(session, outpath):
     print_parameters = r"""
