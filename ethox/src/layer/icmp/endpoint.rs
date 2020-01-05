@@ -86,7 +86,7 @@ impl Endpoint {
     /// confuse network analysis or try to use ICMP to fake a different topology by mismatching
     /// echo responses. (Maybe decrease the TTL in sent echo packets to give the appearance of
     /// intermediate NAT. Do exfiltration through the TTL, sequence number and ident. You'll come
-    /// up with own ideas probably. Try things out, that's the whole point this library was
+    /// up with own ideas probably. Try things out, that's the whole point why this library was
     /// written.)
     pub fn manual(&mut self, manual: bool) {
         self.manual_echo = manual;

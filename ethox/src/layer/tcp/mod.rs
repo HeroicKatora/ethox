@@ -67,7 +67,7 @@
 //!
 //! ## Deviations
 //!
-//! As a guide to the statemachine I had originally planned to use a paper proposing a formally
+//! As a guide to the state machine I had originally planned to use a paper proposing a formally
 //! specified model but it is completely and utterly broken.
 //!
 //! > EFSM/SDL modeling of the original TCP standard (RFC793) and the Congestion Control Mechanism

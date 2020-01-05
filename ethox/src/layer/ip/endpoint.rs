@@ -52,7 +52,7 @@ pub struct Receiver<'a, 'data, H> {
 
 /// An endpoint borrowed for sending.
 ///
-/// Note that automatic address configuration traffic (arp, ..) is sent before the upper layer is
+/// Note that automatic address configuration traffic (arp, ...) is sent before the upper layer is
 /// invoked. That is, some packet buffers provided by the ethernet layer below might not reach to
 /// handler.
 pub struct Sender<'a, 'data, H> {
