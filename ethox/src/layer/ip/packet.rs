@@ -356,7 +356,7 @@ impl Init {
 impl<'a, P: Payload> IpPacket<'a, P> {
     /// Assemble an ip packet with already computed representation.
     ///
-    /// #Panics
+    /// # Panics
     /// This function panics if the representation is not specifically Ipv4 or Ipv6.
     pub fn new_unchecked(inner: EthernetFrame<&'a mut P>, repr: IpRepr) -> Self {
         match repr {

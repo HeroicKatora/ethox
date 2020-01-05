@@ -24,7 +24,7 @@ functionality.
 [`ArpPacket`]: struct.ArpPacket.html
 [`UdpPacket`]: struct.UdpPacket.html
 
-[^tcp]: The TCP structures differ since i haven't gotten around to reworking them. It does not have
+[^tcp]: The TCP structures differ since I haven't gotten around to reworking them. It does not have
 a dynamically sized byte wrapper so its `Packet` implements this functionality as well but come
 with all downsides. In particular, its accessors may panic.
 

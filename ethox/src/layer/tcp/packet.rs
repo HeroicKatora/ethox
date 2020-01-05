@@ -157,7 +157,7 @@ pub struct Closed<'a, P: PayloadMut> {
 /// Reading of incoming data and sending of ones own is largely independent of each other.
 ///
 /// On the receiving path it is recommended to call `read` sometimes to ensure the remote is not
-/// stalled indefinitely (
+/// stalled indefinitely.
 pub struct Open<'a, P: PayloadMut> {
     ip: ip::Handle<'a>,
     operator: Operator<'a>,
