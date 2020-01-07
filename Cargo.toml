@@ -2,6 +2,7 @@
 members = [
 	"ethox",
 	"ethox-iperf",
+	"ethox-linux-mmap",
 ]
 
 [profile.release]

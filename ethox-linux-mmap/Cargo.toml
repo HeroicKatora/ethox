@@ -1,0 +1,15 @@
+[package]
+name = "ethox-linux-mmap"
+description = "Provides an ethox device using Linux PACKET_MMAP"
+version = "0.0.1"
+authors = ["HeroicKatora <andreas.molzer@gmx.de>"]
+edition = "2018"
+license = "AGPL-3.0-only"
+
+[dependencies]
+ethox = { path = "../ethox", default-features = false, features = ["sys"] }
+packet-mmap = { path = "../../packet-mmap" }
+libc = "0.2"
+
+[lib]
+path = "src/lib.rs"
