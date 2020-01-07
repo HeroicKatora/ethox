@@ -42,7 +42,7 @@ pub use endpoint::{
 };
 
 pub use packet::{
-    Handle,
+    Controller,
     Init,
     In as InPacket,
     Out as OutPacket,

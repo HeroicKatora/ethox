@@ -1,7 +1,7 @@
 use crate::layer::{ip, FnHandler, Result};
 use crate::wire::{Error, Icmpv4Repr, Icmpv4Packet, IpProtocol, Payload, PayloadMut};
 
-use super::packet::{Handle, In, Raw};
+use super::packet::{Controller, In, Raw};
 use super::{Recv, Send};
 
 /// The default handler type when none has been configured.
@@ -162,8 +162,8 @@ where
     P: PayloadMut,
     H: Recv<P>,
 {
-    fn receive(&mut self, ip::InPacket { handle, packet }: ip::InPacket<P>) {
-        let capabilities = handle.info().capabilities();
+    fn receive(&mut self, ip::InPacket { control, packet }: ip::InPacket<P>) {
+        let capabilities = control.info().capabilities();
 
         let icmp = match packet {
             ip::IpPacket::V4(packet) => {
@@ -181,8 +181,8 @@ where
             _ => return,
         };
 
-        let handle = Handle::new(handle);
-        let packet = In::new(handle, icmp);
+        let control = Controller { inner: control };
+        let packet = In { control, packet: icmp };
 
         let how_to_handle = match self.endpoint.handle_internally(packet) {
             Ok(handling) => handling,
@@ -205,11 +205,14 @@ where
     T: Send<P>,
 {
     fn send(&mut self, packet: ip::RawPacket<P>) {
-        let ip::RawPacket { handle: mut eth_handle, payload } = packet;
-        let handle = Handle::new(eth_handle.borrow_mut());
-        let packet = Raw { handle, payload };
+        let ip::RawPacket { control: mut eth_handle, payload } = packet;
 
-        self.handler.send(packet)
+        self.handler.send(Raw {
+            control: Controller {
+                inner: eth_handle.borrow_mut()
+            },
+            payload,
+        })
     }
 }
 

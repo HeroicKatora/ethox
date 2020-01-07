@@ -11,7 +11,7 @@ use crate::wire::{Icmpv4Packet, Icmpv4Repr, icmpv4_packet};
 /// be answered in-place without involving the upper layer if supported by the nic.
 pub struct In<'a, P: Payload> {
     /// A reference to the ICMP endpoint state.
-    pub handle: Handle<'a>,
+    pub control: Controller<'a>,
     /// The valid packet inside the buffer.
     pub packet: Icmpv4Packet<ip::V4Packet<'a, P>>,
 }
@@ -22,14 +22,14 @@ pub struct In<'a, P: Payload> {
 /// be initialized.
 #[must_use = "You need to call `send` explicitely on an OutPacket, otherwise no packet is sent."]
 pub struct Out<'a, P: Payload> {
-    handle: Handle<'a>,
+    control: Controller<'a>,
     packet: Icmpv4Packet<ip::V4Packet<'a, P>>,
 }
 
 /// A buffer into which a packet can be placed.
 pub struct Raw<'a, P: Payload> {
     /// A reference to the ICMP endpoint state.
-    pub handle: Handle<'a>,
+    pub control: Controller<'a>,
     /// A mutable reference to the payload buffer.
     pub payload: &'a mut P,
 }
@@ -39,8 +39,8 @@ pub struct Raw<'a, P: Payload> {
 /// This is not really useful on its own but should instead be used either within a `In` or a
 /// `Raw`. Some of the methods offered there will access the non-public members of this struct to
 /// fulfill their task.
-pub struct Handle<'a> {
-    pub(crate) inner: ip::Handle<'a>,
+pub struct Controller<'a> {
+    pub(crate) inner: ip::Controller<'a>,
 }
 
 /// A helper struct for packet initialization.
@@ -71,45 +71,29 @@ pub enum Init {
     },
 }
 
-impl<'a> Handle<'a> {
-    pub(crate) fn new(
-        handle: ip::Handle<'a>,
-    ) -> Self {
-        Handle {
-            inner: handle,
-        }
-    }
-
+impl<'a> Controller<'a> {
     /// Get the hardware info for that packet.
     pub fn info(&self) -> &dyn Info {
         self.inner.info()
     }
 
     /// Proof to the compiler that we can shorten the lifetime arbitrarily.
-    pub fn borrow_mut(&mut self) -> Handle {
-        Handle {
+    pub fn borrow_mut(&mut self) -> Controller {
+        Controller {
             inner: self.inner.borrow_mut(),
         }
     }
 }
 
 impl<'a, P: Payload> In<'a, P> {
-    pub(crate) fn new(
-        handle: Handle<'a>,
-        packet: Icmpv4Packet<ip::V4Packet<'a, P>>)
-    -> Self {
-        In {
-            handle,
-            packet,
-        }
-    }
-
     /// Deconstruct the packet into the reusable buffer.
     pub fn deinit(self) -> Raw<'a, P>
         where P: PayloadMut,
     {
-        let payload = self.packet.into_inner().into_inner().into_inner();
-        Raw::new(self.handle, payload)
+        Raw {
+            control: self.control,
+            payload: self.packet.into_inner().into_inner().into_inner(),
+        }
     }
 }
 
@@ -127,7 +111,7 @@ impl<'a, P: PayloadMut> In<'a, P> {
         let ipv4_packet = self.packet.into_inner();
         let ip_repr = ipv4_packet.repr();
         let ip_in = ip::InPacket {
-            handle: self.handle.inner,
+            control: self.control.inner,
             packet: ip::IpPacket::V4(ipv4_packet),
         };
 
@@ -140,7 +124,7 @@ impl<'a, P: PayloadMut> In<'a, P> {
         })?;
 
         // Temporarily take the packet apart for inner repr.
-        let ip::InPacket { handle, mut packet } = ip_out.into_incoming();
+        let ip::InPacket { control, mut packet } = ip_out.into_incoming();
         answer.emit(
             icmpv4_packet::new_unchecked_mut(packet.payload_mut().as_mut_slice()),
             Checksum::Manual);
@@ -150,7 +134,7 @@ impl<'a, P: PayloadMut> In<'a, P> {
         };
 
         Ok(Out {
-            handle: Handle::new(handle),
+            control: Controller { inner: control },
             packet: Icmpv4Packet::new_unchecked(packet, answer),
         })
     }
@@ -162,11 +146,11 @@ impl<'a, P: Payload> Out<'a, P> {
     pub fn send(mut self) -> Result<()>
         where P: PayloadMut,
     {
-        let capabilities = self.handle.info().capabilities();
+        let capabilities = self.control.info().capabilities();
         let checksum = capabilities.icmpv4().tx_checksum();
         self.packet.fill_checksum(checksum);
         let lower = ip::OutPacket::new_unchecked(
-            self.handle.inner,
+            self.control.inner,
             ip::IpPacket::V4(self.packet.into_inner()));
         lower.send()
     }
@@ -185,25 +169,16 @@ impl<'a, P: PayloadMut> Out<'a, P> {
 }
 
 impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
-    pub(crate) fn new(
-        handle: Handle<'a>,
-        payload: &'a mut P,
-    ) -> Self {
-        Raw {
-            handle,
-            payload,
-        }
-    }
-
     /// Initialize to a valid ip packet.
     pub fn prepare(self, init: Init) -> Result<Out<'a, P>> {
-        let lower = ip::RawPacket::new(
-            self.handle.inner,
-            self.payload);
+        let lower = ip::RawPacket {
+            control: self.control.inner,
+            payload: self.payload,
+        };
 
         let lower_init = init.ip_init()?;
         let prepared = lower.prepare(lower_init)?;
-        let ip::InPacket { handle, packet } = prepared.into_incoming();
+        let ip::InPacket { control, packet } = prepared.into_incoming();
 
         let mut packet = match packet {
             ip::IpPacket::V4(packet) => packet,
@@ -211,11 +186,8 @@ impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
         };
         let repr = init.initialize(&mut packet)?;
 
-        // Reconstruct the handle.
-        let handle = Handle::new(handle);
-
         Ok(Out {
-            handle,
+            control: Controller { inner: control },
             packet: Icmpv4Packet::new_unchecked(packet, repr),
         })
     }

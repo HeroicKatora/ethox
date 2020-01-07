@@ -563,7 +563,7 @@ impl tcp::SendBuf for PatternBuffer {
 
 impl<P: PayloadMut> udp::Send<P> for Connection {
     fn send(&mut self, packet: udp::RawPacket<P>) {
-        let ts = packet.handle.info().timestamp();
+        let ts = packet.info().timestamp();
 
         if self.sent_packets > 0 {
             // Make sure to stay within bandwidth.
@@ -658,7 +658,7 @@ impl<P: PayloadMut> udp::Send<P> for ServerConnection {
 
 impl<P: PayloadMut> udp::Recv<P> for ServerConnection {
     fn receive(&mut self, packet: udp::Packet<P>) {
-        let udp::Packet { packet, handle, } = packet;
+        let udp::Packet { packet, control, } = packet;
 
         let ip_hdr = packet.get_ref().repr();
         let udp_hdr = packet.repr();
@@ -667,7 +667,7 @@ impl<P: PayloadMut> udp::Recv<P> for ServerConnection {
             // TODO: should we check validity before accepting?
             self.send_init.dst_addr = ip_hdr.src_addr();
             self.send_init.dst_port = udp_hdr.src_port;
-            self.begin_ts = handle.info().timestamp();
+            self.begin_ts = control.info().timestamp();
         } else if self.send_init.dst_addr != ip_hdr.src_addr()
             || self.send_init.dst_port != udp_hdr.src_port
         {
@@ -680,6 +680,6 @@ impl<P: PayloadMut> udp::Recv<P> for ServerConnection {
             return;
         }
 
-        self.register(payload, handle.info().timestamp());
+        self.register(payload, control.info().timestamp());
     }
 }

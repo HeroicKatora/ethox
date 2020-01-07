@@ -146,7 +146,7 @@ pub struct Closing<'a> {
 ///
 /// Similar to a `Stray` packet but we retain which connection was closed.
 pub struct Closed<'a, P: PayloadMut> {
-    ip: ip::Handle<'a>,
+    ip: ip::Controller<'a>,
     endpoint: &'a mut dyn Endpoint,
     previous: SlotKey,
     tcp: TcpPacket<ip::IpPacket<'a, P>>,
@@ -159,7 +159,7 @@ pub struct Closed<'a, P: PayloadMut> {
 /// On the receiving path it is recommended to call `read` sometimes to ensure the remote is not
 /// stalled indefinitely.
 pub struct Open<'a, P: PayloadMut> {
-    ip: ip::Handle<'a>,
+    ip: ip::Controller<'a>,
     operator: Operator<'a>,
     signals: UserSignals,
     packet: OpenPacket<'a, P>,
@@ -167,7 +167,7 @@ pub struct Open<'a, P: PayloadMut> {
 
 /// A valid tcp packet not belonging to a connection.
 pub struct Stray<'a, P: PayloadMut> {
-    ip: ip::Handle<'a>,
+    ip: ip::Controller<'a>,
     endpoint: &'a mut dyn Endpoint,
     tcp: TcpPacket<ip::IpPacket<'a, P>>,
 }
@@ -228,7 +228,7 @@ impl<'a, P: PayloadMut> In<'a, P> {
     /// Handle an incoming TCP packet returning a representation indicating appropriate options.
     pub fn from_arriving(
         endpoint: &'a mut dyn Endpoint,
-        ip_control: ip::Handle<'a>,
+        ip_control: ip::Controller<'a>,
         tcp: TcpPacket<ip::IpPacket<'a, P>>,
     ) -> Result<Self, crate::layer::Error> {
         let (mut operator, tcp) = match Unhandled::try_open(endpoint, tcp) {
@@ -368,7 +368,7 @@ impl<'a, P: PayloadMut> Open<'a, P> {
 
         if let Some(Segment { repr, range }) = signals.segment {
             let raw_ip = ip::RawPacket {
-                handle: ip,
+                control: ip,
                 payload,
             };
 
@@ -418,11 +418,11 @@ impl<'a, P: PayloadMut> Raw<'a, P> {
             Some(key) => Operator::new(self.endpoint, key).unwrap(),
         };
 
-        let time = self.ip.handle.info().timestamp();
+        let time = self.ip.control.info().timestamp();
         assert!(operator.open(time).is_ok());
 
         let ip::RawPacket {
-            handle: ip,
+            control: ip,
             payload: raw,
         } = self.ip;
 
@@ -445,7 +445,7 @@ impl<'a, P: PayloadMut> Raw<'a, P> {
         let operator = Operator::new(self.endpoint, key).unwrap();
 
         let ip::RawPacket {
-            handle: ip,
+            control: ip,
             payload: raw,
         } = self.ip;
 
@@ -465,7 +465,7 @@ impl<'a, P: PayloadMut> Raw<'a, P> {
             _ => return Err(crate::layer::Error::Illegal),
         };
 
-        self.ip.handle.local_ip(source)
+        self.ip.control().local_ip(source)
             .ok_or(crate::layer::Error::Unreachable)
     }
 }
@@ -497,7 +497,7 @@ impl<'a, P: PayloadMut> Closed<'a, P> {
     /// For most systems, the answer are resets or challenge ACKs.
     pub fn into_raw(self) -> Raw<'a, P> {
         let raw_ip = ip::RawPacket {
-            handle: self.ip,
+            control: self.ip,
             payload: self.tcp.into_inner().into_inner().into_inner(),
         };
 
@@ -515,7 +515,7 @@ impl<'a, P: PayloadMut> Stray<'a, P> {
     /// allows the user to use the packet buffer for arbitrary other communication.
     pub fn into_raw(self) -> Raw<'a, P> {
         let raw_ip = ip::RawPacket {
-            handle: self.ip,
+            control: self.ip,
             payload: self.tcp.into_inner().into_inner().into_inner(),
         };
 
@@ -544,7 +544,7 @@ impl UserSignals {
 fn control_answer<'a, P: PayloadMut>(
     tcp: TcpPacket<ip::IpPacket<'a, P>>,
     answer: TcpRepr,
-    ip: ip::Handle<'a>,
+    ip: ip::Controller<'a>,
 ) -> Result<(), crate::layer::Error> {
     assert_eq!(answer.payload_len, 0, "Control answer can not handle data");
 
@@ -553,12 +553,12 @@ fn control_answer<'a, P: PayloadMut>(
     let ip_payload_len = answer.header_len();
 
     let packet = ip::InPacket {
-        handle: ip,
+        control: ip,
         packet: raw_buffer,
     };
 
     // Send a packet back.
-    let ip::InPacket { handle, mut packet, } = packet.reinit(ip::Init {
+    let ip::InPacket { control, mut packet, } = packet.reinit(ip::Init {
         source: ip::Source::Exact(ip_repr.dst_addr()),
         dst_addr: ip_repr.src_addr(),
         protocol: IpProtocol::Tcp,
@@ -571,7 +571,7 @@ fn control_answer<'a, P: PayloadMut>(
     let mut raw_packet = TcpPacket::new_unchecked(&mut packet, answer.clone());
     raw_packet.fill_checksum(ip_repr.src_addr(), ip_repr.dst_addr());
 
-    ip::OutPacket::new_unchecked(handle, packet)
+    ip::OutPacket::new_unchecked(control, packet)
         .send()
 }
 
@@ -589,10 +589,10 @@ fn prepare<'a, P: PayloadMut>(
         payload: repr.header_len() + usize::from(repr.payload_len),
     })?;
 
-    let ip::InPacket { handle, mut packet } = init_ip.into_incoming();
+    let ip::InPacket { control, mut packet } = init_ip.into_incoming();
 
     let tcp = TcpPacket::new_unchecked(&mut packet, repr);
     repr.emit(tcp);
 
-    Ok(ip::OutPacket::new_unchecked(handle, packet))
+    Ok(ip::OutPacket::new_unchecked(control, packet))
 }

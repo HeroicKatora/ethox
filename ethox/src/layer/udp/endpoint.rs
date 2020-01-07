@@ -3,7 +3,7 @@ use crate::managed::Slice;
 use crate::wire::{IpProtocol, Payload, PayloadMut, UdpPacket};
 
 use super::{Recv, Send};
-use super::packet::{Handle, Packet, RawPacket};
+use super::packet::{Controller, Packet, RawPacket};
 
 /// The udp endpoint state.
 ///
@@ -108,8 +108,8 @@ where
     P: Payload,
     H: Recv<P>,
 {
-    fn receive(&mut self, ip::InPacket { handle, packet }: ip::InPacket<P>) {
-        let capabilities = handle.info().capabilities();
+    fn receive(&mut self, ip::InPacket { control, packet }: ip::InPacket<P>) {
+        let capabilities = control.info().capabilities();
         let checksum = capabilities.udp().rx_checksum(packet.repr());
 
         let packet = match packet.repr().protocol() {
@@ -128,8 +128,8 @@ where
             return
         }
 
-        let handle = Handle::new(handle);
-        let packet = Packet::new(handle, packet);
+        let control = Controller { inner: control };
+        let packet = Packet { control, packet };
         self.handler.receive(packet);
     }
 }
@@ -140,9 +140,9 @@ where
     H: Send<P>,
 {
     fn send<'a>(&mut self, packet: ip::RawPacket<'a, P>) {
-        let ip::RawPacket { handle, payload } = packet;
-        let handle = Handle::new(handle);
-        let packet = RawPacket::new(handle, payload);
+        let ip::RawPacket { control, payload } = packet;
+        let control = Controller { inner: control };
+        let packet = RawPacket { control, payload };
 
         self.handler.send(packet)
     }

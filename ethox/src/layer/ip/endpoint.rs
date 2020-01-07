@@ -6,7 +6,7 @@ use crate::wire::{IpAddress, IpCidr, IpSubnet, Ipv4Packet, Ipv6Packet};
 use crate::time::Instant;
 
 use super::{Recv, Send};
-use super::packet::{self, IpPacket, Handle, Route};
+use super::packet::{self, Controller, IpPacket, Route};
 use super::route::Routes;
 
 /// Handles IP connection states.
@@ -245,8 +245,8 @@ where
     P: PayloadMut,
     T: Recv<P>,
 {
-    fn receive(&mut self, eth::InPacket { mut handle, frame }: eth::InPacket<P>) {
-        let capabilities = handle.info().capabilities();
+    fn receive(&mut self, eth::InPacket { mut control, frame }: eth::InPacket<P>) {
+        let capabilities = control.info().capabilities();
         let packet = match frame.repr().ethertype {
             EthernetProtocol::Ipv4 => {
                 match Ipv4Packet::new_checked(frame, capabilities.ipv4().rx_checksum()) {
@@ -262,7 +262,7 @@ where
             },
             EthernetProtocol::Arp => {
                 return self.endpoint.into_arp_receiver().receive(
-                    eth::InPacket { handle, frame, });
+                    eth::InPacket { control, frame, });
             }
             _ => return,
         };
@@ -271,9 +271,13 @@ where
             return
         }
 
-        let handle = Handle::new(handle.borrow_mut(), &mut self.endpoint);
-        let packet = packet::In { handle, packet };
-        self.handler.receive(packet)
+        self.handler.receive(packet::In {
+            control: Controller {
+                eth: control.borrow_mut(),
+                endpoint: &mut self.endpoint,
+            },
+            packet,
+        })
     }
 }
 
@@ -288,11 +292,15 @@ where
             return self.endpoint.into_arp_sender().send(packet);
         }
 
-        let eth::RawPacket { handle: mut eth_handle, payload } = packet;
-        let handle = Handle::new(eth_handle.borrow_mut(), &mut self.endpoint);
-        let packet = packet::Raw { handle, payload };
+        let eth::RawPacket { control: mut eth_handle, payload } = packet;
 
-        self.handler.send(packet)
+        self.handler.send(packet::Raw {
+            control: Controller {
+                eth: eth_handle.borrow_mut(),
+                endpoint: &mut self.endpoint
+            },
+            payload,
+        });
     }
 }
 
