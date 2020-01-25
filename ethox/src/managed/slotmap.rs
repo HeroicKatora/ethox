@@ -49,10 +49,20 @@ pub struct Slot {
 /// assert_eq!(map.get(index).cloned(), Some(42));
 /// ```
 pub struct SlotMap<'a, T> {
+    /// The slice where elements are placed.
+    /// All of them are initialized at all times but not all are logically part of the map.
     elements: Slice<'a, T>,
+    /// The logical list of used slots.
+    /// Note that a slot is never remove from this list but instead used to track the generation_id
+    /// and the link in the free list.
     slots: List<'a, Slot>,
+    /// The source of generation ids.
+    /// Generation ids are a positive, non-zero value.
     generation: Generation,
+    /// An index to the top element of the free list.
+    /// Refers to the one-past-the-end index of `slots` if there are no elements.
     free_top: usize,
+    /// An abstraction around computing wrapped indices in the free list.
     indices: IndexComputer,
 }
 
@@ -75,13 +85,15 @@ struct GenerationOrFreelink(isize);
 struct FreeIndex(usize);
 
 /// The generation counter.
-/// 
-/// Has strictly positive values.
+///
+/// Has a strictly positive value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct Generation(isize);
 
 /// Offset of a freelist entry to the next entry.
 ///
+/// Has a negative or zero value. Represents the negative of the offset to the next element in the
+/// free list, wrapping around at the capacity.
 /// The base for the offset is the *next* element for two reasons:
 /// * Offset of `0` points to the natural successor.
 /// * Offset of `len` would point to the element itself and should not occur.
@@ -94,7 +106,7 @@ struct IndexComputer(usize);
 impl<T> SlotMap<'_, T> {
     /// Get a mutable reference to the element that would be pushed next.
     pub fn init(&mut self) -> Option<&mut T> {
-        let index = self.free()?;
+        let index = self.next_free_slot()?;
         Some(&mut self.elements[index.0])
     }
 
@@ -127,8 +139,12 @@ impl<T> SlotMap<'_, T> {
     }
 
     /// Reserve a new entry.
+    ///
+    /// In case of success, the returned key refers to the entry until it is removed. The entry
+    /// itself is not initialized with any particular value but instead retains the value it had in
+    /// the backing slice. It is only logically placed into the slot map.
     pub fn reserve(&mut self) -> Option<(Key, &mut T)> {
-        let index = self.free()?;
+        let index = self.next_free_slot()?;
         let slot = &mut self.slots[index.0];
         let element = &mut self.elements[index.0];
 
@@ -146,9 +162,11 @@ impl<T> SlotMap<'_, T> {
         Some((key, element))
     }
 
-    /// Sugar wrapper around `reserve` for inserting values.
+    /// Try to insert a value into the map.
     ///
-    /// Note that on success, an old value stored in the backing slice will be overwritten.
+    /// This will fail if there is not enough space. Sugar wrapper around `reserve` for inserting
+    /// values. Note that on success, an old value stored in the backing slice will be overwritten.
+    /// Use `reserve` directly if it is vital that no old value is dropped.
     pub fn insert(&mut self, value: T) -> Option<Key> {
         // Insertion must work but we don't care about the value.
         let (index, element) = self.reserve()?;
@@ -158,8 +176,9 @@ impl<T> SlotMap<'_, T> {
 
     /// Remove an element.
     ///
-    /// If successful, return a mutable reference to the removed element. Returns `None` if the
-    /// provided index did not refer to an element that could be freed.
+    /// If successful, return a mutable reference to the removed element so that the caller can
+    /// swap it with a logically empty value. Returns `None` if the provided index did not refer to
+    /// an element that could be freed.
     pub fn remove(&mut self, index: Key) -> Option<&mut T> {
         if self.get(index).is_none() {
             return None
@@ -178,7 +197,7 @@ impl<T> SlotMap<'_, T> {
     }
 
     /// Get the next free slot.
-    fn free(&mut self) -> Option<FreeIndex> {
+    fn next_free_slot(&mut self) -> Option<FreeIndex> {
         // If free_top is one-past-the-end marker one of those is going to fail. Note that this
         // also means extracting one of these statements out of the function may change the
         // semantics if `elements.len() != slots.len()`.
@@ -186,11 +205,13 @@ impl<T> SlotMap<'_, T> {
         // Ensure the index refers to an element within the slice or try to allocate a new slot
         // wherein we can fit the element.
         let free = match self.slots.get_mut(self.free_top) {
+            // There is a free element in our free list.
             Some(_) => {
                 // Ensure that there is also a real element there.
                 let _= self.elements.get_mut(self.free_top)?;
                 FreeIndex(self.free_top)
             },
+            // Need to try an get a new element from the slot slice.
             None => { // Try to get the next one
                 // Will not actually wrap if pushing is successful.
                 let new_index = self.slots.len();
@@ -199,6 +220,7 @@ impl<T> SlotMap<'_, T> {
 
                 let free_slot = self.slots.push()?;
                 let free_index = FreeIndex(new_index);
+                // New top is the new one-past-the-end.
                 let new_top = new_index.checked_add(1).unwrap();
 
                 let offset = self.indices.free_list_offset(free_index, new_top);
@@ -241,10 +263,9 @@ impl GenerationOrFreelink {
     }
 
     pub(crate) fn generation(self) -> Result<Generation, Offset> {
-        if self.0 > 0 {
-            Ok(Generation(self.0))
-        } else {
-            Err(Offset(self.0))
+        match self.free_link() {
+            Ok(offset) => Err(offset),
+            Err(generation) => Ok(generation),
         }
     }
 }
@@ -256,45 +277,51 @@ impl IndexComputer {
     }
 
     /// Get the next free list entry.
+    /// This applies the offset to the base index, wrapping around if required.
+    ///
+    /// This is the reverse of `free_list_offset`.
     fn free_list_next(&self, FreeIndex(base): FreeIndex, offset: Offset)
         -> usize
     {
-        let length = self.0;
+        let capacity = self.0;
         let offset = offset.int_offset();
 
-        assert!(base < length);
-        assert!(offset <= length);
+        assert!(base < capacity);
+        assert!(offset <= capacity);
         let base = base + 1;
 
-        if length - offset <= base {
+        if capacity - offset >= base {
             offset + base // Fine within the range
         } else {
-            // Wrap once, mod (length + 1), result again in range
+            // Mathematically, capacity < offset + base < 2*capacity
+            // Wrap once, mod (capacity + 1), result again in range
             offset
                 .wrapping_add(base)
-                .wrapping_sub(length)
-                // Still > 0
-                .wrapping_sub(1)
+                .wrapping_sub(capacity + 1)
         }
     }
 
+    /// Get the offset difference between the index and the next element.
+    /// Computes a potentially wrapping positive offset where zero is the element following the
+    /// base.
+    ///
+    /// This is the reverse of `free_list_next`.
     fn free_list_offset(&self, FreeIndex(base): FreeIndex, to: usize)
         -> Offset
     {
-        let length = self.0;
+        let capacity = self.0;
 
         assert!(base != to, "Cant offset element to itself");
-        assert!(base < length, "Should never have to offset the end-of-list marker");
-        assert!(to <= length, "Can only offset to the end-of-list marker");
+        assert!(base < capacity, "Should never have to offset the end-of-list marker");
+        assert!(to <= capacity, "Can only offset to the end-of-list marker");
         let base = base + 1;
 
         Offset::from_int_offset(if base <= to {
             to - base
         } else {
-            // Wrap once, mod (length + 1), result again in range
+            // Wrap once, mod (capacity + 1), result again in range
             to
-                .wrapping_add(length)
-                .wrapping_add(1)
+                .wrapping_add(capacity + 1)
                 .wrapping_sub(base)
         })
     }
@@ -355,6 +382,16 @@ mod tests {
         assert_eq!(map.insert(0x9999), None);
         assert_eq!(map.get(key42).cloned(), Some(42));
         assert_eq!(map.get(keylo).cloned(), Some('K' as _));
+
+        assert!(map.remove(key42).is_some());
+        assert_eq!(map.get(key42), None);
+
+        let lastkey = map.insert(0x9999).unwrap();
+        assert_eq!(map.get(lastkey).cloned(), Some(0x9999));
+
+        *map.remove(keylo).unwrap() = 0;
+        assert_eq!(map.get(lastkey).cloned(), Some(0x9999));
+        assert!(map.remove(lastkey).is_some());
     }
 
     #[test]
@@ -379,5 +416,40 @@ mod tests {
 
         assert_eq!(map.get(key), None);
         assert_eq!(map.get(new_key), None);
+    }
+
+    #[test]
+    fn non_simple_free_list() {
+        // Check the free list implementation
+        let mut elements = [0u32; 3];
+        let mut slots = [Slot::default(); 3];
+
+        let mut map = SlotMap::new(
+            Slice::Borrowed(&mut elements[..]),
+            Slice::Borrowed(&mut slots[..]));
+
+        let key0 = map.insert(0).unwrap();
+        let key1 = map.insert(1).unwrap();
+        let key2 = map.insert(2).unwrap();
+
+        *map.remove(key1).unwrap() = 0xF;
+        assert_eq!(map.free_top, 1);
+        assert_eq!(map.get(key0).cloned(), Some(0));
+        assert_eq!(map.get(key2).cloned(), Some(2));
+
+        *map.remove(key2).unwrap() = 0xF;
+        assert_eq!(map.free_top, 2);
+        assert_eq!(map.get(key0).cloned(), Some(0));
+
+        *map.remove(key0).unwrap() = 0xF;
+        assert_eq!(map.free_top, 0);
+
+        let key0 = map.insert(0).unwrap();
+        assert_eq!(map.free_top, 2);
+        let key1 = map.insert(1).unwrap();
+        let key2 = map.insert(2).unwrap();
+        assert_eq!(map.get(key0).cloned(), Some(0));
+        assert_eq!(map.get(key1).cloned(), Some(1));
+        assert_eq!(map.get(key2).cloned(), Some(2));
     }
 }
