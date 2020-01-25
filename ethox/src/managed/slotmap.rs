@@ -266,10 +266,11 @@ impl IndexComputer {
         assert!(offset <= length);
         let base = base + 1;
 
-        if length - offset <= base {
+        if capacity - offset >= base {
             offset + base // Fine within the range
         } else {
-            // Wrap once, mod (length + 1), result again in range
+            // Mathematically, capacity < offset + base < 2*capacity
+            // Wrap once, mod (capacity + 1), result again in range
             offset
                 .wrapping_add(base)
                 .wrapping_sub(length)
@@ -379,5 +380,40 @@ mod tests {
 
         assert_eq!(map.get(key), None);
         assert_eq!(map.get(new_key), None);
+    }
+
+    #[test]
+    fn non_simple_free_list() {
+        // Check the free list implementation
+        let mut elements = [0u32; 3];
+        let mut slots = [Slot::default(); 3];
+
+        let mut map = SlotMap::new(
+            Slice::Borrowed(&mut elements[..]),
+            Slice::Borrowed(&mut slots[..]));
+
+        let key0 = map.insert(0).unwrap();
+        let key1 = map.insert(1).unwrap();
+        let key2 = map.insert(2).unwrap();
+
+        *map.remove(key1).unwrap() = 0xF;
+        assert_eq!(map.free_top, 1);
+        assert_eq!(map.get(key0).cloned(), Some(0));
+        assert_eq!(map.get(key2).cloned(), Some(2));
+
+        *map.remove(key2).unwrap() = 0xF;
+        assert_eq!(map.free_top, 2);
+        assert_eq!(map.get(key0).cloned(), Some(0));
+
+        *map.remove(key0).unwrap() = 0xF;
+        assert_eq!(map.free_top, 0);
+
+        let key0 = map.insert(0).unwrap();
+        assert_eq!(map.free_top, 2);
+        let key1 = map.insert(1).unwrap();
+        let key2 = map.insert(2).unwrap();
+        assert_eq!(map.get(key0).cloned(), Some(0));
+        assert_eq!(map.get(key1).cloned(), Some(1));
+        assert_eq!(map.get(key2).cloned(), Some(2));
     }
 }
