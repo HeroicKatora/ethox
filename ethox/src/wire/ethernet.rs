@@ -1,6 +1,8 @@
 use core::{fmt, str::FromStr, ops};
 use byteorder::{ByteOrder, NetworkEndian};
 
+use crate::wire::{arp, ip};
+use crate::wire::pretty_print::{PrettyPrint, PrettyIndent};
 use crate::wire::{Error, Reframe, Result, Payload, PayloadError, PayloadMut, payload};
 
 enum_with_unknown! {
@@ -357,8 +359,6 @@ impl<T: Payload> fmt::Display for Frame<T> {
     }
 }
 
-use super::pretty_print::{PrettyPrint, PrettyIndent};
-
 impl PrettyPrint for ethernet {
     fn pretty_print(buffer: &[u8], f: &mut fmt::Formatter,
                     indent: &mut PrettyIndent) -> fmt::Result {
@@ -371,15 +371,15 @@ impl PrettyPrint for ethernet {
         match frame.ethertype() {
             EtherType::Arp => {
                 indent.increase(f)?;
-                super::arp_packet::pretty_print(&frame.payload(), f, indent)
+                arp::packet::pretty_print(&frame.payload(), f, indent)
             }
             EtherType::Ipv4 => {
                 indent.increase(f)?;
-                super::ipv4_packet::pretty_print(&frame.payload(), f, indent)
+                ip::v4::packet::pretty_print(&frame.payload(), f, indent)
             }
             EtherType::Ipv6 => {
                 indent.increase(f)?;
-                super::ipv6_packet::pretty_print(&frame.payload(), f, indent)
+                ip::v6::packet::pretty_print(&frame.payload(), f, indent)
             }
             _ => Ok(())
         }

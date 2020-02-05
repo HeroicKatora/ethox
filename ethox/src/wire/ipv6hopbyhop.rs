@@ -1,8 +1,8 @@
 use core::fmt;
 
-use super::{Error, Result};
+use crate::wire::{Error, Result, ip::Protocol};
+
 use super::ipv6option::Ipv6OptionsIterator;
-pub(crate) use super::IpProtocol as Protocol;
 
 /// A read/write wrapper around an IPv6 Hop-by-Hop Options Header.
 #[derive(Debug, PartialEq)]

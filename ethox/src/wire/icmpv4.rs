@@ -1,10 +1,10 @@
 use core::{fmt, ops};
 use byteorder::{ByteOrder, NetworkEndian};
 
-use super::{Payload, PayloadMut};
-use super::{Error, Checksum, Result};
+use crate::wire::{ip::v4, Checksum, Error, Result, Payload, PayloadMut};
+use crate::wire::pretty_print::{PrettyPrint, PrettyIndent};
+
 use super::ip::checksum;
-use super::{Ipv4Packet, Ipv4Repr, ipv4_packet};
 
 enum_with_unknown! {
     /// Internet protocol control message type.
@@ -451,7 +451,7 @@ pub enum Repr {
     },
     DstUnreachable {
         reason: DstUnreachable,
-        header: Ipv4Repr,
+        header: v4::Repr,
     },
     #[doc(hidden)]
     __Nonexhaustive
@@ -493,7 +493,7 @@ impl Repr {
             },
 
             (Message::DstUnreachable, code) => {
-                let ip_packet = Ipv4Packet::new_checked(packet.payload_slice(), checksum)?;
+                let ip_packet = v4::Packet::new_checked(packet.payload_slice(), checksum)?;
 
                 let payload = ip_packet.payload_slice();
                 // RFC 792 requires exactly eight bytes to be returned.
@@ -502,7 +502,7 @@ impl Repr {
 
                 Ok(Repr::DstUnreachable {
                     reason: DstUnreachable::from(code),
-                    header: Ipv4Repr {
+                    header: v4::Repr {
                         src_addr: ip_packet.src_addr(),
                         dst_addr: ip_packet.dst_addr(),
                         protocol: ip_packet.protocol(),
@@ -557,7 +557,7 @@ impl Repr {
                 packet.set_msg_type(Message::DstUnreachable);
                 packet.set_msg_code(reason.into());
 
-                let ip_packet = ipv4_packet::new_unchecked_mut(packet.payload_mut_slice());
+                let ip_packet = v4::packet::new_unchecked_mut(packet.payload_mut_slice());
                 header.emit(ip_packet, checksum);
             },
 
@@ -608,8 +608,6 @@ impl fmt::Display for Repr {
     }
 }
 
-use super::pretty_print::{PrettyPrint, PrettyIndent};
-
 impl PrettyPrint for icmpv4 {
     fn pretty_print(buffer: &[u8], f: &mut fmt::Formatter,
                     indent: &mut PrettyIndent) -> fmt::Result {
@@ -628,7 +626,7 @@ impl PrettyPrint for icmpv4 {
         match packet.msg_type() {
             Message::DstUnreachable => {
                 indent.increase(f)?;
-                ipv4_packet::pretty_print(packet.payload_slice(), f, indent)
+                v4::packet::pretty_print(packet.payload_slice(), f, indent)
             }
             _ => Ok(())
         }

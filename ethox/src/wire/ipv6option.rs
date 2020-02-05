@@ -1,5 +1,5 @@
 use core::fmt;
-use super::{Error, Result};
+use crate::wire::{Error, Result};
 
 enum_with_unknown! {
     /// IPv6 Extension Header Option Type

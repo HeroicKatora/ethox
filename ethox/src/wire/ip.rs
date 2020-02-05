@@ -2,8 +2,22 @@ use core::fmt;
 use core::convert::From;
 
 use crate::wire::{Error, Checksum, Result};
-use super::{Ipv4Address, Ipv4Cidr, Ipv4Repr, Ipv4Subnet, ipv4_packet};
-use super::{Ipv6Address, Ipv6Cidr, Ipv6Repr, Ipv6Subnet, ipv6_packet};
+use crate::wire::pretty_print::PrettyIndent;
+
+use crate::wire::ip::v4::{
+    Address as Ipv4Address,
+    Cidr as Ipv4Cidr,
+    Repr as Ipv4Repr,
+    Subnet as Ipv4Subnet,
+    packet as ipv4_packet,
+};
+use crate::wire::ip::v6::{
+    Address as Ipv6Address,
+    Cidr as Ipv6Cidr,
+    Repr as Ipv6Repr,
+    Subnet as Ipv6Subnet,
+    packet as ipv6_packet,
+};
 
 /// Internet protocol version.
 #[derive(Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
@@ -847,12 +861,10 @@ pub(crate) mod checksum {
     }
 }
 
-use super::pretty_print::PrettyIndent;
-
 pub(crate) fn pretty_print_ip_payload<T: Into<Repr>>(f: &mut fmt::Formatter, indent: &mut PrettyIndent,
                                               ip_repr: T, payload: &[u8]) -> fmt::Result {
-    use crate::wire::{TcpChecksum, TcpPacket, UdpChecksum, UdpRepr, udp_packet};
-    use crate::wire::ip::checksum::format_checksum;
+    use crate::wire::{tcp, udp};
+    use super::ip::checksum::format_checksum;
 
     let repr = ip_repr.into();
     match repr.protocol() {
@@ -864,10 +876,10 @@ pub(crate) fn pretty_print_ip_payload<T: Into<Repr>>(f: &mut fmt::Formatter, ind
         */
         Protocol::Udp => {
             indent.increase(f)?;
-            match udp_packet::new_checked(payload.as_ref()) {
+            match udp::packet::new_checked(payload.as_ref()) {
                 Err(err) => write!(f, "{}({})", indent, err),
                 Ok(udp_packet) => {
-                    match UdpRepr::parse(udp_packet, UdpChecksum::Ignored) {
+                    match udp::Repr::parse(udp_packet, udp::Checksum::Ignored) {
                         Err(err) => write!(f, "{}({})", indent, err),
                         Ok(udp_repr) => {
                             write!(f, "{}{}", indent, udp_repr)?;
@@ -881,7 +893,7 @@ pub(crate) fn pretty_print_ip_payload<T: Into<Repr>>(f: &mut fmt::Formatter, ind
         }
         Protocol::Tcp => {
             indent.increase(f)?;
-            match TcpPacket::<&[u8]>::new_checked(payload.as_ref(), TcpChecksum::Ignored) {
+            match tcp::Packet::<&[u8]>::new_checked(payload.as_ref(), tcp::Checksum::Ignored) {
                 Err(err) => write!(f, "{}({})", indent, err),
                 Ok(tcp_packet) => {
                     write!(f, "{}{}", indent, tcp_packet)?;
@@ -910,8 +922,8 @@ pub(crate) mod test {
     pub(crate) const MOCK_UNSPECIFIED: IpAddress = IpAddress::Ipv6(Ipv6Address::UNSPECIFIED);
 
     use super::*;
-    use crate::wire::{IpAddress, IpProtocol,IpCidr};
-    use crate::wire::{Ipv4Address, Ipv4Repr};
+    use crate::wire::ip::{Address as IpAddress, Protocol as IpProtocol, Cidr as IpCidr};
+    use crate::wire::ip::v4::{Address as Ipv4Address, Repr as Ipv4Repr};
 
     macro_rules! generate_common_tests {
         ($name:ident, $repr:ident, $ip_repr:path, $ip_addr:path,

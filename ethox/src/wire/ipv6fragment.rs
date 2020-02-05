@@ -2,8 +2,7 @@ use core::fmt;
 
 use byteorder::{ByteOrder, NetworkEndian};
 
-use super::{Error, Result};
-pub(crate) use super::IpProtocol as Protocol;
+use crate::wire::{Error, Result, ip::Protocol};
 
 /// A read/write wrapper around an IPv6 Fragment Header.
 #[derive(Debug, PartialEq)]

@@ -1,8 +1,9 @@
 use core::{fmt, ops};
 use byteorder::{ByteOrder, NetworkEndian};
 
-use super::{Error, IpProtocol, IpAddress, Result};
-use super::{Reframe, Payload, PayloadError, PayloadMut, payload};
+use crate::wire::{ip, Error, Reframe, Result, Payload, PayloadError, PayloadMut, payload};
+use crate::wire::pretty_print::{PrettyPrint, PrettyIndent};
+
 use super::ip::checksum;
 
 /// A read/write wrapper around an User Datagram Protocol packet buffer.
@@ -139,11 +140,11 @@ impl udp {
     /// # Panics
     /// This function panics unless `src_addr` and `dst_addr` belong to the same family,
     /// and that family is IPv4 or IPv6.
-    pub fn fill_checksum(&mut self, src_addr: IpAddress, dst_addr: IpAddress) {
+    pub fn fill_checksum(&mut self, src_addr: ip::Address, dst_addr: ip::Address) {
         self.set_checksum(0);
         let checksum = {
             !checksum::combine(&[
-                checksum::pseudo_header(&src_addr, &dst_addr, IpProtocol::Udp,
+                checksum::pseudo_header(&src_addr, &dst_addr, ip::Protocol::Udp,
                                         self.len() as u32),
                 checksum::data(&self.0[..self.len() as usize])
             ])
@@ -163,11 +164,11 @@ impl udp {
     ///
     /// # Fuzzing
     /// This function always returns `true` when fuzzing.
-    pub fn verify_checksum(&self, src_addr: IpAddress, dst_addr: IpAddress) -> bool {
+    pub fn verify_checksum(&self, src_addr: ip::Address, dst_addr: ip::Address) -> bool {
         if cfg!(fuzzing) { return true }
 
         checksum::combine(&[
-            checksum::pseudo_header(&src_addr, &dst_addr, IpProtocol::Udp,
+            checksum::pseudo_header(&src_addr, &dst_addr, ip::Protocol::Udp,
                                     self.len() as u32),
             checksum::data(&self.0[..self.len() as usize])
         ]) == !0
@@ -245,7 +246,7 @@ impl<T: Payload + PayloadMut> Packet<T> {
         let buffer = udp::new_unchecked_mut(self.buffer.payload_mut());
         match checksum {
             // Checksum optional, so we don't fill it.
-            Checksum::Lazy { src_addr: IpAddress::Ipv4(_), dst_addr: IpAddress::Ipv4(_) }
+            Checksum::Lazy { src_addr: ip::Address::Ipv4(_), dst_addr: ip::Address::Ipv4(_) }
             | Checksum::Ignored => (),
 
             // Checksum required here.
@@ -342,14 +343,14 @@ pub struct Repr {
 pub enum Checksum {
     /// Always fill the checksum and check if it exists.
     Manual {
-        src_addr: IpAddress,
-        dst_addr: IpAddress,
+        src_addr: ip::Address,
+        dst_addr: ip::Address,
     },
 
     /// Fill the checksum only if required, otherwise `Manual`.
     Lazy {
-        src_addr: IpAddress,
-        dst_addr: IpAddress,
+        src_addr: ip::Address,
+        dst_addr: ip::Address,
     },
 
     /// Never inspect the checksum.
@@ -369,7 +370,7 @@ impl Repr {
         if let Checksum::Manual { src_addr, dst_addr } = checksum {
             match (src_addr, dst_addr) {
                 // ... except on UDP-over-IPv4, where it can be omitted.
-                (IpAddress::Ipv4(_), IpAddress::Ipv4(_)) if packet.checksum() == 0 => { }
+                (ip::Address::Ipv4(_), ip::Address::Ipv4(_)) if packet.checksum() == 0 => { }
                 _ if !packet.verify_checksum(src_addr, dst_addr) => return Err(Error::WrongChecksum),
                 _ => (),
             }
@@ -414,7 +415,7 @@ impl Repr {
 
 impl Checksum {
     pub fn for_pseudo_header<A, B>(src_addr: A, dst_addr: B) -> Self
-        where A: Into<IpAddress>, B: Into<IpAddress>
+        where A: Into<ip::Address>, B: Into<ip::Address>
     {
         Checksum::Manual {
             src_addr: src_addr.into(),
@@ -443,8 +444,6 @@ impl fmt::Display for Repr {
     }
 }
 
-use super::pretty_print::{PrettyPrint, PrettyIndent};
-
 impl PrettyPrint for udp {
     fn pretty_print(buffer: &[u8], f: &mut fmt::Formatter,
                     indent: &mut PrettyIndent) -> fmt::Result {
@@ -457,7 +456,7 @@ impl PrettyPrint for udp {
 
 #[cfg(test)]
 mod test {
-    use crate::wire::Ipv4Address;
+    use crate::wire::ip::v4::Address as Ipv4Address;
     use super::*;
 
     const SRC_ADDR: Ipv4Address = Ipv4Address([192, 168, 1, 1]);

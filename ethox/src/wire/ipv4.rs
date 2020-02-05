@@ -3,12 +3,11 @@ use core::{fmt, ops};
 use core::str::FromStr;
 use byteorder::{ByteOrder, NetworkEndian};
 
-use super::{Reframe, Payload, PayloadError, PayloadMut, payload};
-use super::{Error, Checksum, Result};
-use super::ip::{checksum, pretty_print_ip_payload};
-use super::field::Field;
+use crate::wire::{Checksum, Error, Reframe, Result, Payload, PayloadError, PayloadMut, payload};
+use crate::wire::pretty_print::{PrettyPrint, PrettyIndent};
+use crate::wire::field::Field;
 
-pub(crate) use super::IpProtocol as Protocol;
+use super::ip::{Protocol, checksum, pretty_print_ip_payload};
 
 /// Minimum MTU required of all links supporting IPv4. See [RFC 791 § 3.1].
 ///
@@ -998,13 +997,9 @@ impl fmt::Display for Repr {
     }
 }
 
-use super::pretty_print::{PrettyPrint, PrettyIndent};
-
 impl PrettyPrint for ipv4 {
     fn pretty_print(buffer: &[u8], f: &mut fmt::Formatter,
                     indent: &mut PrettyIndent) -> fmt::Result {
-        use crate::wire::ip::checksum::format_checksum;
-
         // Verify the packet structure.
         let packet = match ipv4::new_checked(buffer) {
             Err(err) => return write!(f, "{}({})", indent, err),
@@ -1018,7 +1013,7 @@ impl PrettyPrint for ipv4 {
         };
 
         write!(f, "{}{}", indent, repr)?;
-        format_checksum(f, packet.verify_checksum())?;
+        checksum::format_checksum(f, packet.verify_checksum())?;
 
         pretty_print_ip_payload(f, indent, repr, packet.payload_slice())
     }
