@@ -1,9 +1,8 @@
 use crate::layer::{Error, Result, eth};
 use crate::nic::{self, Info};
 use crate::time::Instant;
-use crate::wire::{Checksum, EthernetAddress, EthernetFrame, EthernetProtocol};
-use crate::wire::{Reframe, Payload, PayloadMut, PayloadResult, payload};
-use crate::wire::{IpAddress, IpSubnet, IpProtocol, IpRepr, Ipv4Packet, Ipv6Packet};
+use crate::wire::{ethernet, ip};
+use crate::wire::{Checksum, Reframe, Payload, PayloadMut, PayloadResult, payload};
 
 /// An incoming packet.
 ///
@@ -48,9 +47,9 @@ pub struct Controller<'a> {
 }
 
 /// An IPv4 packet within an ethernet frame.
-pub type V4Packet<'a, P> = Ipv4Packet<EthernetFrame<&'a mut P>>;
+pub type V4Packet<'a, P> = ip::v4::Packet<ethernet::Frame<&'a mut P>>;
 /// An IPv6 packet within an ethernet frame.
-pub type V6Packet<'a, P> = Ipv6Packet<EthernetFrame<&'a mut P>>;
+pub type V6Packet<'a, P> = ip::v6::Packet<ethernet::Frame<&'a mut P>>;
 
 /// A valid IP packet buffer.
 ///
@@ -68,9 +67,9 @@ pub struct Init {
     /// The source selection method to use.
     pub source: Source,
     /// The destination address from which the next hop is derived.
-    pub dst_addr: IpAddress,
+    pub dst_addr: ip::Address,
     /// The wrapped protocol in the payload.
-    pub protocol: IpProtocol,
+    pub protocol: ip::Protocol,
     /// The length to reserved for the payload.
     pub payload: usize,
 }
@@ -81,37 +80,37 @@ pub enum Source {
     /// The source address must match a subnet.
     Mask {
         /// The subnet mask which should contain the source address.
-        subnet: IpSubnet,
+        subnet: ip::Subnet,
     },
 
     /// Some preselected address should be used.
     ///
     /// Required for established connections that are identified by an address tuple, such as in
     /// the case of TCP and UDP.
-    Exact(IpAddress),
+    Exact(ip::Address),
 }
 
 /// Source and destination chosen for a particular routing.
 pub(crate) struct Route {
-    pub(crate) next_hop: IpAddress,
-    pub(crate) src_addr: IpAddress,
+    pub(crate) next_hop: ip::Address,
+    pub(crate) src_addr: ip::Address,
 }
 
 #[derive(Clone, Copy)]
 struct EthRoute {
-    src_mac: EthernetAddress,
-    src_addr: IpAddress,
-    next_mac: EthernetAddress,
+    src_mac: ethernet::Address,
+    src_addr: ip::Address,
+    next_mac: ethernet::Address,
 }
 
 /// The interface to the endpoint.
 pub(crate) trait Endpoint{
     /// Get the ip to use on a link by providing the subnet in which it should be routed.
-    fn local_ip(&self, subnet: IpSubnet) -> Option<IpAddress>;
+    fn local_ip(&self, subnet: ip::Subnet) -> Option<ip::Address>;
     /// Find a Route a destination at the current time.
-    fn route(&self, dst_addr: IpAddress, time: Instant) -> Option<Route>;
+    fn route(&self, dst_addr: ip::Address, time: Instant) -> Option<Route>;
     /// Resolve an address. If `look` is true, try to actively lookup it up later.
-    fn resolve(&mut self, _: IpAddress, _: Instant, look: bool) -> Result<EthernetAddress>;
+    fn resolve(&mut self, _: ip::Address, _: Instant, look: bool) -> Result<ethernet::Address>;
 }
 
 impl<'a> Controller<'a> {
@@ -136,7 +135,7 @@ impl<'a> Controller<'a> {
     }
 
     /// Get the local endpoint IP to use as source on some subnet.
-    pub fn local_ip(&self, subnet: IpSubnet) -> Option<IpAddress> {
+    pub fn local_ip(&self, subnet: ip::Subnet) -> Option<ip::Address> {
         self.endpoint.local_ip(subnet)
     }
 
@@ -144,14 +143,14 @@ impl<'a> Controller<'a> {
     ///
     /// Failure to satisfy the request is clearly signalled. Use the result to initialize the
     /// representation to a valid eth frame.
-    pub fn resolve(&mut self, dst_addr: IpAddress)
-        -> Result<EthernetAddress>
+    pub fn resolve(&mut self, dst_addr: ip::Address)
+        -> Result<ethernet::Address>
     {
         let time = self.info().timestamp();
         self.endpoint.resolve(dst_addr, time, true)
     }
 
-    fn route_to(&mut self, dst_addr: IpAddress) -> Result<EthRoute> {
+    fn route_to(&mut self, dst_addr: ip::Address) -> Result<EthRoute> {
         let now = self.eth.info().timestamp();
         let Route { next_hop, src_addr } = self.endpoint
             .route(dst_addr, now)
@@ -228,7 +227,7 @@ impl<'a, P: Payload> Out<'a, P> {
     /// Retrieve the representation of the prepared packet.
     ///
     /// May be useful to check on the result of the ip layer logic before sending a packet.
-    pub fn repr(&self) -> IpRepr {
+    pub fn repr(&self) -> ip::Repr {
         self.packet.repr()
     }
 }
@@ -294,7 +293,7 @@ impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
 }
 
 impl Init {
-    fn initialize(&self, src_addr: IpAddress, payload: &mut impl PayloadMut) -> Result<IpRepr> {
+    fn initialize(&self, src_addr: ip::Address, payload: &mut impl PayloadMut) -> Result<ip::Repr> {
         let repr = self.ip_repr(src_addr)?;
         // Emit the packet but ignore the checksum for now. it is filled in later when calling
         // `OutPacket::send`.
@@ -303,8 +302,8 @@ impl Init {
     }
 
     /// Resolve the ip representation without initializing the packet.
-    fn ip_repr(&self, src_addr: IpAddress) -> Result<IpRepr> {
-        let repr = IpRepr::Unspecified {
+    fn ip_repr(&self, src_addr: ip::Address) -> Result<ip::Repr> {
+        let repr = ip::Repr::Unspecified {
             src_addr,
             dst_addr: self.dst_addr,
             hop_limit: u8::max_value(),
@@ -318,8 +317,8 @@ impl Init {
         enum Protocol { Ipv4, Ipv6 }
 
         let protocol = match self.dst_addr {
-            IpAddress::Ipv4(_) => Protocol::Ipv4,
-            IpAddress::Ipv6(_) => Protocol::Ipv6,
+            ip::Address::Ipv4(_) => Protocol::Ipv4,
+            ip::Address::Ipv6(_) => Protocol::Ipv6,
             _ => return Err(Error::Illegal),
         };
 
@@ -327,8 +326,8 @@ impl Init {
             src_addr: route.src_mac,
             dst_addr: route.next_mac,
             ethertype: match protocol {
-                Protocol::Ipv4 => EthernetProtocol::Ipv4,
-                Protocol::Ipv6 => EthernetProtocol::Ipv6,
+                Protocol::Ipv4 => ethernet::EtherType::Ipv4,
+                Protocol::Ipv6 => ethernet::EtherType::Ipv6,
             },
             // TODO: use the methods provided from `wire::*Repr`.
             payload: match protocol {
@@ -346,16 +345,16 @@ impl<'a, P: Payload> IpPacket<'a, P> {
     ///
     /// # Panics
     /// This function panics if the representation is not specifically Ipv4 or Ipv6.
-    pub fn new_unchecked(inner: EthernetFrame<&'a mut P>, repr: IpRepr) -> Self {
+    pub fn new_unchecked(inner: ethernet::Frame<&'a mut P>, repr: ip::Repr) -> Self {
         match repr {
-            IpRepr::Ipv4(repr) => IpPacket::V4(Ipv4Packet::new_unchecked(inner, repr)),
-            IpRepr::Ipv6(repr) => IpPacket::V6(Ipv6Packet::new_unchecked(inner, repr)),
+            ip::Repr::Ipv4(repr) => IpPacket::V4(ip::v4::Packet::new_unchecked(inner, repr)),
+            ip::Repr::Ipv6(repr) => IpPacket::V6(ip::v6::Packet::new_unchecked(inner, repr)),
             _ => panic!("Unchecked must be from specific ip representation"),
         }
     }
 
     /// Retrieve the representation of the packet.
-    pub fn repr(&self) -> IpRepr {
+    pub fn repr(&self) -> ip::Repr {
         match self {
             IpPacket::V4(packet) => packet.repr().into(),
             IpPacket::V6(packet) => packet.repr().into(),
@@ -363,7 +362,7 @@ impl<'a, P: Payload> IpPacket<'a, P> {
     }
 
     /// Turn the packet into its ethernet layer respresentation.
-    pub fn into_inner(self) -> EthernetFrame<&'a mut P> {
+    pub fn into_inner(self) -> ethernet::Frame<&'a mut P> {
         match self {
             IpPacket::V4(packet) => packet.into_inner(),
             IpPacket::V6(packet) => packet.into_inner(),
@@ -410,14 +409,14 @@ impl<'a, P: PayloadMut> PayloadMut for IpPacket<'a, P> {
     }
 } 
 
-impl From<IpAddress> for Source {
-    fn from(address: IpAddress) -> Self {
+impl From<ip::Address> for Source {
+    fn from(address: ip::Address) -> Self {
         Source::Exact(address)
     }
 }
 
-impl From<IpSubnet> for Source {
-    fn from(subnet: IpSubnet) -> Self {
+impl From<ip::Subnet> for Source {
+    fn from(subnet: ip::Subnet) -> Self {
         Source::Mask { subnet, }
     }
 }

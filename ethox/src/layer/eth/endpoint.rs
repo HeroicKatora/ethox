@@ -1,7 +1,7 @@
 use core::marker::PhantomData;
 
 use crate::layer::FnHandler;
-use crate::wire::{EthernetAddress, EthernetFrame, Payload, PayloadMut};
+use crate::wire::{ethernet, Payload, PayloadMut};
 use crate::nic;
 
 use super::{Recv, Send};
@@ -25,7 +25,7 @@ pub struct Endpoint<'a> {
     /// Our own address.
     ///
     /// We ignored any packets with mismatching destination.
-    addr: EthernetAddress,
+    addr: ethernet::Address,
 
     /// TODO: figure out if we need any dynamically sized, non-owned data.
     data: PhantomData<&'a ()>,
@@ -60,7 +60,7 @@ impl<'a> Endpoint<'a> {
     ///
     /// The endpoint will filter incoming messages by the hardware address and allows inspection of
     /// that address for sending.
-    pub fn new(addr: EthernetAddress) -> Self {
+    pub fn new(addr: ethernet::Address) -> Self {
         Endpoint {
             addr,
             data: PhantomData,
@@ -93,14 +93,14 @@ impl<'a> Endpoint<'a> {
         }
     }
 
-    fn accepts(&self, dst_addr: EthernetAddress) -> bool {
+    fn accepts(&self, dst_addr: ethernet::Address) -> bool {
         // TODO: broadcast and multicast
         self.addr == dst_addr || dst_addr.is_broadcast()
     }
 }
 
 impl packet::Endpoint for EthEndpoint<'_, '_> {
-    fn src_addr(&mut self) -> EthernetAddress {
+    fn src_addr(&mut self) -> ethernet::Address {
         self.inner.addr
     }
 }
@@ -112,7 +112,7 @@ where
     T: Recv<P>,
 {
     fn receive(&mut self, packet: nic::Packet<H, P>) {
-        let frame = match EthernetFrame::new_checked(packet.payload) {
+        let frame = match ethernet::Frame::new_checked(packet.payload) {
             Ok(frame) => frame,
             Err(_) => return,
         };
@@ -171,9 +171,8 @@ mod tests {
     use crate::managed::Slice;
     use crate::nic::{external::External, Device};
     use crate::layer::eth::Init;
-    use crate::wire::{EthernetAddress, EthernetProtocol};
 
-    const MAC_ADDR_1: EthernetAddress = EthernetAddress([0, 1, 2, 3, 4, 5]);
+    const MAC_ADDR_1: ethernet::Address = ethernet::Address([0, 1, 2, 3, 4, 5]);
 
     static PAYLOAD_BYTES: [u8; 50] =
         [0xaa, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -189,7 +188,7 @@ mod tests {
         let init = Init {
             src_addr,
             dst_addr: MAC_ADDR_1,
-            ethertype: EthernetProtocol::Unknown(0xBEEF),
+            ethertype: ethernet::EtherType::Unknown(0xBEEF),
             payload: PAYLOAD_BYTES.len(),
         };
         let mut prepared = frame.prepare(init)

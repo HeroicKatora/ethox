@@ -1,23 +1,19 @@
 use crate::layer::{eth, Result, Error};
 use crate::nic::Info;
-use crate::wire::Ipv4Address;
-use crate::wire::{
-    arp_packet, ArpOperation, ArpPacket, ArpRepr, EthernetAddress, EthernetFrame, EthernetProtocol,
-};
-use crate::wire::{Payload, PayloadMut};
+use crate::wire::{arp, ethernet, ip, Payload, PayloadMut};
 
 /// An incoming packet.
 pub struct In<'a, P: Payload> {
     /// A reference to the ARP endpoint state.
     pub control: Controller<'a>,
     /// The valid packet inside the buffer.
-    pub packet: ArpPacket<EthernetFrame<&'a mut P>>,
+    pub packet: arp::Packet<ethernet::Frame<&'a mut P>>,
 }
 
 /// An outgoing packet as prepared by the arp layer.
 pub struct Out<'a, P: Payload> {
     control: Controller<'a>,
-    packet: ArpPacket<EthernetFrame<&'a mut P>>,
+    packet: arp::Packet<ethernet::Frame<&'a mut P>>,
 }
 
 /// A buffer into which a packet can be placed.
@@ -43,14 +39,14 @@ pub enum Init {
     /// As an arp request for Ethernet-IPv4 translation.
     EthernetIpv4Request {
         /// The hardware source address to use.
-        source_hardware_addr: EthernetAddress,
+        source_hardware_addr: ethernet::Address,
         /// The IPv4 source address to use.
         /// Might be the same as `target_protocol_addr` for gratuitous ARP.
-        source_protocol_addr: Ipv4Address,
+        source_protocol_addr: ip::v4::Address,
         /// The hardware address of the target of the request, potentially broadcast.
-        target_hardware_addr: EthernetAddress,
+        target_hardware_addr: ethernet::Address,
         /// The IPv4 address of the target.
-        target_protocol_addr: Ipv4Address,
+        target_protocol_addr: ip::v4::Address,
     },
 }
 
@@ -73,7 +69,7 @@ impl<'a> Controller<'a> {
 }
 
 impl<'a, P: Payload> In<'a, P> {
-    pub(crate) fn new(control: Controller<'a>, packet: ArpPacket<EthernetFrame<&'a mut P>>) -> Self {
+    pub(crate) fn new(control: Controller<'a>, packet: arp::Packet<ethernet::Frame<&'a mut P>>) -> Self {
         In { control, packet }
     }
 
@@ -92,16 +88,16 @@ impl<'a, P: PayloadMut> In<'a, P> {
     pub fn answer(mut self) -> Result<Out<'a, P>> {
         let dst_address;
         let answer = match self.packet.repr() {
-            ArpRepr::EthernetIpv4 {
-                operation: ArpOperation::Request,
+            arp::Repr::EthernetIpv4 {
+                operation: arp::Operation::Request,
                 source_hardware_addr,
                 source_protocol_addr,
                 target_hardware_addr: _,
                 target_protocol_addr,
             } => {
                 dst_address = source_hardware_addr;
-                ArpRepr::EthernetIpv4 {
-                    operation: ArpOperation::Reply,
+                arp::Repr::EthernetIpv4 {
+                    operation: arp::Operation::Reply,
                     source_hardware_addr: self.control.inner.src_addr(),
                     source_protocol_addr: target_protocol_addr,
                     target_hardware_addr: source_hardware_addr,
@@ -115,7 +111,7 @@ impl<'a, P: PayloadMut> In<'a, P> {
         let eth_init = eth::Init {
             src_addr: self.control.inner.src_addr(),
             dst_addr: dst_address,
-            ethertype: EthernetProtocol::Arp,
+            ethertype: ethernet::EtherType::Arp,
             payload: 28,
         };
 
@@ -128,14 +124,14 @@ impl<'a, P: PayloadMut> In<'a, P> {
         let eth::InPacket { control, mut frame} = packet.into_incoming();
 
         answer.emit(
-            arp_packet::new_unchecked_mut(frame.payload_mut_slice()),
+            arp::packet::new_unchecked_mut(frame.payload_mut_slice()),
         );
 
         let control = Controller::new(control);
 
         Ok(Out {
             control,
-            packet: ArpPacket::new_unchecked(frame, answer),
+            packet: arp::Packet::new_unchecked(frame, answer),
         })
     }
 }
@@ -168,8 +164,8 @@ impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
 
         let eth_init = eth::Init {
             src_addr: lower.control.src_addr(),
-            dst_addr: EthernetAddress::BROADCAST,
-            ethertype: EthernetProtocol::Arp,
+            dst_addr: ethernet::Address::BROADCAST,
+            ethertype: ethernet::EtherType::Arp,
             payload: 28,
         };
 
@@ -182,30 +178,30 @@ impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
 
         Ok(Out {
             control,
-            packet: ArpPacket::new_unchecked(frame, repr),
+            packet: arp::Packet::new_unchecked(frame, repr),
         })
     }
 }
 
 impl Init {
-    fn initialize(&self, payload: &mut impl PayloadMut) -> Result<ArpRepr> {
+    fn initialize(&self, payload: &mut impl PayloadMut) -> Result<arp::Repr> {
         let repr = self.repr();
 
-        let packet = arp_packet::new_unchecked_mut(payload.payload_mut().as_mut_slice());
+        let packet = arp::packet::new_unchecked_mut(payload.payload_mut().as_mut_slice());
 
         repr.emit(packet);
         Ok(repr)
     }
 
-    fn repr(&self) -> ArpRepr {
+    fn repr(&self) -> arp::Repr {
         match *self {
             Init::EthernetIpv4Request {
                 source_hardware_addr,
                 source_protocol_addr,
                 target_hardware_addr,
                 target_protocol_addr,
-            } => ArpRepr::EthernetIpv4 {
-                operation: ArpOperation::Request,
+            } => arp::Repr::EthernetIpv4 {
+                operation: arp::Operation::Request,
                 source_hardware_addr,
                 source_protocol_addr,
                 target_hardware_addr,

@@ -1,8 +1,7 @@
-use crate::layer::{arp, eth, FnHandler};
+use crate::layer::{self, FnHandler};
 use crate::layer::{Error, Result};
 use crate::managed::Slice;
-use crate::wire::{EthernetAddress, EthernetProtocol, Payload, PayloadMut};
-use crate::wire::{IpAddress, IpCidr, IpSubnet, Ipv4Packet, Ipv6Packet};
+use crate::wire::{ip, ethernet, Payload, PayloadMut};
 use crate::time::Instant;
 
 use super::{Recv, Send};
@@ -22,7 +21,7 @@ pub struct Endpoint<'a> {
     routing: Routing<'a>,
 
     /// Internal ipv4/ipv6 arp state.
-    arp: arp::Endpoint<'a>,
+    arp: layer::arp::Endpoint<'a>,
 }
 
 /// Routing information of an ip endpoint.
@@ -34,7 +33,7 @@ pub struct Endpoint<'a> {
 /// assignments, routing table).
 pub(crate) struct Routing<'data> {
     /// Our own address.
-    addr: Slice<'data, IpCidr>,
+    addr: Slice<'data, ip::Cidr>,
 
     /// Routing information.
     routes: Routes<'data>,
@@ -85,9 +84,9 @@ impl<'a> Endpoint<'a> {
     /// address.
     pub fn new<A, C, N>(addr: A, routes: C, neighbors: N) -> Self
     where
-        A: Into<Slice<'a, IpCidr>>,
+        A: Into<Slice<'a, ip::Cidr>>,
         C: Into<Routes<'a>>,
-        N: Into<arp::NeighborCache<'a>>,
+        N: Into<layer::arp::NeighborCache<'a>>,
     {
         let addresses = addr.into();
         for addr in addresses.iter() {
@@ -98,7 +97,7 @@ impl<'a> Endpoint<'a> {
                 addr: addresses,
                 routes: routes.into(),
             },
-            arp: arp::Endpoint::new(neighbors.into()),
+            arp: layer::arp::Endpoint::new(neighbors.into()),
         }
     }
 
@@ -134,7 +133,7 @@ impl<'a> Endpoint<'a> {
     }
 
     /// Query if the configured addresses contain this destination.
-    pub fn accepts(&self, dst_addr: IpAddress) -> bool {
+    pub fn accepts(&self, dst_addr: ip::Address) -> bool {
         self.routing.accepts(dst_addr)
     }
 
@@ -144,7 +143,7 @@ impl<'a> Endpoint<'a> {
 }
 
 impl Routing<'_> {
-    pub(crate) fn accepts(&self, dst_addr: IpAddress) -> bool {
+    pub(crate) fn accepts(&self, dst_addr: ip::Address) -> bool {
         self.addr.iter().any(|own_addr| own_addr.accepts(dst_addr))
     }
 
@@ -156,7 +155,7 @@ impl Routing<'_> {
     /// * Lookup in routing table for all other addresses.
     ///
     /// For lack of direct loopback mechanism (TODO) we only implement the second two stages.
-    pub(crate) fn route(&self, dst_addr: IpAddress, time: Instant) -> Option<Route> {
+    pub(crate) fn route(&self, dst_addr: ip::Address, time: Instant) -> Option<Route> {
         if let Some(route) = self.find_local_route(dst_addr, time) {
             return Some(route)
         }
@@ -164,7 +163,7 @@ impl Routing<'_> {
         self.find_outer_route(dst_addr, time)
     }
 
-    pub(crate) fn find_local_route(&self, dst_addr: IpAddress, _: Instant) -> Option<Route> {
+    pub(crate) fn find_local_route(&self, dst_addr: ip::Address, _: Instant) -> Option<Route> {
         let matching_src = self.addr
             .iter()
             .filter(|addr| addr.subnet().contains(dst_addr))
@@ -176,7 +175,7 @@ impl Routing<'_> {
         })
     }
 
-    pub(crate) fn find_outer_route(&self, dst_addr: IpAddress, time: Instant) -> Option<Route> {
+    pub(crate) fn find_outer_route(&self, dst_addr: ip::Address, time: Instant) -> Option<Route> {
         let next_hop = self.routes.lookup(dst_addr, time)?;
 
         // Which source to use?
@@ -193,27 +192,27 @@ impl Routing<'_> {
 }
 
 impl<'data> IpEndpoint<'_, 'data> {
-    pub(crate) fn neighbors(&self) -> &arp::NeighborCache<'data> {
+    pub(crate) fn neighbors(&self) -> &layer::arp::NeighborCache<'data> {
         self.inner.arp.neighbors()
     }
 
-    pub(crate) fn neighbors_mut(&mut self) -> &mut arp::NeighborCache<'data> {
+    pub(crate) fn neighbors_mut(&mut self) -> &mut layer::arp::NeighborCache<'data> {
         self.inner.arp.neighbors_mut()
     }
 
-    fn into_arp_receiver(&mut self) -> arp::Receiver<'_, 'data> {
+    fn into_arp_receiver(&mut self) -> layer::arp::Receiver<'_, 'data> {
         let Endpoint { routing, arp } = self.inner;
         arp.answer_for(routing)
     }
 
-    fn into_arp_sender(&mut self) -> arp::Sender<'_, 'data> {
+    fn into_arp_sender(&mut self) -> layer::arp::Sender<'_, 'data> {
         let Endpoint { routing, arp } = self.inner;
         arp.query_for(routing)
     }
 }
 
 impl packet::Endpoint for IpEndpoint<'_, '_> {
-    fn local_ip(&self, subnet: IpSubnet) -> Option<IpAddress> {
+    fn local_ip(&self, subnet: ip::Subnet) -> Option<ip::Address> {
         self.inner.routing.addr
             .iter()
             .cloned()
@@ -222,11 +221,11 @@ impl packet::Endpoint for IpEndpoint<'_, '_> {
             .nth(0)
     }
 
-    fn route(&self, dst_addr: IpAddress, time: Instant) -> Option<Route> {
+    fn route(&self, dst_addr: ip::Address, time: Instant) -> Option<Route> {
         self.inner.routing.route(dst_addr, time)
     }
 
-    fn resolve(&mut self, addr: IpAddress, time: Instant, look: bool) -> Result<EthernetAddress> {
+    fn resolve(&mut self, addr: ip::Address, time: Instant, look: bool) -> Result<ethernet::Address> {
         match self.neighbors().lookup_pure(addr, time) {
             Some(addr) => return Ok(addr),
             None if !look => return Err(Error::Unreachable),
@@ -240,29 +239,29 @@ impl packet::Endpoint for IpEndpoint<'_, '_> {
     }
 }
 
-impl<P, T> eth::Recv<P> for Receiver<'_, '_, T>
+impl<P, T> layer::eth::Recv<P> for Receiver<'_, '_, T>
 where
     P: PayloadMut,
     T: Recv<P>,
 {
-    fn receive(&mut self, eth::InPacket { mut control, frame }: eth::InPacket<P>) {
+    fn receive(&mut self, layer::eth::InPacket { mut control, frame }: layer::eth::InPacket<P>) {
         let capabilities = control.info().capabilities();
         let packet = match frame.repr().ethertype {
-            EthernetProtocol::Ipv4 => {
-                match Ipv4Packet::new_checked(frame, capabilities.ipv4().rx_checksum()) {
+            ethernet::EtherType::Ipv4 => {
+                match ip::v4::Packet::new_checked(frame, capabilities.ipv4().rx_checksum()) {
                     Ok(packet) => IpPacket::V4(packet),
                     Err(_) => return,
                 }
             },
-            EthernetProtocol::Ipv6 => {
-                match Ipv6Packet::new_checked(frame) {
+            ethernet::EtherType::Ipv6 => {
+                match ip::v6::Packet::new_checked(frame) {
                     Ok(packet) => IpPacket::V6(packet),
                     Err(_) => return,
                 }
             },
-            EthernetProtocol::Arp => {
+            ethernet::EtherType::Arp => {
                 return self.endpoint.into_arp_receiver().receive(
-                    eth::InPacket { control, frame, });
+                    layer::eth::InPacket { control, frame, });
             }
             _ => return,
         };
@@ -281,18 +280,18 @@ where
     }
 }
 
-impl<P, T> eth::Send<P> for Sender<'_, '_, T>
+impl<P, T> layer::eth::Send<P> for Sender<'_, '_, T>
 where
     P: Payload + PayloadMut,
     T: Send<P>,
 {
-    fn send(&mut self, packet: eth::RawPacket<P>) {
+    fn send(&mut self, packet: layer::eth::RawPacket<P>) {
         // FIXME: will *always* intercept, even if we can't actually send any arp.
         if self.endpoint.neighbors().missing().count() > 0 {
             return self.endpoint.into_arp_sender().send(packet);
         }
 
-        let eth::RawPacket { control: mut eth_handle, payload } = packet;
+        let layer::eth::RawPacket { control: mut eth_handle, payload } = packet;
 
         self.handler.send(packet::Raw {
             control: Controller {
@@ -304,10 +303,10 @@ where
     }
 }
 
-impl<P> eth::Recv<P> for Layer<'_, '_>
+impl<P> layer::eth::Recv<P> for Layer<'_, '_>
     where P: PayloadMut,
 {
-    fn receive(&mut self, packet: eth::InPacket<P>) {
+    fn receive(&mut self, packet: layer::eth::InPacket<P>) {
         Receiver {
             endpoint: IpEndpoint {
                 inner: self.endpoint.inner,
@@ -317,10 +316,10 @@ impl<P> eth::Recv<P> for Layer<'_, '_>
     }
 }
 
-impl<P> eth::Send<P> for Layer<'_, '_>
+impl<P> layer::eth::Send<P> for Layer<'_, '_>
     where P: PayloadMut,
 {
-    fn send(&mut self, packet: eth::RawPacket<P>) {
+    fn send(&mut self, packet: layer::eth::RawPacket<P>) {
         Sender {
             endpoint: IpEndpoint {
                 inner: self.endpoint.inner,

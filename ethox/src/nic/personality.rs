@@ -1,5 +1,5 @@
 // FIXME: make most of these methods `const` as soon as possible.
-use crate::wire::{Checksum, IpRepr, UdpChecksum, TcpChecksum};
+use crate::wire::{ip, udp, tcp, Checksum};
 
 /// A general description of a device.
 ///
@@ -187,13 +187,13 @@ impl Udp {
     /// The enum `UdpChecksum` controls when and how the checksum is filled in by the `wire`
     /// portion of the library. This creates an instance which corresponds to the requirements of
     /// the nic.
-    pub fn tx_checksum(&self, ip: IpRepr) -> UdpChecksum {
+    pub fn tx_checksum(&self, ip: ip::Repr) -> udp::Checksum {
         match self.inner.tx_checksum() {
-            Checksum::Manual => UdpChecksum::Lazy {
+            Checksum::Manual => udp::Checksum::Lazy {
                 src_addr: ip.src_addr(),
                 dst_addr: ip.dst_addr(),
             },
-            Checksum::Ignored => UdpChecksum::Ignored,
+            Checksum::Ignored => udp::Checksum::Ignored,
         }
     }
 
@@ -202,13 +202,13 @@ impl Udp {
     /// The enum `UdpChecksum` controls when and how the checksum is filled in by the `wire`
     /// portion of the library. This creates an instance which corresponds to the requirements of
     /// the nic.
-    pub fn rx_checksum(&self, ip: IpRepr) -> UdpChecksum {
+    pub fn rx_checksum(&self, ip: ip::Repr) -> udp::Checksum {
         match self.inner.rx_checksum() {
-            Checksum::Manual => UdpChecksum::Lazy {
+            Checksum::Manual => udp::Checksum::Lazy {
                 src_addr: ip.src_addr(),
                 dst_addr: ip.dst_addr(),
             },
-            Checksum::Ignored => UdpChecksum::Ignored,
+            Checksum::Ignored => udp::Checksum::Ignored,
         }
     }
 }
@@ -226,13 +226,13 @@ impl Tcp {
     /// The enum `UdpChecksum` controls when and how the checksum is filled in by the `wire`
     /// portion of the library. This creates an instance which corresponds to the requirements of
     /// the nic.
-    pub fn tx_checksum(&self, ip: IpRepr) -> TcpChecksum {
+    pub fn tx_checksum(&self, ip: ip::Repr) -> tcp::Checksum {
         match self.inner.tx_checksum() {
-            Checksum::Manual => TcpChecksum::Manual {
+            Checksum::Manual => tcp::Checksum::Manual {
                 src_addr: ip.src_addr(),
                 dst_addr: ip.dst_addr(),
             },
-            Checksum::Ignored => TcpChecksum::Ignored,
+            Checksum::Ignored => tcp::Checksum::Ignored,
         }
     }
 
@@ -241,13 +241,13 @@ impl Tcp {
     /// The enum `UdpChecksum` controls when and how the checksum is filled in by the `wire`
     /// portion of the library. This creates an instance which corresponds to the requirements of
     /// the nic.
-    pub fn rx_checksum(&self, ip: IpRepr) -> TcpChecksum {
+    pub fn rx_checksum(&self, ip: ip::Repr) -> tcp::Checksum {
         match self.inner.rx_checksum() {
-            Checksum::Manual => TcpChecksum::Manual {
+            Checksum::Manual => tcp::Checksum::Manual {
                 src_addr: ip.src_addr(),
                 dst_addr: ip.dst_addr(),
             },
-            Checksum::Ignored => TcpChecksum::Ignored,
+            Checksum::Ignored => tcp::Checksum::Ignored,
         }
     }
 }

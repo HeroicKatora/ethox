@@ -4,7 +4,7 @@
 //! about missing addresses.
 
 use crate::layer::{eth, Result};
-use crate::wire::{ArpPacket, ArpRepr, ArpOperation, EthernetAddress, EthernetProtocol, Payload, PayloadMut, IpAddress};
+use crate::wire::{arp, ethernet, ip::Address as IpAddress, Payload, PayloadMut};
 use crate::time::Instant;
 use crate::layer::ip;
 
@@ -104,7 +104,7 @@ impl EndpointRef<'_, '_> {
     fn handle_internally<P: PayloadMut>(&mut self, packet: In<P>) -> Result<()> {
         let (operation, source_hardware_addr, source_protocol_addr, target_protocol_addr) =
             match packet.packet.repr() {
-                ArpRepr::EthernetIpv4 {
+                arp::Repr::EthernetIpv4 {
                     operation,
                     source_hardware_addr,
                     source_protocol_addr,
@@ -129,7 +129,7 @@ impl EndpointRef<'_, '_> {
             // unsolicited updates fully ignored not enabled.
 
             // send a reply if necessary.
-            if let ArpOperation::Request = operation {
+            if let arp::Operation::Request = operation {
                 packet.answer()?.send()?;
             }
         }
@@ -175,7 +175,7 @@ impl EndpointRef<'_, '_> {
         let src = raw.control.inner.src_addr();
         let prepared = raw.prepare(Init::EthernetIpv4Request {
             source_hardware_addr: src,
-            target_hardware_addr: EthernetAddress::BROADCAST,
+            target_hardware_addr: ethernet::Address::BROADCAST,
             source_protocol_addr: ip_src_address,
             target_protocol_addr: addr,
         })?;
@@ -189,7 +189,7 @@ impl EndpointRef<'_, '_> {
         Ok(())
     }
 
-    fn update(&mut self, hw_addr: EthernetAddress, prot_addr: IpAddress, time: Instant) -> bool {
+    fn update(&mut self, hw_addr: ethernet::Address, prot_addr: IpAddress, time: Instant) -> bool {
         if let Some(_) = self.inner.neighbors.lookup(prot_addr, time) {
             assert!(self.inner.neighbors.fill(prot_addr, hw_addr, Some(time)).is_ok());
             true
@@ -204,7 +204,7 @@ impl<P> eth::Recv<P> for Receiver<'_, '_>
 {
     fn receive(&mut self, eth::InPacket { control, frame }: eth::InPacket<P>) {
         let packet = match frame.repr().ethertype {
-            EthernetProtocol::Arp => match ArpPacket::new_checked(frame) {
+            ethernet::EtherType::Arp => match arp::Packet::new_checked(frame) {
                 Ok(packet) => packet,
                 Err(_) => return,
             },
