@@ -108,7 +108,7 @@ impl Address {
     /// isolate the bits of the cidr subnet that the address belongs to.
     ///
     /// ```rust
-    /// # use ethox::wire::Ipv4Address as Address;
+    /// # use ethox::wire::ip::v4::Address;
     /// let base = Address([192, 168, 178, 32]);
     /// let masked = base.mask(24);
     /// assert!(masked == Address([192, 168, 178, 0]));

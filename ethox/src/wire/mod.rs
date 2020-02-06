@@ -73,23 +73,23 @@ To emit an IP packet header into an octet buffer, and then parse it back:
 ```rust
 #
 # {
-use ethox::wire::*;
-let repr = Ipv4Repr {
-    src_addr:    Ipv4Address::new(10, 0, 0, 1),
-    dst_addr:    Ipv4Address::new(10, 0, 0, 2),
-    protocol:    IpProtocol::Tcp,
+use ethox::wire::{ip::v4, Checksum, ip::Protocol};
+let repr = v4::Repr {
+    src_addr:    v4::Address::new(10, 0, 0, 1),
+    dst_addr:    v4::Address::new(10, 0, 0, 2),
+    protocol:    Protocol::Tcp,
     payload_len: 10,
     hop_limit:   64
 };
 let mut buffer = vec![0; repr.buffer_len() + repr.payload_len];
 { // emission
-    let packet = ipv4_packet::new_unchecked_mut(&mut buffer);
+    let packet = v4::packet::new_unchecked_mut(&mut buffer);
     repr.emit(packet, Checksum::Manual);
 }
 { // parsing
-    let packet = ipv4_packet::new_checked(&buffer)
+    let packet = v4::packet::new_checked(&buffer)
         .expect("truncated packet");
-    let parsed = Ipv4Repr::parse(packet, Checksum::Manual)
+    let parsed = v4::Repr::parse(packet, Checksum::Manual)
         .expect("malformed packet");
     assert_eq!(repr, parsed);
 }
