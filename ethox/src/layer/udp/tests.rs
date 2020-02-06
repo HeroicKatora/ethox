@@ -1,13 +1,13 @@
 use crate::managed::Slice;
 use crate::nic::{external::External, Device};
 use crate::layer::{arp, eth, ip, udp};
-use crate::wire::{EthernetAddress, Ipv4Address, IpCidr, IpSubnet, Ipv4Subnet, Payload, PayloadMut};
-use crate::wire::{ethernet_frame, ipv4_packet};
+use crate::wire::{ethernet, Payload, PayloadMut};
+use crate::wire::ip::{v4, Cidr, Subnet};
 
-const MAC_ADDR_SRC: EthernetAddress = EthernetAddress([0, 1, 2, 3, 4, 5]);
-const IP_ADDR_SRC: Ipv4Address = Ipv4Address::new(127, 0, 0, 1);
-const MAC_ADDR_DST: EthernetAddress = EthernetAddress([6, 5, 4, 3, 2, 1]);
-const IP_ADDR_DST: Ipv4Address = Ipv4Address::new(127, 0, 0, 2);
+const MAC_ADDR_SRC: ethernet::Address = ethernet::Address([0, 1, 2, 3, 4, 5]);
+const IP_ADDR_SRC: v4::Address = v4::Address::new(127, 0, 0, 1);
+const MAC_ADDR_DST: ethernet::Address = ethernet::Address([6, 5, 4, 3, 2, 1]);
+const IP_ADDR_DST: v4::Address = v4::Address::new(127, 0, 0, 2);
 
 static PAYLOAD_BYTES: [u8; 50] =
     [0xaa, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -20,7 +20,7 @@ static PAYLOAD_BYTES: [u8; 50] =
 
 fn simple_send<P: PayloadMut>(frame: udp::RawPacket<P>) {
     let init = udp::Init {
-        source: IpSubnet::from(Ipv4Subnet::ANY).into(),
+        source: Subnet::from(v4::Subnet::ANY).into(),
         src_port: 80,
         dst_addr: IP_ADDR_DST.into(),
         dst_port: 80,
@@ -53,7 +53,7 @@ fn simple() {
         eth_cache
     };
     let mut ip = [ip::Route::unspecified(); 2];
-    let mut ip = ip::Endpoint::new(IpCidr::new(IP_ADDR_SRC.into(), 24),
+    let mut ip = ip::Endpoint::new(Cidr::new(IP_ADDR_SRC.into(), 24),
         // No routes necessary for local link.
         ip::Routes::new(&mut ip[..]),
         neighbors);
@@ -67,10 +67,10 @@ fn simple() {
     {
         // Retarget the packet to self.
         let buffer = nic.get_mut(0).unwrap();
-        let eth = ethernet_frame::new_unchecked_mut(buffer);
+        let eth = ethernet::frame::new_unchecked_mut(buffer);
         eth.set_dst_addr(MAC_ADDR_SRC);
         eth.set_src_addr(MAC_ADDR_DST);
-        let ip = ipv4_packet::new_unchecked_mut(eth.payload_mut_slice());
+        let ip = v4::packet::new_unchecked_mut(eth.payload_mut_slice());
         ip.set_dst_addr(IP_ADDR_SRC);
         ip.set_src_addr(IP_ADDR_DST);
         ip.fill_checksum();

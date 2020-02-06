@@ -1368,7 +1368,7 @@ mod tests {
     use crate::layer::tcp::endpoint::{EntryKey, FourTuple, PortMap};
     use crate::layer::tcp::IsnGenerator;
     use crate::time::Instant;
-    use crate::wire::Address;
+    use crate::wire::ip::Address;
     use super::{AvailableBytes, Connection};
 
     struct NoRemap;

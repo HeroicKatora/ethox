@@ -385,7 +385,7 @@ mod test {
         [0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]));
     pub(crate) const MOCK_IP_ADDR_2: ip::Address = ip::Address::Ipv6(ip::v6::Address(
         [0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2]));
-    pub(crate) const MOCK_IP_ADDR_3: ip::Address = ipAddress::Ipv6(ip::v6::Address(
+    pub(crate) const MOCK_IP_ADDR_3: ip::Address = ip::Address::Ipv6(ip::v6::Address(
         [0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]));
     pub(crate) const MOCK_IP_ADDR_4: ip::Address = ip::Address::Ipv6(ip::v6::Address(
         [0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4]));
