@@ -8,14 +8,14 @@
 use ethox::managed::Slice;
 use ethox::nic::{Device, sys::TapInterface};
 use ethox::layer::{arp, eth, ip, icmp};
-use ethox::wire::{Ipv4Address, Ipv4Cidr, EthernetAddress};
+use ethox::wire::{ip::v4, ethernet};
 
 #[no_mangle]
 // The main function, with its input arguments ignored, and an exit status is returned
 pub extern fn main(_nargs: i32, _args: *const *const u8) -> i32 {
     let name = "tap0";
-    let host = Ipv4Cidr::new(Ipv4Address([10, 0, 0, 1]), 24);
-    let hostmac = EthernetAddress([0xab,0xff,0xff,0xff,0xff,0xff]);
+    let host = v4::Cidr::new(v4::Address([10, 0, 0, 1]), 24);
+    let hostmac = ethernet::Address([0xab,0xff,0xff,0xff,0xff,0xff]);
 
     let mut eth = eth::Endpoint::new(hostmac);
 
