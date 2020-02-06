@@ -1,7 +1,7 @@
 use structopt::StructOpt;
 use std::net;
 
-use ethox::wire::{Ipv4Cidr, EthernetAddress};
+use ethox::wire::{ip::v4::Cidr, ethernet::Address};
 
 #[derive(Clone, StructOpt)]
 pub enum Iperf3Config {
@@ -56,9 +56,9 @@ pub struct Server {
 #[derive(Clone, StructOpt)]
 pub struct Config {
     pub tap: String,
-    pub host: Ipv4Cidr,
-    pub hostmac: EthernetAddress,
-    pub gateway: Ipv4Cidr,
+    pub host: Cidr,
+    pub hostmac: Address,
+    pub gateway: Cidr,
 
     #[structopt(subcommand)]
     pub iperf3: Iperf3Config,

@@ -12,7 +12,7 @@ use core::{mem, ptr};
 
 use ethox::layer::{ip, tcp, udp, Error};
 use ethox::time::{Duration, Instant};
-use ethox::wire::{Ipv4Subnet, PayloadMut, TcpSeqNumber};
+use ethox::wire::{ip::v4, PayloadMut, tcp::SeqNumber};
 use ethox::managed::{Map, Partial, SlotMap};
 
 use super::config;
@@ -113,7 +113,7 @@ struct PatternBuffer {
     acked: usize,
 
     /// The sequence number corresponding to `acked`.
-    at: Option<TcpSeqNumber>,
+    at: Option<SeqNumber>,
 }
 
 /// The result memory representation.
@@ -250,7 +250,7 @@ impl Connection {
     fn generate_udp_init(config: &config::Client) -> udp::Init {
         udp::Init {
             source: ip::Source::Mask {
-                subnet: Ipv4Subnet::ANY.into(),
+                subnet: v4::Subnet::ANY.into(),
             },
             src_port: Connection::UDP_SRC_PORT,
             dst_addr: config.host.into(),
@@ -321,7 +321,7 @@ impl ServerConnection {
         let config::Server { host, port } = config;
         let source = host.map(|ip| ip::Source::Exact(ip.into()))
             .unwrap_or_else(|| ip::Source::Mask {
-                subnet: Ipv4Subnet::ANY.into(),
+                subnet: v4::Subnet::ANY.into(),
             });
 
         ServerConnection {
@@ -538,7 +538,7 @@ impl tcp::SendBuf for PatternBuffer {
         }
     }
 
-    fn fill(&mut self, buf: &mut [u8], begin: TcpSeqNumber) {
+    fn fill(&mut self, buf: &mut [u8], begin: SeqNumber) {
         const HEAD: [u8; 4] = [0x80, 0x00, 0x00, 0x00];
 
         let prev = self.at.expect("Fill must not be called before isn indication");
@@ -554,7 +554,7 @@ impl tcp::SendBuf for PatternBuffer {
         }
     }
 
-    fn ack(&mut self, ack: TcpSeqNumber) {
+    fn ack(&mut self, ack: SeqNumber) {
         let previous = *self.at.get_or_insert(ack);
         self.acked += ack - previous;
         self.at = Some(ack);
