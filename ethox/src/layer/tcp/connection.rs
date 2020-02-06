@@ -8,7 +8,7 @@
 use core::convert::TryFrom;
 use core::ops::Range;
 use crate::time::{Duration, Expiration, Instant};
-use crate::wire::{IpAddress, TcpFlags, TcpRepr, TcpSeqNumber};
+use crate::wire::{ip::Address, tcp};
 
 use super::endpoint::{
     Entry,
@@ -59,7 +59,7 @@ pub struct Connection {
     ///
     /// We SHOULD wait at most 2*RMSS bytes before sending the next ack. There is also a time
     /// requirement, see `last_ack_time`.
-    pub last_ack_receive_offset: TcpSeqNumber,
+    pub last_ack_receive_offset: tcp::SeqNumber,
 
     /// The time when the next ack must be sent.
     ///
@@ -110,12 +110,12 @@ pub struct Send {
     /// The next not yet acknowledged sequence number.
     ///
     /// In RFC793 this is referred to as `SND.UNA`.
-    pub unacked: TcpSeqNumber,
+    pub unacked: tcp::SeqNumber,
 
     /// The next sequence number to use for transmission.
     ///
     /// In RFC793 this is referred to as `SND.NXT`.
-    pub next: TcpSeqNumber,
+    pub next: tcp::SeqNumber,
 
     /// The time of the last valid packet.
     pub last_time: Instant,
@@ -143,7 +143,7 @@ pub struct Send {
     /// This is read-only and only kept for potentially reading it for debugging later. It
     /// essentially provides a way of tracking the sent data. In RFC793 this is referred to as
     /// `ISS`.
-    pub initial_seq: TcpSeqNumber,
+    pub initial_seq: tcp::SeqNumber,
 }
 
 /// The connection state relevant for incoming segments.
@@ -153,14 +153,14 @@ pub struct Receive {
     ///
     /// In comparison the RFC validity checks are done with `acked` to implemented delayed ACKs but
     /// appear consistent to the outside. In RFC793 this is referred to as `RCV.NXT`.
-    pub next: TcpSeqNumber,
+    pub next: tcp::SeqNumber,
 
     /// The actually acknowledged sequence number.
     ///
     /// Implementing delayed ACKs (not sending acks for every packet) this tracks what we have
     /// publicly announced as our `NXT` sequence. Validity checks of incoming packet should be done
     /// relative to this value instead of `next`. In Linux, this is called `wup`.
-    pub acked: TcpSeqNumber,
+    pub acked: tcp::SeqNumber,
 
     /// The time the last segment was sent.
     pub last_time: Instant,
@@ -181,7 +181,7 @@ pub struct Receive {
     /// This is read-only and only kept for potentially reading it for debugging later. It
     /// essentially provides a way of tracking the sent data. In RFC793 this is referred to as
     /// `ISS`.
-    pub initial_seq: TcpSeqNumber,
+    pub initial_seq: tcp::SeqNumber,
 }
 
 /// State enum of the state machine.
@@ -240,7 +240,7 @@ pub struct Flow {
     ///
     /// When in fast recover, declares the sent sequent number that must be acknowledged to end
     /// fast recover. Initially set to the initial sequence number (ISS).
-    pub recover: TcpSeqNumber,
+    pub recover: tcp::SeqNumber,
 }
 
 /// Output signals of the model.
@@ -266,7 +266,7 @@ pub struct Signals {
     /// Since TCP must assume every packet to be potentially lost it is likely technically fine
     /// *not* to actually send the packet. In particular you could probably advance the internal
     /// state without acquiring packets to send out. This, however, sounds like a very bad idea.
-    pub answer: Option<TcpRepr>,
+    pub answer: Option<tcp::Repr>,
 }
 
 /// A descriptor of the transmission buffer.
@@ -304,7 +304,7 @@ pub struct ReceivedSegment {
     pub data_len: usize,
 
     /// The sequence number at the start of this packet.
-    pub begin: TcpSeqNumber,
+    pub begin: tcp::SeqNumber,
 
     /// Timestamp for acking this segment.
     pub timestamp: Instant,
@@ -314,10 +314,10 @@ pub struct ReceivedSegment {
 #[derive(Debug)]
 pub struct InPacket {
     /// Metadata of the tcp layer packet.
-    pub segment: TcpRepr,
+    pub segment: tcp::Repr,
 
     /// The sender address.
-    pub from: IpAddress,
+    pub from: Address,
 
     /// The arrival time of the packet at the nic.
     pub time: Instant,
@@ -327,7 +327,7 @@ pub struct InPacket {
 #[derive(Clone, Debug)]
 pub struct Segment {
     /// Representation for the packet.
-    pub repr: TcpRepr,
+    pub repr: tcp::Repr,
 
     /// Range of the data that should be included, as indexed within the (re-)transmit buffer.
     pub range: Range<usize>,
@@ -365,13 +365,13 @@ pub trait Endpoint {
 
     fn find_tuple(&mut self, tuple: FourTuple) -> Option<Entry>;
 
-    fn source_port(&mut self, addr: IpAddress) -> Option<u16>;
+    fn source_port(&mut self, addr: Address) -> Option<u16>;
 
-    fn listen(&mut self, ip: IpAddress, port: u16) -> Option<SlotKey>;
+    fn listen(&mut self, ip: Address, port: u16) -> Option<SlotKey>;
 
     fn open(&mut self, tuple: FourTuple) -> Option<SlotKey>;
 
-    fn initial_seq_num(&mut self, id: FourTuple, time: Instant) -> TcpSeqNumber;
+    fn initial_seq_num(&mut self, id: FourTuple, time: Instant) -> tcp::SeqNumber;
 }
 
 /// The interface to a single active connection on an endpoint.
@@ -394,9 +394,9 @@ enum AckUpdate {
 /// Tcp repr without the connection meta data.
 #[derive(Clone, Copy, Debug)]
 struct InnerRepr {
-    flags:        TcpFlags,
-    seq_number:   TcpSeqNumber,
-    ack_number:   Option<TcpSeqNumber>,
+    flags:        tcp::Flags,
+    seq_number:   tcp::SeqNumber,
+    ack_number:   Option<tcp::SeqNumber>,
     window_len:   u16,
     window_scale: Option<u8>,
     max_seg_size: Option<u16>,
@@ -414,12 +414,12 @@ impl Connection {
             flow_control: Flow {
                 ssthresh: 0,
                 congestion_window: 0,
-                recover: TcpSeqNumber::default(),
+                recover: tcp::SeqNumber::default(),
             },
             receive_window: 0,
             sender_maximum_segment_size: 0,
             receiver_maximum_segment_size: 0,
-            last_ack_receive_offset: TcpSeqNumber::default(),
+            last_ack_receive_offset: tcp::SeqNumber::default(),
             ack_timer: Expiration::Never,
             ack_timeout: Duration::from_millis(0),
             retransmission_timer: Instant::from_millis(0),
@@ -428,21 +428,21 @@ impl Connection {
             selective_acknowledgements: false,
             duplicate_ack: 0,
             send: Send {
-                unacked: TcpSeqNumber::default(),
-                next: TcpSeqNumber::default(),
+                unacked: tcp::SeqNumber::default(),
+                next: tcp::SeqNumber::default(),
                 last_time: Instant::from_millis(0),
                 unsent: 0,
                 window: 0,
                 window_scale: 0,
-                initial_seq: TcpSeqNumber::default(),
+                initial_seq: tcp::SeqNumber::default(),
             },
             recv: Receive {
-                next: TcpSeqNumber::default(),
-                acked: TcpSeqNumber::default(),
+                next: tcp::SeqNumber::default(),
+                acked: tcp::SeqNumber::default(),
                 last_time: Instant::from_millis(0),
                 window: 0,
                 window_scale: 0,
-                initial_seq: TcpSeqNumber::default(),
+                initial_seq: tcp::SeqNumber::default(),
             },
         }
     }
@@ -492,7 +492,7 @@ impl Connection {
 
         if let Some(ack_number) = segment.ack_number {
             signals.answer = Some(InnerRepr {
-                flags: TcpFlags::RST,
+                flags: tcp::Flags::RST,
                 seq_number: ack_number,
                 ack_number: None,
                 window_len: 0,
@@ -504,8 +504,8 @@ impl Connection {
             }.send_back(segment));
         } else {
             signals.answer = Some(InnerRepr {
-                flags: TcpFlags::RST,
-                seq_number: TcpSeqNumber(0),
+                flags: tcp::Flags::RST,
+                seq_number: tcp::SeqNumber(0),
                 ack_number: Some(segment.seq_number + segment.sequence_len()),
                 window_len: 0,
                 window_scale: None,
@@ -540,7 +540,7 @@ impl Connection {
 
         if let Some(ack_number) = segment.ack_number { // What are you acking? A previous connection.
             signals.answer = Some(InnerRepr {
-                flags: TcpFlags::RST,
+                flags: tcp::Flags::RST,
                 seq_number: ack_number,
                 ack_number: None,
                 window_len: 0,
@@ -573,7 +573,7 @@ impl Connection {
         self.send.initial_seq = isn;
 
         signals.answer = Some(InnerRepr {
-            flags: TcpFlags::RST,
+            flags: tcp::Flags::RST,
             seq_number: isn,
             ack_number: Some(self.ack_all()),
             window_len: self.recv.window,
@@ -601,7 +601,7 @@ impl Connection {
                 // Packet out of window. Send a RST with fitting sequence number.
                 let mut signals = Signals::default();
                 signals.answer = Some(InnerRepr {
-                    flags: TcpFlags::RST,
+                    flags: tcp::Flags::RST,
                     seq_number: ack,
                     ack_number: Some(segment.seq_number),
                     window_len: 0,
@@ -744,7 +744,7 @@ impl Connection {
     /// Determine if a packet should be deemed acceptable on an open connection.
     ///
     /// See: https://tools.ietf.org/html/rfc793#page-40
-    fn ingress_acceptable(&self, repr: &TcpRepr) -> bool {
+    fn ingress_acceptable(&self, repr: &tcp::Repr) -> bool {
         match (repr.payload_len, self.recv.window) {
             (0, 0) => repr.seq_number == self.recv.next,
             (0, _) => self.recv.in_window(repr.seq_number),
@@ -769,14 +769,14 @@ impl Connection {
     /// Close due to invalid incoming packet.
     ///
     /// As opposed to `remote_reset_connection` this one is proactive and we send the RST.
-    fn signal_reset_connection(&mut self, _segment: &TcpRepr, entry: EntryKey) -> Signals {
+    fn signal_reset_connection(&mut self, _segment: &tcp::Repr, entry: EntryKey) -> Signals {
         self.change_state(State::Closed);
 
         let mut signals = Signals::default();
         signals.reset = true;
         signals.delete = true;
         signals.answer = Some(InnerRepr {
-            flags: TcpFlags::RST,
+            flags: tcp::Flags::RST,
             seq_number: self.send.next,
             ack_number: Some(self.ack_all()),
             window_len: 0,
@@ -804,9 +804,9 @@ impl Connection {
         }
     }
 
-    fn repr_ack_all(&mut self, remote: FourTuple) -> TcpRepr {
+    fn repr_ack_all(&mut self, remote: FourTuple) -> tcp::Repr {
         InnerRepr {
-            flags: TcpFlags::default(),
+            flags: tcp::Flags::default(),
             seq_number: self.send.next,
             ack_number: Some(self.ack_all()),
             window_len: self.recv.window,
@@ -821,10 +821,10 @@ impl Connection {
     /// Send a SYN.
     ///
     /// If `ack` is true then it also acknowledges received segments (i.e. this is a passive open).
-    fn send_open(&mut self, ack: bool, to: FourTuple) -> TcpRepr {
+    fn send_open(&mut self, ack: bool, to: FourTuple) -> tcp::Repr {
         let ack_number = if ack { Some(self.ack_all()) } else { None };
         InnerRepr {
-            flags: TcpFlags::SYN,
+            flags: tcp::Flags::SYN,
             seq_number: self.send.initial_seq,
             ack_number,
             window_len: 0,
@@ -930,7 +930,7 @@ impl Connection {
 
             repr.payload_len = range.len() as u16;
             if is_fin {
-                repr.flags = TcpFlags::FIN;
+                repr.flags = tcp::Flags::FIN;
             }
 
             self.send.next = self.send.next + range.len() + usize::from(is_fin);
@@ -1042,7 +1042,7 @@ impl Connection {
         }
     }
 
-    fn window_update(&mut self, _segment: &TcpRepr, new_bytes: u32) {
+    fn window_update(&mut self, _segment: &tcp::Repr, new_bytes: u32) {
         let flow = &mut self.flow_control;
         if self.duplicate_ack > 0 {
             flow.congestion_window = flow.ssthresh;
@@ -1096,7 +1096,7 @@ impl Connection {
     ///
     /// Always points into the byte sequence space by offsetting a missing SYN in case none has
     /// been received yet.
-    pub fn get_send_ack(&self) -> TcpSeqNumber {
+    pub fn get_send_ack(&self) -> tcp::SeqNumber {
         match self.current {
             // If our SYN has not been acked, advance beyond the SYN.
             State::SynSent => self.send.unacked + 1,
@@ -1114,7 +1114,7 @@ impl Connection {
     /// the apparent state of actually sent acknowledgments and one for the acks we have queued.
     /// Sending a packet with the current received state catches the former up to the latter
     /// counter.
-    fn ack_all(&mut self) -> TcpSeqNumber {
+    fn ack_all(&mut self) -> tcp::SeqNumber {
         self.recv.acked = self.recv.next;
         self.ack_timer = Expiration::Never;
         self.recv.next
@@ -1151,7 +1151,7 @@ impl Connection {
 }
 
 impl Receive {
-    fn in_window(&self, seq: TcpSeqNumber) -> bool {
+    fn in_window(&self, seq: tcp::SeqNumber) -> bool {
         self.next.contains_in_window(seq, self.window.into())
     }
 
@@ -1168,7 +1168,7 @@ impl Receive {
 }
 
 impl Send {
-    fn incoming_ack(&mut self, seq: TcpSeqNumber) -> AckUpdate {
+    fn incoming_ack(&mut self, seq: tcp::SeqNumber) -> AckUpdate {
         if seq < self.unacked {
             AckUpdate::TooLow
         } else if seq == self.unacked {
@@ -1207,7 +1207,7 @@ impl ReceivedSegment {
     ///
     /// Takes care of removing the FIN flag if the acked part does not cover every data byte until
     /// that point.
-    pub fn acked_until(&self, ack: TcpSeqNumber) -> Self {
+    pub fn acked_until(&self, ack: tcp::SeqNumber) -> Self {
         ReceivedSegment {
             syn: self.syn,
             fin: self.fin && ack + 1 >= self.sequence_end(),
@@ -1218,22 +1218,22 @@ impl ReceivedSegment {
     }
 
     /// Returns the sequence number corresponding to the first data byte in this segment.
-    pub fn data_begin(&self) -> TcpSeqNumber {
+    pub fn data_begin(&self) -> tcp::SeqNumber {
         self.begin + usize::from(self.syn)
     }
 
     /// Returns the sequence number corresponding to the last data byte in this segment.
-    pub fn data_end(&self) -> TcpSeqNumber {
+    pub fn data_end(&self) -> tcp::SeqNumber {
         self.begin + usize::from(self.syn) + self.data_len
     }
 
     /// Check if the given sequence number if within the window of this segment.
-    pub fn contains_in_window(&self, seq: TcpSeqNumber) -> bool {
+    pub fn contains_in_window(&self, seq: tcp::SeqNumber) -> bool {
         self.begin.contains_in_window(seq, self.sequence_len())
     }
 
     /// Returns the past-the-end sequence number with which to ACK the segment.
-    pub fn sequence_end(&self) -> TcpSeqNumber {
+    pub fn sequence_end(&self) -> tcp::SeqNumber {
         self.begin + self.sequence_len()
     }
 }
@@ -1338,16 +1338,16 @@ impl Default for State {
 }
 
 impl InnerRepr {
-    pub(crate) fn send_back(&self, incoming: &TcpRepr) -> TcpRepr {
+    pub(crate) fn send_back(&self, incoming: &tcp::Repr) -> tcp::Repr {
         self.send_impl(incoming.dst_port, incoming.src_port)
     }
 
-    pub(crate) fn send_to(&self, tuple: FourTuple) -> TcpRepr {
+    pub(crate) fn send_to(&self, tuple: FourTuple) -> tcp::Repr {
         self.send_impl(tuple.local_port, tuple.remote_port)
     }
 
-    fn send_impl(&self, src: u16, dst: u16) -> TcpRepr {
-        TcpRepr {
+    fn send_impl(&self, src: u16, dst: u16) -> tcp::Repr {
+        tcp::Repr {
             src_port: src,
             dst_port: dst,
             seq_number: self.seq_number,
@@ -1368,7 +1368,7 @@ mod tests {
     use crate::layer::tcp::endpoint::{EntryKey, FourTuple, PortMap};
     use crate::layer::tcp::IsnGenerator;
     use crate::time::Instant;
-    use crate::wire::IpAddress;
+    use crate::wire::ip::Address;
     use super::{AvailableBytes, Connection};
 
     struct NoRemap;
@@ -1389,8 +1389,8 @@ mod tests {
         let isn = IsnGenerator::from_key(0, 0);
         let mut no_remap = NoRemap;
         let mut four = FourTuple {
-            local: IpAddress::v4(192, 0, 10, 1),
-            remote: IpAddress::v4(192, 0, 10, 2),
+            local: Address::v4(192, 0, 10, 1),
+            remote: Address::v4(192, 0, 10, 2),
             local_port: 80,
             remote_port: 80,
         };

@@ -3,9 +3,7 @@
 use crate::layer::{Error, Result};
 use crate::managed::{List, Slice};
 use crate::time::{Expiration, Instant};
-use crate::wire::{IpAddress, IpCidr, IpSubnet};
-use crate::wire::Ipv4Address;
-use crate::wire::Ipv6Address;
+use crate::wire::ip::{v4, v6, Address, Cidr, Subnet};
 
 /// A prefix of addresses that should be routed via a router
 #[derive(Debug, Clone, Copy)]
@@ -15,10 +13,10 @@ pub struct Route {
     /// Better only set actual networks here. Although host identifiers (where not all bits outside
     /// the subnet mask are zero) and broadcast (where these bits are all ones) are accepted, they
     /// may lead to unexpected routing decisions.
-    pub net: IpSubnet,
+    pub net: Subnet,
 
     /// Next hop for this network.
-    pub next_hop: IpAddress,
+    pub next_hop: Address,
 
     /// Expired routes are never considered.
     pub expires_at: Expiration,
@@ -31,8 +29,8 @@ impl Route {
     /// the more specific placeholders `ipv4_invalid` and `ipv6_invalid` are less precise.
     pub fn unspecified() -> Self {
         Route {
-            net: IpCidr::new(IpAddress::v4(0, 0, 0, 0), 0).subnet(),
-            next_hop: IpAddress::Unspecified,
+            net: Cidr::new(Address::v4(0, 0, 0, 0), 0).subnet(),
+            next_hop: Address::Unspecified,
             expires_at: Expiration::Never,
         }
     }
@@ -43,8 +41,8 @@ impl Route {
     /// `0.0.0.0/8` are only valid as source addresses.
     pub fn ipv4_invalid() -> Self {
         Route {
-            net: IpCidr::new(IpAddress::v4(0, 0, 0, 0), 0).subnet(),
-            next_hop: IpAddress::v4(0, 0, 0, 0).into(),
+            net: Cidr::new(Address::v4(0, 0, 0, 0), 0).subnet(),
+            next_hop: Address::v4(0, 0, 0, 0).into(),
             expires_at: Expiration::Never,
         }
     }
@@ -52,8 +50,8 @@ impl Route {
     /// A route `::/0` to the reserved, 'unspecified' `::/128` address.
     pub fn ipv6_invalid() -> Self {
         Route {
-            net: IpCidr::new(IpAddress::v6(0, 0, 0, 0, 0, 0, 0, 0), 0).subnet(),
-            next_hop: IpAddress::v6(0, 0, 0, 0, 0, 0, 0, 0).into(),
+            net: Cidr::new(Address::v6(0, 0, 0, 0, 0, 0, 0, 0), 0).subnet(),
+            next_hop: Address::v6(0, 0, 0, 0, 0, 0, 0, 0).into(),
             expires_at: Expiration::Never,
         }
     }
@@ -62,9 +60,9 @@ impl Route {
     ///
     /// This route is a worst match for all addresses so that it can be used as a sink, for
     /// example.
-    pub fn new_ipv4_gateway(gateway: Ipv4Address) -> Route {
+    pub fn new_ipv4_gateway(gateway: v4::Address) -> Route {
         Route {
-            net: IpCidr::new(IpAddress::v4(0, 0, 0, 0), 0).subnet(),
+            net: Cidr::new(Address::v4(0, 0, 0, 0), 0).subnet(),
             next_hop: gateway.into(),
             expires_at: Expiration::Never,
         }
@@ -74,9 +72,9 @@ impl Route {
     ///
     /// This route is a worst match for all addresses so that it can be used as a sink, for
     /// example.
-    pub fn new_ipv6_gateway(gateway: Ipv6Address) -> Route {
+    pub fn new_ipv6_gateway(gateway: v6::Address) -> Route {
         Route {
-            net: IpCidr::new(IpAddress::v6(0, 0, 0, 0, 0, 0, 0, 0), 0).subnet(),
+            net: Cidr::new(Address::v6(0, 0, 0, 0, 0, 0, 0, 0), 0).subnet(),
             next_hop: gateway.into(),
             expires_at: Expiration::Never,
         }
@@ -148,8 +146,8 @@ impl<'a> Routes<'a> {
     ///
     /// The timestamp ensures that only valid entries are used. If multiple matching routes are
     /// found then the one with the shortest subnet prefix is preferred.
-    pub fn lookup(&self, addr: IpAddress, timestamp: Instant)
-        -> Option<IpAddress>
+    pub fn lookup(&self, addr: Address, timestamp: Instant)
+        -> Option<Address>
     {
         assert!(addr.is_unicast());
 
@@ -182,8 +180,7 @@ mod test {
     use super::*;
 
     mod mock {
-        use super::super::*;
-        use crate::wire::Ipv6Cidr;
+        use crate::wire::ip::v6::{Address as Ipv6Address, Cidr as Ipv6Cidr};
 
         pub(crate) const ADDR_1A: Ipv6Address = Ipv6Address(
                 [0xfe, 0x80, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 1]);

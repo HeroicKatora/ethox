@@ -16,7 +16,7 @@ use core::convert::TryFrom;
 use ethox::layer::{ip, tcp, udp};
 use ethox::managed::{List, Map, SlotMap};
 use ethox::time::Instant;
-use ethox::wire::{IpProtocol, PayloadMut, TcpSeqNumber};
+use ethox::wire::{ip::Protocol, PayloadMut, tcp::SeqNumber};
 use super::config::Client;
 
 pub struct Iperf3 {
@@ -360,12 +360,12 @@ impl IperfSend {
 impl<P: PayloadMut> ip::Recv<P> for Iperf3 {
     fn receive(&mut self, packet: ip::InPacket<P>) {
         match packet.packet.repr().protocol() {
-            IpProtocol::Tcp => {
+            Protocol::Tcp => {
                 self.receive_control(packet);
             },
             // We want to receive a single packet on udp: When creating streams we get one from the
             // server. I don't even know yet if its content is important.
-            IpProtocol::Udp if self.state == State::CreateStreams => {
+            Protocol::Udp if self.state == State::CreateStreams => {
                 self.receive_stream(packet);
             },
             _ => (),
@@ -392,11 +392,11 @@ impl tcp::SendBuf for IperfSend {
         self.from.available()
     }
 
-    fn fill(&mut self, buf: &mut [u8], begin: TcpSeqNumber) {
+    fn fill(&mut self, buf: &mut [u8], begin: SeqNumber) {
         self.from.fill(buf, begin)
     }
 
-    fn ack(&mut self, begin: TcpSeqNumber) {
+    fn ack(&mut self, begin: SeqNumber) {
         self.from.ack(begin)
     }
 }
@@ -406,7 +406,7 @@ impl tcp::RecvBuf for IperfRecv {
         self.into.receive(buf, segment)
     }
 
-    fn ack(&mut self) -> TcpSeqNumber {
+    fn ack(&mut self) -> SeqNumber {
         self.into.ack()
     }
 

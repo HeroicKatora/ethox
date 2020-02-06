@@ -5,7 +5,7 @@ use core::ops::Deref;
 
 use crate::managed::Ordered;
 use crate::time::{Duration, Expiration, Instant};
-use crate::wire::{EthernetAddress, IpAddress};
+use crate::wire::{ethernet, ip};
 
 /// A cached neighbor.
 ///
@@ -15,7 +15,7 @@ use crate::wire::{EthernetAddress, IpAddress};
 /// solicitation requests.
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Neighbor {
-    protocol_addr: IpAddress,
+    protocol_addr: ip::Address,
     hardware_addr: Mapping,
     expires_at:    Expiration,
 }
@@ -24,7 +24,7 @@ pub struct Neighbor {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Answer {
     /// The neighbor address is in the cache and not expired.
-    Found(EthernetAddress),
+    Found(ethernet::Address),
     /// The neighbor address is not in the cache, or has expired.
     NotFound,
     /// The neighbor address is not in the cache, or has expired,
@@ -42,7 +42,7 @@ pub enum Answer {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Mapping {
     /// An address is present.
-    Address(EthernetAddress),
+    Address(ethernet::Address),
 
     /// We don't have a mapping but want to have one.
     LookingFor,
@@ -157,7 +157,7 @@ impl<'a> Cache<'a> {
     /// Provide the current timestamp or `None` to disable expiration.
     pub fn fill_looking(
         &mut self,
-        protocol_addr: IpAddress,
+        protocol_addr: ip::Address,
         timestamp: Option<Instant>,
     ) -> Result<(), Error> {
         self.update_or_insert(protocol_addr, Mapping::LookingFor, timestamp)
@@ -168,7 +168,7 @@ impl<'a> Cache<'a> {
     /// This blocks updates to `LookingFor` from occurring until the timeout.
     pub fn requesting(
         &mut self,
-        protocol_addr: IpAddress,
+        protocol_addr: ip::Address,
         timestamp: Instant,
     ) -> Result<(), Error> {
         self.update_or_insert(protocol_addr, Mapping::Requesting, Some(timestamp))
@@ -179,8 +179,8 @@ impl<'a> Cache<'a> {
     /// Provide the current timestamp or `None` to disable expiration.
     pub fn fill(
         &mut self,
-        protocol_addr: IpAddress,
-        hardware_addr: EthernetAddress,
+        protocol_addr: ip::Address,
+        hardware_addr: ethernet::Address,
         timestamp: Option<Instant>,
     ) -> Result<(), Error> {
         self.update_or_insert(protocol_addr, Mapping::Address(hardware_addr), timestamp)
@@ -191,7 +191,7 @@ impl<'a> Cache<'a> {
     /// Provide the current timestamp or `None` to disable expiration.
     fn update_or_insert(
         &mut self,
-        protocol_addr: IpAddress,
+        protocol_addr: ip::Address,
         hardware_addr: Mapping,
         timestamp: Option<Instant>,
     ) -> Result<(), Error> {
@@ -272,9 +272,9 @@ impl Table {
     /// currently rate limited. If this *is* required, use `lookup` instead.
     pub fn lookup_pure(
         &self,
-        protocol_addr: IpAddress,
+        protocol_addr: ip::Address,
         timestamp: Instant
-    ) -> Option<EthernetAddress> {
+    ) -> Option<ethernet::Address> {
         match self.lookup(protocol_addr, timestamp) {
             Some(Mapping::Address(addr)) => Some(addr),
             _ => None,
@@ -288,11 +288,11 @@ impl Table {
     /// information is desired, use `lookup_pure` instead.
     pub fn lookup(
         &self,
-        protocol_addr: IpAddress,
+        protocol_addr: ip::Address,
         timestamp: Instant
     ) -> Option<Mapping> {
         if protocol_addr.is_broadcast() {
-            return Some(Mapping::Address(EthernetAddress::BROADCAST))
+            return Some(Mapping::Address(ethernet::Address::BROADCAST))
         }
 
         let existing = self
@@ -317,12 +317,12 @@ impl Table {
 
 impl Neighbor {
     /// Get the protocol address stored in this entry.
-    pub fn protocol_addr(&self) -> IpAddress {
+    pub fn protocol_addr(&self) -> ip::Address {
         self.protocol_addr
     }
 
     /// Get the physical address this protocol address is mapped to.
-    pub fn hardware_addr(&self) -> Option<EthernetAddress> {
+    pub fn hardware_addr(&self) -> Option<ethernet::Address> {
         match self.hardware_addr {
             Mapping::Address(addr) => Some(addr),
             Mapping::LookingFor => None,
@@ -380,12 +380,20 @@ impl Iterator for Missing<'_> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::wire::ip::test::{MOCK_IP_ADDR_1, MOCK_IP_ADDR_2, MOCK_IP_ADDR_3, MOCK_IP_ADDR_4};
 
-    const HADDR_A: EthernetAddress = EthernetAddress([0, 0, 0, 0, 0, 1]);
-    const HADDR_B: EthernetAddress = EthernetAddress([0, 0, 0, 0, 0, 2]);
-    const HADDR_C: EthernetAddress = EthernetAddress([0, 0, 0, 0, 0, 3]);
-    const HADDR_D: EthernetAddress = EthernetAddress([0, 0, 0, 0, 0, 4]);
+    pub(crate) const MOCK_IP_ADDR_1: ip::Address = ip::Address::Ipv6(ip::v6::Address(
+        [0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]));
+    pub(crate) const MOCK_IP_ADDR_2: ip::Address = ip::Address::Ipv6(ip::v6::Address(
+        [0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2]));
+    pub(crate) const MOCK_IP_ADDR_3: ip::Address = ip::Address::Ipv6(ip::v6::Address(
+        [0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3]));
+    pub(crate) const MOCK_IP_ADDR_4: ip::Address = ip::Address::Ipv6(ip::v6::Address(
+        [0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4]));
+
+    const HADDR_A: ethernet::Address = ethernet::Address([0, 0, 0, 0, 0, 1]);
+    const HADDR_B: ethernet::Address = ethernet::Address([0, 0, 0, 0, 0, 2]);
+    const HADDR_C: ethernet::Address = ethernet::Address([0, 0, 0, 0, 0, 3]);
+    const HADDR_D: ethernet::Address = ethernet::Address([0, 0, 0, 0, 0, 4]);
 
     #[test]
     fn fill() {

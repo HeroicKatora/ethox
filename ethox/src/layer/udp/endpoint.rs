@@ -1,6 +1,6 @@
-use crate::layer::{ip, FnHandler};
+use crate::layer::{self, FnHandler};
 use crate::managed::Slice;
-use crate::wire::{IpProtocol, Payload, PayloadMut, UdpPacket};
+use crate::wire::{ip as ip, udp, Payload, PayloadMut};
 
 use super::{Recv, Send};
 use super::packet::{Controller, Packet, RawPacket};
@@ -103,18 +103,18 @@ impl<'a> Endpoint<'a> {
     }
 }
 
-impl<P, H> ip::Recv<P> for Receiver<'_, '_, H>
+impl<P, H> layer::ip::Recv<P> for Receiver<'_, '_, H>
 where
     P: Payload,
     H: Recv<P>,
 {
-    fn receive(&mut self, ip::InPacket { control, packet }: ip::InPacket<P>) {
+    fn receive(&mut self, layer::ip::InPacket { control, packet }: layer::ip::InPacket<P>) {
         let capabilities = control.info().capabilities();
         let checksum = capabilities.udp().rx_checksum(packet.repr());
 
         let packet = match packet.repr().protocol() {
-            IpProtocol::Udp => {
-                match UdpPacket::new_checked(packet, checksum) {
+            ip::Protocol::Udp => {
+                match udp::Packet::new_checked(packet, checksum) {
                     Ok(packet) => packet,
                     Err(_) => return,
                 }
@@ -134,13 +134,13 @@ where
     }
 }
 
-impl<P, H> ip::Send<P> for Sender<'_, '_, H>
+impl<P, H> layer::ip::Send<P> for Sender<'_, '_, H>
 where
     P: Payload + PayloadMut,
     H: Send<P>,
 {
-    fn send<'a>(&mut self, packet: ip::RawPacket<'a, P>) {
-        let ip::RawPacket { control, payload } = packet;
+    fn send<'a>(&mut self, packet: layer::ip::RawPacket<'a, P>) {
+        let layer::ip::RawPacket { control, payload } = packet;
         let control = Controller { inner: control };
         let packet = RawPacket { control, payload };
 

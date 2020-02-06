@@ -6,7 +6,7 @@ use core::borrow::{Borrow, BorrowMut};
 use core::convert::TryFrom;
 
 use crate::alloc::vec::Vec;
-use crate::wire::TcpSeqNumber;
+use crate::wire::tcp::SeqNumber;
 use crate::storage::assembler::{Assembler, Contig};
 
 use super::{AvailableBytes, ReceivedSegment, RecvBuf, SendBuf};
@@ -29,7 +29,7 @@ pub struct Empty {
 /// Use the `Default` trait to instantiate it.
 #[derive(Default)]
 pub struct Sink {
-    highest: Option<TcpSeqNumber>,
+    highest: Option<SeqNumber>,
 }
 
 /// Sender with buffered data.
@@ -43,7 +43,7 @@ pub struct SendFrom<B> {
     /// Indicate that all data has been put into the buffer.
     fin: bool,
     /// The tcp sequence number corresponding to the `consumed` index.
-    at: Option<TcpSeqNumber>,
+    at: Option<SeqNumber>,
 }
 
 /// A receiver with a single fixed buffer.
@@ -51,7 +51,7 @@ pub struct RecvInto<B> {
     /// Buffer of bytes.
     buffer: B,
     /// The highest fully complete sequence number.
-    complete: Option<TcpSeqNumber>,
+    complete: Option<SeqNumber>,
     /// The index corresponding to the highest sequence number.
     mark: usize,
     /// Assembler since we can easily buffer.
@@ -333,11 +333,11 @@ impl SendBuf for Empty {
         }
     }
 
-    fn fill(&mut self, buf: &mut [u8], _: TcpSeqNumber) {
+    fn fill(&mut self, buf: &mut [u8], _: SeqNumber) {
         assert_eq!(buf.len(), 0, "Called empty send buffer to fill data");
     }
 
-    fn ack(&mut self, _: TcpSeqNumber) {
+    fn ack(&mut self, _: SeqNumber) {
         // Nothing todo, we don't track the number.
     }
 }
@@ -351,7 +351,7 @@ impl RecvBuf for Sink {
         }
     }
 
-    fn ack(&mut self) -> TcpSeqNumber {
+    fn ack(&mut self) -> SeqNumber {
         self.highest.expect("Must not be called before any isn indication")
     }
 
@@ -368,7 +368,7 @@ impl<B: Borrow<[u8]>> SendBuf for SendFrom<B> {
         }
     }
 
-    fn fill(&mut self, buf: &mut [u8], begin: TcpSeqNumber) {
+    fn fill(&mut self, buf: &mut [u8], begin: SeqNumber) {
         let consumed_at = self.at.expect("Fill must not be called before isn indication");
         let data = &self.data.borrow()[self.consumed..];
 
@@ -378,7 +378,7 @@ impl<B: Borrow<[u8]>> SendBuf for SendFrom<B> {
         buf.copy_from_slice(&data[start..end])
     }
 
-    fn ack(&mut self, ack: TcpSeqNumber) {
+    fn ack(&mut self, ack: SeqNumber) {
         let previous = *self.at.get_or_insert(ack);
         self.consumed += ack - previous;
         self.at = Some(ack);
@@ -422,7 +422,7 @@ impl<B: BorrowMut<[u8]>> RecvBuf for RecvInto<B> {
         *begin += usize::from(new_data == segment.data_len && segment.fin);
     }
 
-    fn ack(&mut self) -> TcpSeqNumber {
+    fn ack(&mut self) -> SeqNumber {
         self.complete.expect("Must not be called before any isn indication")
     }
 

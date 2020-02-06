@@ -8,7 +8,7 @@ easily human readable packet listings.
 A packet can be formatted using the `PrettyPrinter` wrapper:
 
 ```rust
-use ethox::wire::*;
+use ethox::wire::{ethernet, PrettyPrinter};
 let buffer = vec![
     // Ethernet II
     0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
@@ -25,7 +25,7 @@ let buffer = vec![
     0x12, 0x34, 0xab, 0xcd,
     0xaa, 0x00, 0x00, 0xff
 ];
-print!("{}", PrettyPrinter::<ethernet_frame>::new("", &buffer));
+print!("{}", PrettyPrinter::<ethernet::frame>::new("", &buffer));
 ```
 */
 

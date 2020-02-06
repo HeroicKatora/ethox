@@ -1,12 +1,12 @@
 use byteorder::{ByteOrder, NetworkEndian};
 use core::{fmt, ops};
 
-use super::Payload;
-use super::{Error, Result};
+use crate::wire::{Error, Result, Payload};
+use crate::wire::pretty_print::{PrettyIndent, PrettyPrint};
 
-pub(crate) use super::EthernetProtocol as Protocol;
-pub(crate) use super::EthernetAddress as Address;
-pub(crate) use super::Ipv4Address as IpAddress;
+pub(crate) use crate::wire::ethernet::EtherType as Protocol;
+pub(crate) use crate::wire::ethernet::Address as Address;
+pub(crate) use crate::wire::ip::v4::Address as IpAddress;
 
 enum_with_unknown! {
     /// ARP hardware type.
@@ -310,18 +310,16 @@ impl<T: Payload> AsRef<[u8]> for Packet<T> {
     }
 }
 
-use super::{EthernetAddress, Ipv4Address};
-
 /// A high-level representation of an Address Resolution Protocol packet.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Repr {
     /// An Ethernet and IPv4 Address Resolution Protocol packet.
     EthernetIpv4 {
         operation: Operation,
-        source_hardware_addr: EthernetAddress,
-        source_protocol_addr: Ipv4Address,
-        target_hardware_addr: EthernetAddress,
-        target_protocol_addr: Ipv4Address,
+        source_hardware_addr: Address,
+        source_protocol_addr: IpAddress,
+        target_hardware_addr: Address,
+        target_protocol_addr: IpAddress,
     },
     #[doc(hidden)]
     __Nonexhaustive,
@@ -445,8 +443,6 @@ impl fmt::Display for Repr {
     }
 }
 
-use super::pretty_print::{PrettyIndent, PrettyPrint};
-
 impl PrettyPrint for arp {
     fn pretty_print(
         buffer: &[u8],
@@ -487,14 +483,14 @@ mod test {
         assert_eq!(packet.operation(), Operation::Request);
         assert_eq!(
             packet.source_hardware_addr(),
-            EthernetAddress::from_bytes(&[0x11, 0x12, 0x13, 0x14, 0x15, 0x16])
+            Address::from_bytes(&[0x11, 0x12, 0x13, 0x14, 0x15, 0x16])
         );
-        assert_eq!(packet.source_protocol_addr(),  Ipv4Address::from_bytes(&[0x21, 0x22, 0x23, 0x24]));
+        assert_eq!(packet.source_protocol_addr(),  IpAddress::from_bytes(&[0x21, 0x22, 0x23, 0x24]));
         assert_eq!(
             packet.target_hardware_addr(),
-            EthernetAddress::from_bytes(&[0x31, 0x32, 0x33, 0x34, 0x35, 0x36])
+            Address::from_bytes(&[0x31, 0x32, 0x33, 0x34, 0x35, 0x36])
         );
-        assert_eq!(packet.target_protocol_addr(),  Ipv4Address::from_bytes(&[0x41, 0x42, 0x43, 0x44]));
+        assert_eq!(packet.target_protocol_addr(),  IpAddress::from_bytes(&[0x41, 0x42, 0x43, 0x44]));
     }
 
     #[test]
@@ -516,14 +512,14 @@ mod test {
     fn packet_repr() -> Repr {
         Repr::EthernetIpv4 {
             operation: Operation::Request,
-            source_hardware_addr: EthernetAddress::from_bytes(&[
+            source_hardware_addr: Address::from_bytes(&[
                 0x11, 0x12, 0x13, 0x14, 0x15, 0x16,
             ]),
-            source_protocol_addr: Ipv4Address::from_bytes(&[0x21, 0x22, 0x23, 0x24]),
-            target_hardware_addr: EthernetAddress::from_bytes(&[
+            source_protocol_addr: IpAddress::from_bytes(&[0x21, 0x22, 0x23, 0x24]),
+            target_hardware_addr: Address::from_bytes(&[
                 0x31, 0x32, 0x33, 0x34, 0x35, 0x36,
             ]),
-            target_protocol_addr: Ipv4Address::from_bytes(&[0x41, 0x42, 0x43, 0x44]),
+            target_protocol_addr: IpAddress::from_bytes(&[0x41, 0x42, 0x43, 0x44]),
         }
     }
 

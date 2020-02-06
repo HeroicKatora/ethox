@@ -1,5 +1,5 @@
-use crate::layer::{ip, FnHandler, Result};
-use crate::wire::{Error, Icmpv4Repr, Icmpv4Packet, IpProtocol, Payload, PayloadMut};
+use crate::layer::{self, FnHandler, Result};
+use crate::wire::{icmpv4, ip, Error, Payload, PayloadMut};
 
 use super::packet::{Controller, In, Raw};
 use super::{Recv, Send};
@@ -138,10 +138,10 @@ impl EndpointRef<'_> {
         -> Result<HandlingKind<'a, P>>
     {
         match packet.packet.repr() {
-            Icmpv4Repr::EchoRequest { .. } if self.inner.manual_echo => {
+            icmpv4::Repr::EchoRequest { .. } if self.inner.manual_echo => {
                 Ok(HandlingKind::ToUpperLayer(packet))
             },
-            Icmpv4Repr::EchoRequest { .. } => {
+            icmpv4::Repr::EchoRequest { .. } => {
                 if self.inner.deny_echo {
                     return Ok(HandlingKind::Internal)
                 }
@@ -157,21 +157,21 @@ impl EndpointRef<'_> {
     }
 }
 
-impl<P, H> ip::Recv<P> for Receiver<'_, H>
+impl<P, H> layer::ip::Recv<P> for Receiver<'_, H>
 where
     P: PayloadMut,
     H: Recv<P>,
 {
-    fn receive(&mut self, ip::InPacket { control, packet }: ip::InPacket<P>) {
+    fn receive(&mut self, layer::ip::InPacket { control, packet }: layer::ip::InPacket<P>) {
         let capabilities = control.info().capabilities();
 
         let icmp = match packet {
-            ip::IpPacket::V4(packet) => {
-                if packet.repr().protocol != IpProtocol::Icmp {
+            layer::ip::IpPacket::V4(packet) => {
+                if packet.repr().protocol != ip::Protocol::Icmp {
                     return;
                 }
 
-                match Icmpv4Packet::new_checked(packet, capabilities.icmpv4().rx_checksum()) {
+                match icmpv4::Packet::new_checked(packet, capabilities.icmpv4().rx_checksum()) {
                     Ok(packet) => packet,
                     Err(Error::Unsupported) => unimplemented!("Forward to upper layer"),
                     Err(_) => return,
@@ -199,13 +199,13 @@ where
     }
 }
 
-impl<P, T> ip::Send<P> for Sender<'_, T>
+impl<P, T> layer::ip::Send<P> for Sender<'_, T>
 where
     P: PayloadMut,
     T: Send<P>,
 {
-    fn send(&mut self, packet: ip::RawPacket<P>) {
-        let ip::RawPacket { control: mut eth_handle, payload } = packet;
+    fn send(&mut self, packet: layer::ip::RawPacket<P>) {
+        let layer::ip::RawPacket { control: mut eth_handle, payload } = packet;
 
         self.handler.send(Raw {
             control: Controller {

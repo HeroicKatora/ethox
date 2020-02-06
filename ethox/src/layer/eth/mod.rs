@@ -8,7 +8,7 @@
 //! [layer]: ../index.html
 use crate::wire::{Payload};
 #[cfg(feature = "std")]
-use crate::wire::{pretty_print::Formatter, PrettyPrinter, ethernet_frame};
+use crate::wire::{pretty_print::Formatter, PrettyPrinter, ethernet};
 
 mod endpoint;
 mod packet;
@@ -54,9 +54,9 @@ pub trait Send<P: Payload> {
 ///
 /// Available only on `std` because it prints to standard out.
 #[cfg(feature = "std")]
-impl<P: Payload> Recv<P> for Formatter<ethernet_frame> {
+impl<P: Payload> Recv<P> for Formatter<ethernet::frame> {
     fn receive(&mut self, frame: InPacket<P>) {
-        let printer = PrettyPrinter::<ethernet_frame>::print(&frame.frame);
+        let printer = PrettyPrinter::<ethernet::frame>::print(&frame.frame);
         eprintln!("{}", printer);
     }
 }

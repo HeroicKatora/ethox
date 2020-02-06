@@ -11,7 +11,7 @@
 //!     OS comparison in particular
 use crate::layer::ip;
 use crate::managed::{Map, SlotMap, slotmap::Key};
-use crate::wire::{IpAddress, TcpPacket, TcpSeqNumber};
+use crate::wire::{ip::Address, tcp::SeqNumber, tcp::Packet as TcpPacket};
 use crate::wire::PayloadMut;
 use crate::time::{Duration, Expiration, Instant};
 
@@ -45,12 +45,12 @@ pub struct FourTuple {
     /// This address is not necessarily accurate (or unicast) until a connection has been
     /// established. In particular, it is used also for the netmask of a passively opened
     /// port and then modified when an incoming SYN is accepted.
-    pub local: IpAddress,
+    pub local: Address,
     /// The address to which outgoing segments are sent.
     ///
     /// This is filled in for actively opened connections but contains the reserved all-zero
     /// address for a passively opened port until a connection attempt.
-    pub remote: IpAddress,
+    pub remote: Address,
     /// The local port of the connection.
     pub local_port: u16,
     /// The remote port of the connection.
@@ -210,14 +210,14 @@ impl Endpoint<'_> {
     ///
     /// The source address is chosen during the first send operation on the create connection.
     /// Returns the key to use to inspect or modify the connection state and parameters.
-    fn listen(&mut self, ip: IpAddress, port: u16)
+    fn listen(&mut self, ip: Address, port: u16)
         -> Option<SlotKey>
     {
         let key = FourTuple {
             local: ip,
             local_port: port,
             // Filled by the remote connection attempt.
-            remote: IpAddress::Unspecified,
+            remote: Address::Unspecified,
             remote_port: 0,
         };
 
@@ -275,12 +275,12 @@ impl Endpoint<'_> {
             flow_control: Flow {
                 congestion_window: 0,
                 ssthresh: u32::max_value(),
-                recover: TcpSeqNumber::default(),
+                recover: SeqNumber::default(),
             },
             receive_window: 0,
             sender_maximum_segment_size: 0,
             receiver_maximum_segment_size: 0,
-            last_ack_receive_offset: TcpSeqNumber::default(),
+            last_ack_receive_offset: SeqNumber::default(),
             ack_timer: Expiration::Never,
             ack_timeout: Duration::from_millis(500),
             retransmission_timer: Instant::from_millis(0),
@@ -289,26 +289,26 @@ impl Endpoint<'_> {
             selective_acknowledgements: false,
             duplicate_ack: 0,
             send: Send {
-                unacked: TcpSeqNumber::default(),
-                next: TcpSeqNumber::default(),
+                unacked: SeqNumber::default(),
+                next: SeqNumber::default(),
                 last_time: Instant::from_millis(0),
                 unsent: 0,
                 window: 0,
                 window_scale: 0,
-                initial_seq: TcpSeqNumber::default(),
+                initial_seq: SeqNumber::default(),
             },
             recv: Receive {
-                acked: TcpSeqNumber::default(),
-                next: TcpSeqNumber::default(),
+                acked: SeqNumber::default(),
+                next: SeqNumber::default(),
                 last_time: Instant::from_millis(0),
                 window: 0,
                 window_scale: 0,
-                initial_seq: TcpSeqNumber::default(),
+                initial_seq: SeqNumber::default(),
             },
         }
     }
 
-    fn initial_seq_num(&mut self, id: FourTuple, time: Instant) -> TcpSeqNumber {
+    fn initial_seq_num(&mut self, id: FourTuple, time: Instant) -> SeqNumber {
         self.isn_generator.get_isn(id, time)
     }
 }
@@ -386,7 +386,7 @@ impl<'a> Entry<'a> {
 
 impl EntryKey<'_> {
     /// Generate a new initial sequence number.
-    pub fn initial_seq_num(&self, time: Instant) -> TcpSeqNumber {
+    pub fn initial_seq_num(&self, time: Instant) -> SeqNumber {
         self.isn.get_isn(*self.key_in_slot, time)
     }
 
@@ -448,18 +448,18 @@ impl super::connection::Endpoint for Endpoint<'_> {
             Endpoint::entry_from_tuple(self, FourTuple {
                 local: tuple.local,
                 local_port: tuple.local_port,
-                remote: IpAddress::Unspecified,
+                remote: Address::Unspecified,
                 remote_port: 0,
             })
         }
     }
 
-    fn source_port(&mut self, _: IpAddress) -> Option<u16> {
+    fn source_port(&mut self, _: Address) -> Option<u16> {
         // FIXME: find a suitable source port....
         Some(80)
     }
 
-    fn listen(&mut self, ip: IpAddress, port: u16) -> Option<SlotKey> {
+    fn listen(&mut self, ip: Address, port: u16) -> Option<SlotKey> {
         Endpoint::listen(self, ip, port)
     }
 
@@ -467,7 +467,7 @@ impl super::connection::Endpoint for Endpoint<'_> {
         Endpoint::open(self, tuple)
     }
 
-    fn initial_seq_num(&mut self, id: FourTuple, time: Instant) -> TcpSeqNumber {
+    fn initial_seq_num(&mut self, id: FourTuple, time: Instant) -> SeqNumber {
         Endpoint::initial_seq_num(self, id, time)
     }
 }

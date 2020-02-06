@@ -1,8 +1,7 @@
 use core::fmt;
 
-use super::{Error, Result};
-use super::IpProtocol as Protocol;
-use super::Ipv6Address as Address;
+use crate::wire::{Error, Result};
+use crate::wire::ip::{Protocol, v6::Address};
 
 enum_with_unknown! {
     /// IPv6 Extension Routing Header Routing Type

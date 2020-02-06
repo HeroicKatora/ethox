@@ -3,14 +3,14 @@ use core::convert::TryFrom;
 use crate::nic::Info;
 use crate::layer::{Error, Result, ip};
 use crate::wire::{Payload, PayloadMut};
-use crate::wire::{IpAddress, IpProtocol, UdpChecksum, UdpPacket, UdpRepr, udp_packet};
+use crate::wire::{udp, ip::Address, ip::Protocol};
 
 /// An incoming UDP packet.
 pub struct Packet<'a, P: Payload> {
     /// A reference to the UDP endpoint state.
     pub control: Controller<'a>,
     /// The valid packet inside the buffer.
-    pub packet: UdpPacket<ip::IpPacket<'a, P>>,
+    pub packet: udp::Packet<ip::IpPacket<'a, P>>,
 }
 
 /// A buffer for an outgoing UDP packet.
@@ -42,15 +42,15 @@ pub struct Controller<'a> {
 /// ```
 /// use ethox::managed::Partial;
 /// use ethox::layer::{ip, udp, Result};
-/// use ethox::wire::IpAddress;
+/// use ethox::wire::ip::Address;
 ///
 /// const HELLO: &[u8] = b"Hello, world!";
 ///
 /// fn greet(raw: udp::RawPacket<Partial<&mut [u8]>>) -> Result<()> {
 ///     let init = udp::Init {
-///         source: ip::Source::Exact(IpAddress::v4(192, 168, 0, 20)),
+///         source: ip::Source::Exact(Address::v4(192, 168, 0, 20)),
 ///         src_port: 9400,
-///         dst_addr: IpAddress::v4(192, 168, 0, 1),
+///         dst_addr: Address::v4(192, 168, 0, 1),
 ///         dst_port: 43,
 ///         payload: HELLO.len(),
 ///     };
@@ -69,7 +69,7 @@ pub struct Init {
     /// The source port to use on the local machine.
     pub src_port: u16,
     /// The destination address of the packet.
-    pub dst_addr: IpAddress,
+    pub dst_addr: Address,
     /// The destination port of the packet.
     pub dst_port: u16,
     /// The length of the payload which is sent.
@@ -155,7 +155,7 @@ impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
         let lower_init = ip::Init {
             source: init.source,
             dst_addr: init.dst_addr,
-            protocol: IpProtocol::Udp,
+            protocol: Protocol::Udp,
             payload: packet_len,
         };
 
@@ -168,14 +168,14 @@ impl<'a, P: Payload + PayloadMut> RawPacket<'a, P> {
 
         Ok(Packet {
             control,
-            packet: UdpPacket::new_unchecked(packet, repr),
+            packet: udp::Packet::new_unchecked(packet, repr),
         })
     }
 }
 
 impl Init {
-    fn initialize(&self, payload: &mut impl PayloadMut) -> Result<UdpRepr> {
-        let repr = UdpRepr {
+    fn initialize(&self, payload: &mut impl PayloadMut) -> Result<udp::Repr> {
+        let repr = udp::Repr {
             src_port: self.src_port,
             dst_port: self.dst_port,
             // Can't overflow, already inited ip with that length.
@@ -184,9 +184,9 @@ impl Init {
         };
 
         // Assumes length was already dealt with.
-        let packet = udp_packet::new_unchecked_mut(
+        let packet = udp::packet::new_unchecked_mut(
             payload.payload_mut().as_mut_slice());
-        repr.emit(packet, UdpChecksum::Ignored);
+        repr.emit(packet, udp::Checksum::Ignored);
 
         Ok(repr)
     }

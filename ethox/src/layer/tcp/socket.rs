@@ -4,7 +4,7 @@
 //! layer below and these do not (that was not the end goal but some may be added in the future),
 //! but it tries to give a slightly more familiar interface.
 use super::{InPacket, RawPacket, Recv, RecvBuf, Send, SendBuf, SlotKey};
-use crate::wire::{IpAddress, PayloadMut};
+use crate::wire::{ip::Address, PayloadMut};
 
 /// A tcp handler for a client (actively opened connection).
 ///
@@ -32,7 +32,7 @@ pub struct Client<R, S> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum ClientState {
     Uninstantiated {
-        remote: IpAddress,
+        remote: Address,
         remote_port: u16,
     },
     InStack {
@@ -48,7 +48,7 @@ where
 {
     /// Create a client connecting to a remote on some automatically derived local address.
     pub fn new(
-        remote: IpAddress,
+        remote: Address,
         remote_port: u16,
         recv: R,
         send: S,

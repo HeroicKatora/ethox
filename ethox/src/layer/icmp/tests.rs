@@ -1,12 +1,12 @@
 use crate::managed::Slice;
 use crate::nic::{loopback::Loopback, Device};
 use crate::layer::{arp, eth, ip, icmp};
-use crate::wire::{EthernetAddress, Ipv4Address, IpCidr, PayloadMut};
+use crate::wire::{ethernet::Address, ip::Cidr, ip::v4, PayloadMut};
 
-const MAC_ADDR_HOST: EthernetAddress = EthernetAddress([0, 1, 2, 3, 4, 5]);
-const IP_ADDR_HOST: Ipv4Address = Ipv4Address::new(127, 0, 0, 1);
-const MAC_ADDR_OTHER: EthernetAddress = EthernetAddress([6, 5, 4, 3, 2, 1]);
-const IP_ADDR_OTHER: Ipv4Address = Ipv4Address::new(127, 0, 0, 2);
+const MAC_ADDR_HOST: Address = Address([0, 1, 2, 3, 4, 5]);
+const IP_ADDR_HOST: v4::Address = v4::Address::new(127, 0, 0, 1);
+const MAC_ADDR_OTHER: Address = Address([6, 5, 4, 3, 2, 1]);
+const IP_ADDR_OTHER: v4::Address = v4::Address::new(127, 0, 0, 2);
 
 static PING_BYTES: [u8; 50] =
     [   
@@ -34,7 +34,7 @@ fn answer_ping() {
         eth_cache
     };
     let mut ip = [ip::Route::unspecified(); 2];
-    let mut ip = ip::Endpoint::new(IpCidr::new(IP_ADDR_HOST.into(), 24),
+    let mut ip = ip::Endpoint::new(Cidr::new(IP_ADDR_HOST.into(), 24),
         // No routes necessary for local link.
         ip::Routes::new(&mut ip[..]),
         neighbors);
@@ -75,7 +75,7 @@ fn queue_ping(nic: &mut Loopback<Vec<u8>>) {
         eth_cache
     };
     let mut ip = ip::Endpoint::new(
-        IpCidr::new(IP_ADDR_OTHER.into(), 24),
+        Cidr::new(IP_ADDR_OTHER.into(), 24),
         ip::Routes::new(Slice::empty()),
         neighbors);
 

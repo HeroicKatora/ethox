@@ -73,23 +73,23 @@ To emit an IP packet header into an octet buffer, and then parse it back:
 ```rust
 #
 # {
-use ethox::wire::*;
-let repr = Ipv4Repr {
-    src_addr:    Ipv4Address::new(10, 0, 0, 1),
-    dst_addr:    Ipv4Address::new(10, 0, 0, 2),
-    protocol:    IpProtocol::Tcp,
+use ethox::wire::{ip::v4, Checksum, ip::Protocol};
+let repr = v4::Repr {
+    src_addr:    v4::Address::new(10, 0, 0, 1),
+    dst_addr:    v4::Address::new(10, 0, 0, 2),
+    protocol:    Protocol::Tcp,
     payload_len: 10,
     hop_limit:   64
 };
 let mut buffer = vec![0; repr.buffer_len() + repr.payload_len];
 { // emission
-    let packet = ipv4_packet::new_unchecked_mut(&mut buffer);
+    let packet = v4::packet::new_unchecked_mut(&mut buffer);
     repr.emit(packet, Checksum::Manual);
 }
 { // parsing
-    let packet = ipv4_packet::new_checked(&buffer)
+    let packet = v4::packet::new_checked(&buffer)
         .expect("truncated packet");
-    let parsed = Ipv4Repr::parse(packet, Checksum::Manual)
+    let parsed = v4::Repr::parse(packet, Checksum::Manual)
         .expect("malformed packet");
     assert_eq!(repr, parsed);
 }
@@ -136,26 +136,31 @@ mod field {
 
 pub mod pretty_print;
 
-mod ethernet;
+#[path = "."]
+mod raw {
+    pub(crate) mod ethernet;
+    pub(crate) mod arp;
+    pub(crate) mod ip;
+    pub(crate) mod ipv4;
+    pub(crate) mod ipv6;
+    pub(crate) mod ipv6option;
+    pub(crate) mod ipv6hopbyhop;
+    pub(crate) mod ipv6fragment;
+    pub(crate) mod ipv6routing;
+    pub(crate) mod icmpv4;
+    // mod icmpv6;
+    // mod icmp;
+    // #[cfg(feature = "proto-igmp")]
+    // mod igmp;
+    // mod ndisc;
+    // mod ndiscoption;
+    // mod mld;
+    pub(crate) mod udp;
+    pub(crate) mod tcp;
+}
+
+// mod ethernet;
 mod error;
-pub(crate) mod arp;
-pub(crate) mod ip;
-mod ipv4;
-mod ipv6;
-mod ipv6option;
-mod ipv6hopbyhop;
-mod ipv6fragment;
-mod ipv6routing;
-mod icmpv4;
-// mod icmpv6;
-// mod icmp;
-// #[cfg(feature = "proto-igmp")]
-// mod igmp;
-// mod ndisc;
-// mod ndiscoption;
-// mod mld;
-mod udp;
-mod tcp;
 // pub(crate) mod dhcpv4;
 
 #[path = "payload.rs"]
@@ -182,84 +187,109 @@ pub type PayloadResult<T> = core::result::Result<T, PayloadError>;
 
 pub use self::pretty_print::PrettyPrinter;
 
-// FIXME: All of these re-exports are pointless. A better way would be to put into each module the
-// non-prefixed names that are supposed to be public. Then one can access `wire::tcp::Packet` and
-// `wire::ethernet::Protocol` for example, or `use wire::tcp` instead of listing all single items.
-// The current way is againt the Rust philosophy and against usability.
+// Public re-exports with the wanted structure.
 
-pub use self::ethernet::{
-    ethernet as ethernet_frame,
-    EtherType as EthernetProtocol,
-    Address as EthernetAddress,
-    Frame as EthernetFrame,
-    Repr as EthernetRepr};
+pub use self::error::{Error, Result};
 
-pub use self::error::{
-    Error,
-    Result};
+pub mod ethernet {
+    pub use super::raw::ethernet::{
+        ethernet as frame,
+        EtherType,
+        Address,
+        Frame,
+        Repr,
+    };
+}
 
-pub use self::arp::{
-    arp as arp_packet,
-    Hardware as ArpHardware,
-    Operation as ArpOperation,
-    Packet as ArpPacket,
-    Repr as ArpRepr};
+pub mod arp {
+    pub use super::raw::arp::{
+        arp as packet,
+        Hardware,
+        Operation,
+        Packet,
+        Repr,
+    };
+}
 
-pub use self::ip::{
-    Version as IpVersion,
-    Protocol as IpProtocol,
-    Address as IpAddress,
-    Endpoint as IpEndpoint,
-    Repr as IpRepr,
-    Cidr as IpCidr,
-    Subnet as IpSubnet};
+pub mod ip {
+    pub use super::raw::ip::{
+        Version,
+        Protocol,
+        Address,
+        Endpoint,
+        Repr,
+        Cidr,
+        Subnet,
+    };
 
-pub use self::ipv4::{
-    ipv4 as ipv4_packet,
-    Address as Ipv4Address,
-    Packet as Ipv4Packet,
-    Repr as Ipv4Repr,
-    Cidr as Ipv4Cidr,
-    Subnet as Ipv4Subnet,
-    MIN_MTU as IPV4_MIN_MTU};
+    pub mod v4 {
+        pub use super::super::raw::ipv4::{
+            ipv4 as packet,
+            Address,
+            Packet,
+            Repr,
+            Cidr,
+            Subnet,
+            MIN_MTU,
+        };
+    }
 
-pub use self::ipv6::{
-    InterfaceId, // Not only for Ipv6.
-    ipv6 as ipv6_packet,
-    Address as Ipv6Address,
-    Packet as Ipv6Packet,
-    Repr as Ipv6Repr,
-    Cidr as Ipv6Cidr,
-    Subnet as Ipv6Subnet,
-    MIN_MTU as IPV6_MIN_MTU};
+    pub mod v6 {
+        pub use super::super::raw::ipv6::{
+            ipv6 as packet,
+            Address,
+            InterfaceId,
+            Packet,
+            Repr,
+            Cidr,
+            Subnet,
+            MIN_MTU,
+        };
 
-pub use self::ipv6option::{
-    Ipv6Option,
-    Repr as Ipv6OptionRepr,
-    Type as Ipv6OptionType,
-    FailureType as Ipv6OptionFailureType};
+        pub mod options {
+            pub use super::super::super::raw::ipv6option::{
+                Ipv6Option as Option,
+                Repr,
+                Type,
+                FailureType,
+            };
+        }
 
-pub use self::ipv6hopbyhop::{
-    Header as Ipv6HopByHopHeader,
-    Repr as Ipv6HopByHopRepr};
+        pub mod hopbyhop {
+            pub use super::super::super::raw::ipv6hopbyhop::{
+                Header,
+                Repr,
+            };
+        }
 
-pub use self::ipv6fragment::{
-    Header as Ipv6FragmentHeader,
-    Repr as Ipv6FragmentRepr};
+        pub mod fragment {
+            pub use super::super::super::raw::ipv6fragment::{
+                Header,
+                Repr,
+            };
+        }
 
-pub use self::ipv6routing::{
-    Header as Ipv6RoutingHeader,
-    Repr as Ipv6RoutingRepr};
+        pub mod routing {
+            pub use super::super::super::raw::ipv6routing::{
+                Header,
+                Repr,
+            };
+        }
+    }
+}
 
-pub use self::icmpv4::{
-    icmpv4 as icmpv4_packet,
-    Message as Icmpv4Message,
-    DstUnreachable as Icmpv4DstUnreachable,
-    Redirect as Icmpv4Redirect,
-    TimeExceeded as Icmpv4TimeExceeded,
-    ParamProblem as Icmpv4ParamProblem,
-    Packet as Icmpv4Packet,
-    Repr as Icmpv4Repr};
+pub mod icmpv4 {
+    pub use super::raw::icmpv4::{
+        icmpv4 as packet,
+        Packet,
+        Repr,
+        Message,
+        DstUnreachable,
+        Redirect,
+        TimeExceeded,
+        ParamProblem,
+    };
+}
 
 /*
 #[cfg(feature = "proto-igmp")]
@@ -300,19 +330,25 @@ pub use self::mld::{
     Repr as MldRepr};
 */
 
-pub use self::udp::{
-    udp as udp_packet,
-    Checksum as UdpChecksum,
-    Packet as UdpPacket,
-    Repr as UdpRepr};
+pub mod udp {
+    pub use super::raw::udp::{
+        udp as packet,
+        Packet,
+        Repr,
+        Checksum,
+    };
+}
 
-pub use self::tcp::{
-    Checksum as TcpChecksum,
-    SeqNumber as TcpSeqNumber,
-    Packet as TcpPacket,
-    TcpOption,
-    Repr as TcpRepr,
-    Flags as TcpFlags};
+pub mod tcp {
+    pub use super::raw::tcp::{
+        Packet,
+        Repr,
+        Checksum,
+        SeqNumber,
+        TcpOption as Option,
+        Flags,
+    };
+}
 
 #[cfg(feature = "proto-dhcpv4")]
 pub use self::dhcpv4::{

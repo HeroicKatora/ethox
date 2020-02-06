@@ -1,8 +1,9 @@
 use core::{i32, ops, cmp, fmt};
 use byteorder::{ByteOrder, NetworkEndian};
 
-use super::{Error, IpProtocol, IpAddress, Result};
-use super::{Payload, PayloadMut};
+use crate::wire::{ip, Error, Result, Payload, PayloadMut};
+use crate::wire::pretty_print::{PrettyPrint, PrettyIndent};
+
 use super::ip::checksum;
 
 /// A TCP sequence number.
@@ -281,12 +282,12 @@ impl<T: Payload> Packet<T> {
     ///
     /// # Fuzzing
     /// This function always returns `true` when fuzzing.
-    pub fn verify_checksum(&self, src_addr: IpAddress, dst_addr: IpAddress) -> bool {
+    pub fn verify_checksum(&self, src_addr: ip::Address, dst_addr: ip::Address) -> bool {
         if cfg!(fuzzing) { return true }
 
         let data = self.buffer.payload().as_bytes();
         checksum::combine(&[
-            checksum::pseudo_header(&src_addr, &dst_addr, IpProtocol::Tcp,
+            checksum::pseudo_header(&src_addr, &dst_addr, ip::Protocol::Tcp,
                                     data.len() as u32),
             checksum::data(data)
         ]) == !0
@@ -400,12 +401,12 @@ impl<T: PayloadMut> Packet<T> {
     /// # Panics
     /// This function panics unless `src_addr` and `dst_addr` belong to the same family,
     /// and that family is IPv4 or IPv6.
-    pub fn fill_checksum(&mut self, src_addr: IpAddress, dst_addr: IpAddress) {
+    pub fn fill_checksum(&mut self, src_addr: ip::Address, dst_addr: ip::Address) {
         self.set_checksum(0);
         let checksum = {
             let data = self.buffer.payload_mut().as_bytes_mut();
             !checksum::combine(&[
-                checksum::pseudo_header(&src_addr, &dst_addr, IpProtocol::Tcp,
+                checksum::pseudo_header(&src_addr, &dst_addr, ip::Protocol::Tcp,
                                         data.len() as u32),
                 checksum::data(data)
             ])
@@ -823,9 +824,9 @@ pub enum Checksum {
     /// Note that the ip addresses must both have the same kind, IPv4 or IPv6.
     Manual {
         /// The ip source address.
-        src_addr: IpAddress,
+        src_addr: ip::Address,
         /// The ip destination address.
-        dst_addr: IpAddress,
+        dst_addr: ip::Address,
     },
 
     /// Never inspect the checksum.
@@ -1103,8 +1104,6 @@ impl fmt::Display for Flags {
     }
 }
 
-use super::pretty_print::{PrettyPrint, PrettyIndent};
-
 impl<T: Payload> PrettyPrint for Packet<T> {
     fn pretty_print(buffer: &[u8], f: &mut fmt::Formatter,
                     indent: &mut PrettyIndent) -> fmt::Result {
@@ -1117,7 +1116,7 @@ impl<T: Payload> PrettyPrint for Packet<T> {
 
 #[cfg(test)]
 mod test {
-    use crate::wire::Ipv4Address;
+    use crate::wire::ip::v4::Address as Ipv4Address;
     use super::*;
 
     const SRC_ADDR: Ipv4Address = Ipv4Address([192, 168, 1, 1]);

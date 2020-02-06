@@ -1,7 +1,6 @@
 use crate::nic;
 use crate::layer::{Error, Result};
-use crate::wire::{Payload, PayloadResult, PayloadMut, PayloadMutExt, Reframe, ReframePayload, payload};
-use crate::wire::{EthernetAddress, EthernetFrame, EthernetProtocol, EthernetRepr, ethernet_frame};
+use crate::wire::{ethernet, Payload, PayloadResult, PayloadMut, PayloadMutExt, Reframe, ReframePayload, payload};
 
 /// An incoming packet.
 ///
@@ -10,7 +9,7 @@ pub struct In<'a, P: Payload> {
     /// A reference to the ethernet endpoint state.
     pub control: Controller<'a>,
     /// The valid ethernet frame inside the buffer.
-    pub frame: EthernetFrame<&'a mut P>,
+    pub frame: ethernet::Frame<&'a mut P>,
 }
 
 /// An outgoing packet as prepared by the ethernet layer.
@@ -20,7 +19,7 @@ pub struct In<'a, P: Payload> {
 #[must_use = "You need to call `send` explicitely on an OutPacket, otherwise no packet is sent."]
 pub struct Out<'a, P: Payload> {
     control: Controller<'a>,
-    frame: EthernetFrame<&'a mut P>,
+    frame: ethernet::Frame<&'a mut P>,
 }
 
 /// A buffer into which a packet can be placed.
@@ -49,14 +48,14 @@ pub struct Init {
     /// responses are to be received. But in theory you are free to use other addresses, for
     /// example to emulate a very temporary endpoint or use manual addresses for less standard
     /// compliant networking.
-    pub src_addr: EthernetAddress,
+    pub src_addr: ethernet::Address,
     /// The destination address for the frame.
     ///
     /// Can be broadcast, multi-cast, unicast or some application specific addressing magic within
     /// an organizational reserved block.
-    pub dst_addr: EthernetAddress,
+    pub dst_addr: ethernet::Address,
     /// The protocol of the next layer, contained in the frame payload.
-    pub ethertype: EthernetProtocol,
+    pub ethertype: ethernet::EtherType,
     /// The length in bytes that the payload requires.
     pub payload: usize,
 }
@@ -64,7 +63,7 @@ pub struct Init {
 /// The interface to the endpoint.
 pub(crate) trait Endpoint{
     /// Get the default source address.
-    fn src_addr(&mut self) -> EthernetAddress;
+    fn src_addr(&mut self) -> ethernet::Address;
 }
 
 impl<'a> Controller<'a> {
@@ -94,7 +93,7 @@ impl<'a> Controller<'a> {
     }
 
     /// Get the configured (source) address of the ethernet endpoint.
-    pub fn src_addr(&mut self) -> EthernetAddress {
+    pub fn src_addr(&mut self) -> ethernet::Address {
         self.endpoint.src_addr()
     }
 
@@ -125,8 +124,8 @@ impl<'a, P: PayloadMut> In<'a, P> {
     /// representations is regarded as the payload of the packet.
     pub fn reinit(self, init: Init) -> Result<Out<'a, P>> {
         let In { control, frame } = self;
-        let new_len = ethernet_frame::buffer_len(init.payload);
-        let new_repr = EthernetRepr {
+        let new_len = ethernet::frame::buffer_len(init.payload);
+        let new_repr = ethernet::Repr {
             src_addr: init.src_addr,
             dst_addr: init.dst_addr,
             ethertype: init.ethertype,
@@ -149,8 +148,8 @@ impl<'a, P: PayloadMut> In<'a, P> {
         })?;
 
         // Now emit the header again:
-        new_repr.emit(ethernet_frame::new_unchecked_mut(raw_buffer.payload_mut()));
-        let frame = EthernetFrame::new_unchecked(raw_buffer, new_repr);
+        new_repr.emit(ethernet::frame::new_unchecked_mut(raw_buffer.payload_mut()));
+        let frame = ethernet::Frame::new_unchecked(raw_buffer, new_repr);
 
         Ok(Out {
             control,
@@ -167,7 +166,7 @@ impl<'a, P: Payload> Out<'a, P> {
     /// nothing will cause unsafety but panics or dropped packets are to be expected.
     pub fn new_unchecked(
         control: Controller<'a>,
-        frame: EthernetFrame<&'a mut P>) -> Self
+        frame: ethernet::Frame<&'a mut P>) -> Self
     {
         Out{ control, frame, }
     }
@@ -210,7 +209,7 @@ impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
         let repr = init.initialize(&mut payload)?;
         Ok(Out {
             control: self.control,
-            frame: EthernetFrame::new_unchecked(payload, repr),
+            frame: ethernet::Frame::new_unchecked(payload, repr),
         })
     }
 }
@@ -236,16 +235,16 @@ impl<P: PayloadMut> PayloadMut for Out<'_, P> {
 }
 
 impl Init {
-    fn initialize<P: PayloadMut>(&self, payload: &mut P) -> Result<EthernetRepr> {
-        let real_len = ethernet_frame::buffer_len(self.payload);
-        let repr = EthernetRepr {
+    fn initialize<P: PayloadMut>(&self, payload: &mut P) -> Result<ethernet::Repr> {
+        let real_len = ethernet::frame::buffer_len(self.payload);
+        let repr = ethernet::Repr {
             src_addr: self.src_addr,
             dst_addr: self.dst_addr,
             ethertype: self.ethertype,
         };
 
         payload.resize(real_len)?;
-        let ethernet = ethernet_frame::new_unchecked_mut(payload.payload_mut());
+        let ethernet = ethernet::frame::new_unchecked_mut(payload.payload_mut());
         ethernet.check_len()
             .map_err(|_| Error::BadSize)?;
         repr.emit(ethernet);

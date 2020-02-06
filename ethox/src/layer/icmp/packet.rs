@@ -1,8 +1,7 @@
 use crate::nic::Info;
 use crate::layer::{Error, Result, ip};
-use crate::wire::{Payload, PayloadMut};
-use crate::wire::{Checksum, IpAddress, IpProtocol};
-use crate::wire::{Icmpv4Packet, Icmpv4Repr, icmpv4_packet};
+use crate::wire::{icmpv4, Checksum, Payload, PayloadMut};
+use crate::wire::ip::{Address as IpAddress, Protocol as IpProtocol};
 
 /// An incoming packet.
 ///
@@ -13,7 +12,7 @@ pub struct In<'a, P: Payload> {
     /// A reference to the ICMP endpoint state.
     pub control: Controller<'a>,
     /// The valid packet inside the buffer.
-    pub packet: Icmpv4Packet<ip::V4Packet<'a, P>>,
+    pub packet: icmpv4::Packet<ip::V4Packet<'a, P>>,
 }
 
 /// An outgoing packet as prepared by the icmp layer.
@@ -23,7 +22,7 @@ pub struct In<'a, P: Payload> {
 #[must_use = "You need to call `send` explicitely on an OutPacket, otherwise no packet is sent."]
 pub struct Out<'a, P: Payload> {
     control: Controller<'a>,
-    packet: Icmpv4Packet<ip::V4Packet<'a, P>>,
+    packet: icmpv4::Packet<ip::V4Packet<'a, P>>,
 }
 
 /// A buffer into which a packet can be placed.
@@ -101,8 +100,8 @@ impl<'a, P: PayloadMut> In<'a, P> {
     /// Try to answer an icmp ping request in-place.
     pub fn answer(self) -> Result<Out<'a, P>> {
         let answer = match self.packet.repr() {
-            Icmpv4Repr::EchoRequest { ident, seq_no, payload } => {
-                Icmpv4Repr::EchoReply { ident, seq_no, payload }
+            icmpv4::Repr::EchoRequest { ident, seq_no, payload } => {
+                icmpv4::Repr::EchoReply { ident, seq_no, payload }
             },
             _ => return Err(Error::Illegal),
         };
@@ -126,7 +125,7 @@ impl<'a, P: PayloadMut> In<'a, P> {
         // Temporarily take the packet apart for inner repr.
         let ip::InPacket { control, mut packet } = ip_out.into_incoming();
         answer.emit(
-            icmpv4_packet::new_unchecked_mut(packet.payload_mut().as_mut_slice()),
+            icmpv4::packet::new_unchecked_mut(packet.payload_mut().as_mut_slice()),
             Checksum::Manual);
         let packet = match packet {
             ip::IpPacket::V4(packet) => packet,
@@ -135,7 +134,7 @@ impl<'a, P: PayloadMut> In<'a, P> {
 
         Ok(Out {
             control: Controller { inner: control },
-            packet: Icmpv4Packet::new_unchecked(packet, answer),
+            packet: icmpv4::Packet::new_unchecked(packet, answer),
         })
     }
 }
@@ -188,27 +187,27 @@ impl<'a, P: Payload + PayloadMut> Raw<'a, P> {
 
         Ok(Out {
             control: Controller { inner: control },
-            packet: Icmpv4Packet::new_unchecked(packet, repr),
+            packet: icmpv4::Packet::new_unchecked(packet, repr),
         })
     }
 }
 
 impl Init {
-    fn initialize(&self, payload: &mut impl PayloadMut) -> Result<Icmpv4Repr> {
+    fn initialize(&self, payload: &mut impl PayloadMut) -> Result<icmpv4::Repr> {
         let repr = self.repr();
 
         // Assumes length was already dealt with.
-        let packet = icmpv4_packet::new_unchecked_mut(
+        let packet = icmpv4::packet::new_unchecked_mut(
             payload.payload_mut().as_mut_slice());
         repr.emit(packet, Checksum::Ignored);
 
         Ok(repr)
     }
 
-    fn repr(&self) -> Icmpv4Repr {
+    fn repr(&self) -> icmpv4::Repr {
         match *self {
             Init::EchoRequest { ident, seq_no, payload, .. } => {
-                Icmpv4Repr::EchoRequest { ident, seq_no, payload }
+                icmpv4::Repr::EchoRequest { ident, seq_no, payload }
             },
         }
     }

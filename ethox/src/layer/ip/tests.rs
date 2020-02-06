@@ -2,8 +2,8 @@ use super::*;
 use crate::managed::Slice;
 use crate::nic::{external::External, Device};
 use crate::layer::{arp, eth, ip};
-use crate::wire::{EthernetAddress, InterfaceId, IpAddress, IpCidr, IpSubnet, Ipv4Address, Ipv4Subnet, Ipv6Address, Ipv6Subnet, IpProtocol};
-use crate::wire::{ethernet_frame, ipv4_packet, ipv6_packet};
+use crate::wire::{ethernet, ip::v4, ip::v6};
+use crate::wire::ip::{Address, Cidr, Protocol, Subnet};
 use crate::wire::{Payload, PayloadMut};
 
 static PAYLOAD_BYTES: [u8; 50] =
@@ -16,15 +16,15 @@ static PAYLOAD_BYTES: [u8; 50] =
      0x00, 0xff];
 
 struct SimpleSend {
-    dst_addr: IpAddress,
+    dst_addr: Address,
 }
 
 #[test]
 fn simple_ipv4() {
-    const MAC_ADDR_SRC: EthernetAddress = EthernetAddress([0, 1, 2, 3, 4, 5]);
-    const IP_ADDR_SRC: Ipv4Address = Ipv4Address::new(10, 0, 0, 1);
-    const MAC_ADDR_DST: EthernetAddress = EthernetAddress([6, 5, 4, 3, 2, 1]);
-    const IP_ADDR_DST: Ipv4Address = Ipv4Address::new(10, 0, 0, 2);
+    const MAC_ADDR_SRC: ethernet::Address = ethernet::Address([0, 1, 2, 3, 4, 5]);
+    const IP_ADDR_SRC: v4::Address = v4::Address::new(10, 0, 0, 1);
+    const MAC_ADDR_DST: ethernet::Address = ethernet::Address([6, 5, 4, 3, 2, 1]);
+    const IP_ADDR_DST: v4::Address = v4::Address::new(10, 0, 0, 2);
 
     let mut nic = External::new_send(Slice::One(vec![0; 1024]));
 
@@ -37,7 +37,7 @@ fn simple_ipv4() {
         eth_cache
     };
     let mut ip = [ip::Route::unspecified(); 2];
-    let mut ip = ip::Endpoint::new(IpCidr::new(IP_ADDR_SRC.into(), 24),
+    let mut ip = ip::Endpoint::new(Cidr::new(IP_ADDR_SRC.into(), 24),
         // No routes necessary for local link.
         ip::Routes::new(&mut ip[..]),
         neighbors);
@@ -50,10 +50,10 @@ fn simple_ipv4() {
     {
         // Retarget the packet to self.
         let buffer = nic.get_mut(0).unwrap();
-        let eth = ethernet_frame::new_unchecked_mut(buffer);
+        let eth = ethernet::frame::new_unchecked_mut(buffer);
         eth.set_dst_addr(MAC_ADDR_SRC);
         eth.set_src_addr(MAC_ADDR_DST);
-        let ip = ipv4_packet::new_unchecked_mut(eth.payload_mut_slice());
+        let ip = v4::packet::new_unchecked_mut(eth.payload_mut_slice());
         ip.set_dst_addr(IP_ADDR_SRC);
         ip.set_src_addr(IP_ADDR_DST);
         ip.fill_checksum();
@@ -69,10 +69,10 @@ fn simple_ipv4() {
 
 #[test]
 fn simple_ipv6() {
-    const MAC_ADDR_SRC: EthernetAddress = EthernetAddress([0, 1, 2, 3, 4, 5]);
-    const IP_ADDR_SRC: Ipv6Address = Ipv6Address::from_link_local_id(InterfaceId::from_generated_ether(MAC_ADDR_SRC));
-    const MAC_ADDR_DST: EthernetAddress = EthernetAddress([6, 5, 4, 3, 2, 1]);
-    const IP_ADDR_DST: Ipv6Address = Ipv6Address::from_link_local_id(InterfaceId::from_generated_ether(MAC_ADDR_DST));
+    const MAC_ADDR_SRC: ethernet::Address = ethernet::Address([0, 1, 2, 3, 4, 5]);
+    const IP_ADDR_SRC: v6::Address = v6::Address::from_link_local_id(v6::InterfaceId::from_generated_ether(MAC_ADDR_SRC));
+    const MAC_ADDR_DST: ethernet::Address = ethernet::Address([6, 5, 4, 3, 2, 1]);
+    const IP_ADDR_DST: v6::Address = v6::Address::from_link_local_id(v6::InterfaceId::from_generated_ether(MAC_ADDR_DST));
 
     let mut nic = External::new_send(Slice::One(vec![0; 1024]));
 
@@ -85,7 +85,7 @@ fn simple_ipv6() {
         eth_cache
     };
     let mut ip = [ip::Route::unspecified(); 2];
-    let mut ip = ip::Endpoint::new(IpCidr::new(IP_ADDR_SRC.into(), 24),
+    let mut ip = ip::Endpoint::new(Cidr::new(IP_ADDR_SRC.into(), 24),
         // No routes necessary for local link.
         ip::Routes::new(&mut ip[..]),
         neighbors);
@@ -98,10 +98,10 @@ fn simple_ipv6() {
     {
         // Retarget the packet to self.
         let buffer = nic.get_mut(0).unwrap();
-        let eth = ethernet_frame::new_unchecked_mut(buffer);
+        let eth = ethernet::frame::new_unchecked_mut(buffer);
         eth.set_dst_addr(MAC_ADDR_SRC);
         eth.set_src_addr(MAC_ADDR_DST);
-        let ip = ipv6_packet::new_unchecked_mut(eth.payload_mut_slice());
+        let ip = v6::packet::new_unchecked_mut(eth.payload_mut_slice());
         ip.set_dst_addr(IP_ADDR_SRC);
         ip.set_src_addr(IP_ADDR_DST);
     }
@@ -122,13 +122,13 @@ impl<P: PayloadMut> ip::Send<P> for SimpleSend {
     fn send(&mut self, packet: RawPacket<P>) {
         let init = ip::Init {
             source: match self.dst_addr {
-                IpAddress::Ipv4(_) => IpSubnet::from(Ipv4Subnet::ANY),
-                IpAddress::Ipv6(_) => IpSubnet::from(Ipv6Subnet::ANY),
+                Address::Ipv4(_) => Subnet::from(v4::Subnet::ANY),
+                Address::Ipv6(_) => Subnet::from(v6::Subnet::ANY),
                 _ => unreachable!(),
             }.into(),
             dst_addr: self.dst_addr,
             payload: PAYLOAD_BYTES.len(),
-            protocol: IpProtocol::Unknown(0xEF),
+            protocol: Protocol::Unknown(0xEF),
         };
         let mut prepared = packet.prepare(init)
             .expect("Found no valid routes");

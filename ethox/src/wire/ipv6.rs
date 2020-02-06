@@ -1,10 +1,14 @@
 use core::{fmt, ops};
 use byteorder::{ByteOrder, NetworkEndian};
 
-use super::{Error, Result, Payload, PayloadError, PayloadMut, Reframe, payload};
-use super::{Ipv4Address, EthernetAddress};
-use super::ip::pretty_print_ip_payload;
-pub(crate) use super::IpProtocol as Protocol;
+use crate::wire::{Error, Result, Payload, PayloadError, PayloadMut, Reframe, payload};
+use crate::wire::pretty_print::{PrettyPrint, PrettyIndent};
+use crate::wire::{
+    ip::v4::Address as Ipv4Address,
+    ethernet::Address as EthernetAddress
+};
+
+use super::ip::{Protocol, pretty_print_ip_payload};
 
 /// Minimum MTU required of all links supporting IPv6. See [RFC 8200 § 5].
 ///
@@ -917,8 +921,6 @@ impl fmt::Display for Repr {
     }
 }
 
-use super::pretty_print::{PrettyPrint, PrettyIndent};
-
 // TODO: This is very similar to the implementation for IPv4. Make
 // a way to have less copy and pasted code here.
 impl PrettyPrint for ipv6 {
@@ -947,7 +949,7 @@ mod test {
     use super::{ipv6, Protocol, Repr};
 
     use crate::wire::pretty_print::{PrettyPrinter};
-    use crate::wire::ipv4::Address as Ipv4Address;
+    use crate::wire::ip::v4::Address as Ipv4Address;
 
     static LINK_LOCAL_ADDR: Address = Address([0xfe, 0x80, 0x00, 0x00,
                                                0x00, 0x00, 0x00, 0x00,
