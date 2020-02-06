@@ -114,7 +114,7 @@ where
 
         let packet = match packet.repr().protocol() {
             ip::Protocol::Udp => {
-                match udp::packet::new_checked(packet, checksum) {
+                match udp::Packet::new_checked(packet, checksum) {
                     Ok(packet) => packet,
                     Err(_) => return,
                 }

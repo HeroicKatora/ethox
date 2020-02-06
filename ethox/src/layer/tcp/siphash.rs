@@ -6,7 +6,7 @@
 //! > SipHash: a fast short-input PRFJean-Philippe Aumasson1and Daniel J. Bernstein
 use super::endpoint::FourTuple;
 use crate::time::Instant;
-use crate::wire::{IpAddress, Ipv6Address, TcpSeqNumber};
+use crate::wire::{ip::Address, ip::v6, tcp::SeqNumber};
 
 /// An initial sequence number generator based on SipHash-2-4.
 ///
@@ -97,11 +97,11 @@ impl IsnGenerator {
     /// This function panics if the connection tuple contains anything other than an IPv4 and IPv6
     /// connection pair (i.e. the Invalid state). This may be statically checked in the future
     /// through some other connection representation.
-    pub fn get_isn(&self, connection: FourTuple, time: Instant) -> TcpSeqNumber {
+    pub fn get_isn(&self, connection: FourTuple, time: Instant) -> SeqNumber {
         let mut state = State::init(self.keys.0, self.keys.1);
 
         let num = match (connection.local, connection.remote) {
-            (IpAddress::Ipv4(here), IpAddress::Ipv4(there)) => {
+            (Address::Ipv4(here), Address::Ipv4(there)) => {
                 let m = u64::from(here.to_network_integer())
                     | u64::from(there.to_network_integer()) << 32;
                 let p = u64::from(connection.local_port)
@@ -112,7 +112,7 @@ impl IsnGenerator {
                 state.absorb(p);
                 state.finalize()
             },
-            (IpAddress::Ipv6(here), IpAddress::Ipv6(there)) => {
+            (Address::Ipv6(here), Address::Ipv6(there)) => {
                 let (m0, m1) = Self::ipv6_to_messages(here);
                 let (m2, m3) = Self::ipv6_to_messages(there);
                 let p = u64::from(connection.local_port)
@@ -127,7 +127,7 @@ impl IsnGenerator {
                 state.finalize()
             },
             // Don't even know how we could get here, but maybe with mapped addresses.
-            (IpAddress::Ipv4(here), IpAddress::Ipv6(there)) => {
+            (Address::Ipv4(here), Address::Ipv6(there)) => {
                 let m0 = u64::from(here.to_network_integer())
                     | u64::from(connection.local_port) << 32
                     | u64::from(connection.remote_port) << 48;
@@ -140,7 +140,7 @@ impl IsnGenerator {
                 state.absorb(p);
                 state.finalize()
             },
-            (IpAddress::Ipv6(here), IpAddress::Ipv4(there)) => {
+            (Address::Ipv6(here), Address::Ipv4(there)) => {
                 let (m0, m1) = Self::ipv6_to_messages(here);
                 let m2 = u64::from(there.to_network_integer())
                     | u64::from(connection.local_port) << 32
@@ -158,11 +158,11 @@ impl IsnGenerator {
             _ => panic!("Should not be called, four tuple needs to be concrete ip addresses"),
         };
 
-        TcpSeqNumber(num as i32) + (time.millis()/4000) as usize
+        SeqNumber(num as i32) + (time.millis()/4000) as usize
     }
 
-    fn ipv6_to_messages(addr: Ipv6Address) -> (u64, u64) {
-        let Ipv6Address([a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p]) = addr;
+    fn ipv6_to_messages(addr: v6::Address) -> (u64, u64) {
+        let v6::Address([a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p]) = addr;
         let m0 = u64::from_be_bytes([a, b, c, d, e, f, g, h]);
         let m1 = u64::from_be_bytes([i, j, k, l, m, n, o, p]);
         (m0, m1)
