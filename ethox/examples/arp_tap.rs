@@ -34,7 +34,7 @@ use structopt::StructOpt;
 use ethox::managed::{List, Slice};
 use ethox::nic::{Device, sys::TapInterface};
 use ethox::layer::{arp, eth, ip};
-use ethox::wire::{Ipv4Cidr, EthernetAddress, PayloadMut};
+use ethox::wire::{ip::v4::Cidr, ethernet::Address, PayloadMut};
 
 fn main() {
     let Config {
@@ -83,10 +83,10 @@ fn main() {
 #[derive(StructOpt)]
 struct Config {
     name: String,
-    host: Ipv4Cidr,
-    hostmac: EthernetAddress,
-    gateway: Ipv4Cidr,
-    gatemac: EthernetAddress,
+    host: Cidr,
+    hostmac: Address,
+    gateway: Cidr,
+    gatemac: Address,
 }
 
 /// Drops all packets. Arp should is handled internally.

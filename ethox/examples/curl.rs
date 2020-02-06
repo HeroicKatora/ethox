@@ -3,13 +3,12 @@
 //! Connects to a given remote tcp/http host and requests the root page, then prints the response
 //! without headers. Can handle up to 1MB of response data.
 use std::io::{stdout, Write};
-use std::net;
 use structopt::StructOpt;
 
 use ethox::managed::{List, Map, SlotMap, Slice};
 use ethox::nic::{Device, sys::RawSocket, Protocol};
 use ethox::layer::{arp, eth, ip, tcp};
-use ethox::wire::{Ipv4Address, Ipv4Cidr, EthernetAddress};
+use ethox::wire::{ip::v4, ethernet};
 
 fn main() {
     let Config {
@@ -39,7 +38,7 @@ fn main() {
 
     let message = "GET / HTTP/1.0\r\n\r\n";
     let mut tcp_client = tcp::Client::new(
-        Ipv4Address::from(server).into(), server_port,
+        v4::Address::from(server).into(), server_port,
         tcp::io::RecvInto::new(vec![0; 1 << 20]),
         tcp::io::SendFrom::once(message.as_bytes()));
 
@@ -70,9 +69,9 @@ fn main() {
 #[derive(StructOpt)]
 struct Config {
     name: String,
-    host: Ipv4Cidr,
-    hostmac: EthernetAddress,
-    gateway: Ipv4Cidr,
-    server: net::Ipv4Addr,
+    host: v4::Cidr,
+    hostmac: ethernet::Address,
+    gateway: v4::Cidr,
+    server: std::net::Ipv4Addr,
     server_port: u16,
 }

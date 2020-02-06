@@ -31,7 +31,7 @@ use structopt::StructOpt;
 use ethox::managed::{List, Slice};
 use ethox::nic::{Device, sys::TapInterface};
 use ethox::layer::{arp, eth, ip, icmp};
-use ethox::wire::{Ipv4Cidr, EthernetAddress};
+use ethox::wire::{ip::v4::Cidr, ethernet::Address};
 
 fn main() {
     let Config {
@@ -83,7 +83,7 @@ fn main() {
 #[derive(StructOpt)]
 struct Config {
     name: String,
-    host: Ipv4Cidr,
-    hostmac: EthernetAddress,
-    gateway: Ipv4Cidr,
+    host: Cidr,
+    hostmac: Address,
+    gateway: Cidr,
 }
