@@ -2,7 +2,9 @@
 // Just use the minimal dependencies.
 extern crate alloc;
 use core::mem;
+
 use alloc::rc::Rc;
+use alloc::collections::VecDeque;
 
 use ethox::{layer, nic, wire};
 use ethox::managed::Partial;
@@ -17,6 +19,8 @@ pub struct RawRing {
     memory: Rc<pool::Pool>,
     /// The fd of our socket.
     fd: libc::c_int,
+    send_queue: VecDeque<PacketData>,
+    recv_queue: VecDeque<PacketData>,
 }
 
 pub struct PacketBuf {
@@ -24,6 +28,15 @@ pub struct PacketBuf {
 }
 
 pub struct Handle {
+    state: State,
+}
+
+enum State {
+    Raw,
+    Received,
+    Unsent,
+    Sending,
+    Receiving,
 }
 
 struct PacketData {
@@ -31,6 +44,7 @@ struct PacketData {
     buffer: PacketBuf,
     io_vec: libc::iovec,
     io_hdr: libc::msghdr,
+    // TODO cmsg buffer for the timestamps.
 }
 
 impl RawRing {
@@ -40,6 +54,8 @@ impl RawRing {
             io_ring,
             memory: Rc::new(pool::Pool::with_size_and_count(2048, 128)),
             fd,
+            send_queue: VecDeque::with_capacity(64),
+            recv_queue: VecDeque::with_capacity(64),
         }
     }
 
@@ -94,7 +110,7 @@ impl PacketData {
     pub fn new(buffer: pool::Entry) -> Self {
         let io_vec = pool::Entry::io_vec(&buffer);
         PacketData {
-            handle: Handle { },
+            handle: Handle { state: State::Raw },
             buffer: PacketBuf {
                 inner: Partial::new(buffer),
             },
