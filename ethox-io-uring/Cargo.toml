@@ -8,4 +8,4 @@ edition = "2018"
 [dependencies]
 ethox = { path = "../ethox", version = "0.0.1" }
 io-uring = "0.3.1"
-libc = { version = "0.2.66", default-features = false, optional = true }
+libc = { version = "0.2.66", default-features = false }
