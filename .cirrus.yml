@@ -41,6 +41,9 @@ side_crates_task:
     - apt-get -y install libpcap-dev
     - cd ethox-bpf
     - cargo test
+  uring_script:
+    - cd ethox-io-uring
+    - cargo test
 
 nightly_task:
   container:
