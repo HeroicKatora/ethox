@@ -1,7 +1,7 @@
 // Yes, we are not no_std but we might be one day.
 // Just use the minimal dependencies.
 extern crate alloc;
-use core::mem;
+use core::{mem, slice};
 
 use alloc::rc::Rc;
 use alloc::collections::VecDeque;
@@ -21,6 +21,11 @@ pub struct RawRing {
     fd: libc::c_int,
     send_queue: VecDeque<PacketData>,
     recv_queue: VecDeque<PacketData>,
+}
+
+struct SubmitInterface<'io> {
+    inner: &'io mut io_uring::SubmissionQueue,
+    fd: libc::c_int,
 }
 
 pub struct PacketBuf {
@@ -48,6 +53,13 @@ struct PacketData {
 }
 
 impl RawRing {
+    pub fn from_fd(fd: libc::c_int) -> Result<Self, std::io::Error> {
+        let ring = io_uring::Builder::default()
+            .setup_iopoll()
+            .build(32)?;
+        Ok(RawRing::from_ring(ring, fd))
+    }
+
     pub fn from_ring(io_ring: io_uring::IoUring, fd: libc::c_int) -> Self {
         // TODO: register buffers from the pool and socket fd.
         RawRing {
@@ -58,11 +70,13 @@ impl RawRing {
             recv_queue: VecDeque::with_capacity(64),
         }
     }
+}
 
+impl SubmitInterface<'_> {
     /// Submit packet data, returning the number of submitted packets. Those submitted should not
     /// be moved before completion as the msghdr will point into of them.
     unsafe fn submit_send(&mut self, data: &mut [PacketData]) -> usize {
-        let mut submission = self.io_ring.submission().available();
+        let mut submission = self.inner.available();
         let remaining = submission.capacity() - submission.len();
 
         let mut submitted = 0;
@@ -85,7 +99,7 @@ impl RawRing {
     /// Submit packet data, returning the number of submitted packets. Those submitted should not
     /// be moved before completion as the msghdr will point into of them.
     unsafe fn submit_recv(&mut self, data: &mut [PacketData]) -> usize {
-        let mut submission = self.io_ring.submission().available();
+        let mut submission = self.inner.available();
         let remaining = submission.capacity() - submission.len();
 
         let mut submitted = 0;
@@ -129,15 +143,49 @@ impl nic::Device for RawRing {
         unimplemented!()
     }
 
-    fn rx(&mut self, max: usize, receiver: impl nic::Recv<Handle, PacketBuf>)
+    fn rx(&mut self, max: usize, mut receiver: impl nic::Recv<Handle, PacketBuf>)
         -> layer::Result<usize>
     {
-        unimplemented!()
+        let (_, submission, completion) = self.io_ring.split();
+        let mut submit = SubmitInterface {
+            inner: submission,
+            fd: self.fd,
+        };
+
+        let mut count = 0;
+        for entry in completion.available().take(max) {
+            let idx = entry.user_data() as usize;
+            let packet = &mut self.recv_queue[idx];
+            packet.handle.state = State::Received;
+
+            if entry.result() >= 0 {
+                count += 1;
+                receiver.receive(nic::Packet {
+                    handle: &mut packet.handle,
+                    payload: &mut packet.buffer,
+                });
+            }
+
+            match packet.handle.state {
+                State::Unsent => unimplemented!(),
+                _ => unsafe {
+                    submit.submit_send(slice::from_mut(packet));
+                },
+            }
+        }
+
+        Ok(count)
     }
 
-    fn tx(&mut self, max: usize, receiver: impl nic::Send<Handle, PacketBuf>)
+    fn tx(&mut self, max: usize, mut sender: impl nic::Send<Handle, PacketBuf>)
         -> layer::Result<usize>
     {
+        let (_, submission, completion) = self.io_ring.split();
+        let mut submit = SubmitInterface {
+            inner: submission,
+            fd: self.fd,
+        };
+
         unimplemented!()
     }
 }
