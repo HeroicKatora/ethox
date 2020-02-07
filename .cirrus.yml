@@ -41,6 +41,11 @@ side_crates_task:
     - apt-get -y install libpcap-dev
     - cd ethox-bpf
     - cargo test
+
+uring_task:
+  container:
+    image: rust:1.41.0-alpine3.11
+  allow_failures: true
   uring_script:
     - cd ethox-io-uring
     - cargo test
