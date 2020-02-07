@@ -2,6 +2,7 @@
 members = [
 	"ethox",
 	"ethox-iperf",
+	"ethox-io-uring",
 ]
 
 [profile.release]
