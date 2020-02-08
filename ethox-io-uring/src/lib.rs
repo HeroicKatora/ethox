@@ -348,7 +348,11 @@ impl Queue {
 
     fn fill(&mut self, mut submit: SubmitInterface) {
         let max = submit.open_slots();
-        for idx in self.free.drain(..).take(max) {
+        for _ in 0..max {
+            let idx = match self.free.pop_front() {
+                Some(idx) => idx,
+                None => break,
+            };
             let packet = self.buffers.get_mut(idx).unwrap();
             packet.io_vec.iov_len = packet.buffer.inner.capacity();
             assert_eq!(packet.handle.state, State::Raw);
@@ -373,12 +377,14 @@ impl Queue {
                 other => panic!("Unexpected operation {:?} associated with completed buffer.", other),
             }
 
-            packet.handle.state = State::Received;
             if entry.result() >= 0 {
+                packet.handle.state = State::Received;
                 packet.buffer.inner.set_len_unchecked(entry.result() as usize);
                 packet.handle.info.timestamp = ethox::time::Instant::now();
                 self.to_recv.push_back(idx);
             } else {
+                packet.handle.state = State::Raw;
+                self.free.push_back(idx);
                 // Unhandled error.
             }
         }
@@ -386,7 +392,11 @@ impl Queue {
 
     fn flush(&mut self, mut submit: SubmitInterface) {
         let max = submit.open_slots();
-        for idx in self.to_send.drain(..).take(max) {
+        for _ in 0..max {
+            let idx = match self.to_send.pop_front() {
+                Some(idx) => idx,
+                None => break,
+            };
             let packet = self.buffers.get_mut(idx).unwrap();
             assert_eq!(packet.handle.state, State::Unsent);
             packet.io_vec.iov_len = packet.buffer.inner.len();
