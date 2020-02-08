@@ -8,15 +8,25 @@ fn ping_self() {
     const ADDR_B: wire::ethernet::Address = wire::ethernet::Address([0xaa, 0, 0, 0, 0, 0x2]);
 
     let [sock_a, sock_b] = sockets();
+    println!("Sockets created");
 
     let mut ring_a = create_ring(sock_a);
     let mut ring_b = create_ring(sock_b);
+    println!("Rings created");
 
     let mut eth_a = eth::Endpoint::new(ADDR_A);
     let mut eth_b = eth::Endpoint::new(ADDR_B);
+    println!("Starting sending");
 
     assert_eq!(ring_a.tx(10, eth_a.send(Dummy(ADDR_B))), Ok(10));
-    assert_eq!(ring_b.rx(10, eth_b.recv(Dummy(ADDR_A))), Ok(10));
+    println!("Starting receives");
+    let mut received = 0;
+    while received != 10 {
+        ring_a.flush_and_reap().expect("Sending failed");
+        received += ring_b.rx(10, eth_b.recv(Dummy(ADDR_A))).expect("Receiving failed");
+        println!("{}", received);
+    }
+    
 }
 
 fn sockets() -> [libc::c_int; 2] {

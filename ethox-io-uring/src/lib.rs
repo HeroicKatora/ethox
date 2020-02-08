@@ -43,12 +43,13 @@ struct Queue {
     buffers: mem::ManuallyDrop<Box<[PacketData]>>,
     /// Buffers we still haven't sent but should.
     to_send: VecDeque<usize>,
+    /// Buffers that were completed but not yet inspected.
+    to_recv: VecDeque<usize>,
     /// Buffers that are unused.
     free: VecDeque<usize>,
-
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum State {
     Raw,
     Received,
@@ -70,7 +71,9 @@ struct PacketData {
 impl RawRing {
     pub fn from_fd(fd: libc::c_int) -> Result<Self, std::io::Error> {
         let ring = io_uring::Builder::default()
-            .setup_iopoll()
+            // iopoll is incompatible with recvmsg, apparently, looking through Linux source code
+            // as of 5.5
+            // .setup_iopoll()
             .build(32)?;
         Ok(RawRing::from_ring(ring, fd))
     }
@@ -78,13 +81,23 @@ impl RawRing {
     pub fn from_ring(io_ring: io_uring::IoUring, fd: libc::c_int) -> Self {
         // TODO: register buffers from the pool and socket fd.
         let memory = Rc::new(pool::Pool::with_size_and_count(2048, 128));
-        let io_queue = Queue::with_capacity(Rc::clone(&memory), 64);
+        let io_queue = Queue::with_capacity(Rc::clone(&memory), 32);
         RawRing {
             io_ring,
             memory,
             fd,
             io_queue,
         }
+    }
+
+    pub fn flush_and_reap(&mut self) -> std::io::Result<usize> {
+        // Drain current completion queue.
+        self.io_queue.reap(self.io_ring.completion());
+        // Enter the uring.
+        let result = self.io_ring.submit();
+        // Reap again in case something got completed.
+        self.io_queue.reap(self.io_ring.completion());
+        result
     }
 }
 
@@ -134,6 +147,8 @@ impl SubmitInterface<'_> {
             packet.io_hdr.msg_iov = &mut packet.io_vec;
             packet.io_hdr.msg_iovlen = 1;
             let send = RecvMsg::new(Target::Fd(self.fd), &mut packet.io_hdr)
+                // TODO: investigate IORING_OP_ASYNC_CANCEL and timeout cancel.
+                .flags(libc::MSG_DONTWAIT as u32)
                 .build()
                 .user_data(tag);
             #[allow(unused_unsafe)]
@@ -169,6 +184,14 @@ impl SubmitInterface<'_> {
     }
 }
 
+impl Drop for RawRing {
+    fn drop(&mut self) {
+        unsafe {
+            libc::close(self.fd);
+        }
+    }
+}
+
 impl nic::Device for RawRing {
     type Payload = PacketBuf;
     type Handle = Handle;
@@ -188,42 +211,37 @@ impl nic::Device for RawRing {
 
         self.io_queue.fill(submit.borrow());
         submitter.submit().map_err(|_| layer::Error::Illegal)?;
+        self.io_queue.reap(completion);
 
         let mut count = 0;
 
-        for entry in completion.available().take(max) {
-            let idx = entry.user_data() as usize;
+        for _ in 0..max {
+            let idx = match self.io_queue.pop_recv() {
+                Some(idx) => idx,
+                None => break,
+            };
+
             let packet = self.io_queue.get_mut(idx).unwrap();
-            match packet.handle.state {
-                State::Sending => {
-                    self.io_queue.push_free(idx);
-                    continue;
-                },
-                State::Receiving => (),
-                _ => panic!("No operation associated with completed buffer."),
-            }
-
-            packet.handle.state = State::Received;
-            packet.buffer.inner.set_len_unchecked(packet.io_vec.iov_len);
-
-            if entry.result() >= 0 {
-                count += 1;
-                receiver.receive(nic::Packet {
-                    handle: &mut packet.handle,
-                    payload: &mut packet.buffer,
-                });
-            }
+            count += 1;
+            receiver.receive(nic::Packet {
+                handle: &mut packet.handle,
+                payload: &mut packet.buffer,
+            });
 
             match packet.handle.state {
-                State::Unsent => self.io_queue.push_send(idx),
-                State::Receiving => {
+                State::Unsent => {
+                    self.io_queue.push_send(idx)
+                },
+                State::Received => {
+                    packet.handle.state = State::Raw;
                     self.io_queue.push_free(idx);
                 },
-                _ => panic!("No operation associated with received buffer."),
+                other => panic!("Unexpected operation {:?} associated with retransmission buffer.", other),
             }
         }
 
         self.io_queue.flush(submit);
+        self.io_ring.submit().map_err(|_| layer::Error::Illegal)?;
 
         Ok(count)
     }
@@ -238,20 +256,16 @@ impl nic::Device for RawRing {
         };
 
         let mut count = 0;
-        let mut max = cmp::max(max, submit.open_slots());
+        let max = cmp::min(max, submit.open_slots());
 
-        loop {
-            if max == 0 {
-                break;
-            }
-
-            max -= 1;
-            let idx = match self.io_queue.free.pop_front() {
+        for _ in 0..max {
+            let idx = match self.io_queue.pop_free() {
                 Some(idx) => idx,
                 None => break,
             };
 
             let packet = self.io_queue.get_mut(idx).unwrap();
+            packet.handle.state = State::Raw;
 
             sender.send(nic::Packet {
                 handle: &mut packet.handle,
@@ -264,9 +278,10 @@ impl nic::Device for RawRing {
                     count += 1;
                 },
                 State::Raw => {
+                    packet.handle.state = State::Raw;
                     self.io_queue.push_free(idx);
                 },
-                _ => unimplemented!(),
+                other => panic!("Unexpected operation {:?} associated with transmission buffer.", other),
             }
         }
 
@@ -289,6 +304,7 @@ impl Queue {
         Queue {
             buffers: mem::ManuallyDrop::new(entries),
             to_send: VecDeque::with_capacity(capacity),
+            to_recv: VecDeque::with_capacity(capacity),
             free: (0..capacity).collect(),
         }
     }
@@ -301,8 +317,16 @@ impl Queue {
         self.to_send.push_back(idx);
     }
 
+    fn pop_recv(&mut self) -> Option<usize> {
+        self.to_recv.pop_front()
+    }
+
     fn push_free(&mut self, idx: usize) {
         self.free.push_back(idx);
+    }
+
+    fn pop_free(&mut self) -> Option<usize> {
+        self.free.pop_front()
     }
 
     fn fill(&mut self, mut submit: SubmitInterface) {
@@ -310,10 +334,34 @@ impl Queue {
         for idx in self.free.drain(..).take(max) {
             let packet = self.buffers.get_mut(idx).unwrap();
             packet.io_vec.iov_len = packet.buffer.inner.capacity();
-            assert!(packet.handle.state == State::Raw);
+            assert_eq!(packet.handle.state, State::Raw);
             let tag = Tag(idx as u64);
             unsafe {
                 submit.submit_recv(iter::once((packet, tag)));
+            }
+        }
+    }
+
+    fn reap(&mut self, cq: &mut io_uring::CompletionQueue) {
+        for entry in cq.available() {
+            let idx = entry.user_data() as usize;
+            let packet = self.get_mut(idx).unwrap();
+            match packet.handle.state {
+                State::Sending => {
+                    packet.handle.state = State::Raw;
+                    self.push_free(idx);
+                    continue;
+                },
+                State::Receiving => (),
+                other => panic!("Unexpected operation {:?} associated with completed buffer.", other),
+            }
+
+            packet.handle.state = State::Received;
+            if entry.result() >= 0 {
+                packet.buffer.inner.set_len_unchecked(entry.result() as usize);
+                self.to_recv.push_back(idx);
+            } else {
+                // Unhandled error.
             }
         }
     }
@@ -322,7 +370,7 @@ impl Queue {
         let max = submit.open_slots();
         for idx in self.to_send.drain(..).take(max) {
             let packet = self.buffers.get_mut(idx).unwrap();
-            assert!(packet.handle.state == State::Unsent);
+            assert_eq!(packet.handle.state, State::Unsent);
             packet.io_vec.iov_len = packet.buffer.inner.len();
             let tag = Tag(idx as u64);
             unsafe {
