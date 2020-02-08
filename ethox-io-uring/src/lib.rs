@@ -77,6 +77,13 @@ struct PacketData {
     buffer: PacketBuf,
     io_vec: libc::iovec,
     io_hdr: libc::msghdr,
+    cmsg: CmsgData,
+}
+
+#[repr(C)]
+struct CmsgData {
+    _align: [libc::cmsghdr; 0],
+    data: [u8; 128],
 }
 
 impl RawRing {
@@ -86,6 +93,13 @@ impl RawRing {
             // as of 5.5
             // .setup_iopoll()
             .build(32)?;
+        let enabled = libc::SOF_TIMESTAMPING_SOFTWARE | libc::SOF_TIMESTAMPING_RX_SOFTWARE; // | libc::SOF_TIMESTAMPING_RX_SOFTWARE;
+        let set_timestamp = unsafe {
+            libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_TIMESTAMP, &enabled as *const _ as *const libc::c_void, mem::size_of_val(&enabled) as libc::socklen_t)
+        };
+        if set_timestamp < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
         Ok(RawRing::from_ring(ring, fd))
     }
 
@@ -155,8 +169,11 @@ impl SubmitInterface<'_> {
         assert!(data.len() <= remaining);
 
         for (packet, Tag(tag)) in data {
+            eprintln!("{:p}", packet.cmsg.data.as_ptr());
             packet.io_hdr.msg_iov = &mut packet.io_vec;
             packet.io_hdr.msg_iovlen = 1;
+            packet.io_hdr.msg_control = &mut packet.cmsg.data as *mut _ as *mut libc::c_void;
+            packet.io_hdr.msg_controllen = mem::size_of::<CmsgData>();
             let send = RecvMsg::new(Target::Fd(self.fd), &mut packet.io_hdr)
                 // TODO: investigate IORING_OP_ASYNC_CANCEL and timeout cancel.
                 .flags(libc::MSG_DONTWAIT as u32)
@@ -188,8 +205,9 @@ impl PacketData {
                 inner: Partial::new(buffer),
             },
             io_vec,
-            // SAFETY: this is a valid initialization for a msghdr
+            // SAFETY: this is a valid initialization for a msghdr.
             io_hdr: unsafe { mem::zeroed() },
+            cmsg: CmsgData::zeroed(),
         }
     }
 }
@@ -197,6 +215,13 @@ impl PacketData {
 impl SubmitInterface<'_> {
     fn borrow(&mut self) -> SubmitInterface<'_> {
         SubmitInterface { fd: self.fd, inner: self.inner }
+    }
+}
+
+impl CmsgData {
+    pub fn zeroed() -> Self {
+        // SAFETY: this is a valid initialization for all attributes.
+        unsafe { mem::zeroed() }
     }
 }
 
@@ -282,6 +307,7 @@ impl nic::Device for RawRing {
 
             let packet = self.io_queue.get_mut(idx).unwrap();
             packet.handle.state = State::Raw;
+            // TODO: use SIOCGSTAMP or some alternative method.
             packet.handle.info.timestamp = ethox::time::Instant::now();
 
             sender.send(nic::Packet {
@@ -385,6 +411,7 @@ impl Queue {
             } else {
                 packet.handle.state = State::Raw;
                 self.free.push_back(idx);
+                eprintln!("{:?}", std::io::Error::from_raw_os_error(entry.result()));
                 // Unhandled error.
             }
         }
