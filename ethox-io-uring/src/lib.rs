@@ -105,6 +105,7 @@ impl SubmitInterface<'_> {
 
         for (packet, Tag(tag)) in data {
             packet.io_hdr.msg_iov = &mut packet.io_vec;
+            packet.io_hdr.msg_iovlen = 1;
             let send = SendMsg::new(Target::Fd(self.fd), &packet.io_hdr)
                 .build()
                 .user_data(tag);
@@ -131,6 +132,7 @@ impl SubmitInterface<'_> {
 
         for (packet, Tag(tag)) in data {
             packet.io_hdr.msg_iov = &mut packet.io_vec;
+            packet.io_hdr.msg_iovlen = 1;
             let send = RecvMsg::new(Target::Fd(self.fd), &mut packet.io_hdr)
                 .build()
                 .user_data(tag);
@@ -178,7 +180,6 @@ impl nic::Device for RawRing {
     fn rx(&mut self, max: usize, mut receiver: impl nic::Recv<Handle, PacketBuf>)
         -> layer::Result<usize>
     {
-
         let (submitter, submission, completion) = self.io_ring.split();
         let mut submit = SubmitInterface {
             inner: submission,
@@ -203,6 +204,7 @@ impl nic::Device for RawRing {
             }
 
             packet.handle.state = State::Received;
+            packet.buffer.inner.set_len_unchecked(packet.io_vec.iov_len);
 
             if entry.result() >= 0 {
                 count += 1;
@@ -307,6 +309,7 @@ impl Queue {
         let max = submit.open_slots();
         for idx in self.free.drain(..).take(max) {
             let packet = self.buffers.get_mut(idx).unwrap();
+            packet.io_vec.iov_len = packet.buffer.inner.capacity();
             assert!(packet.handle.state == State::Raw);
             let tag = Tag(idx as u64);
             unsafe {
@@ -320,6 +323,7 @@ impl Queue {
         for idx in self.to_send.drain(..).take(max) {
             let packet = self.buffers.get_mut(idx).unwrap();
             assert!(packet.handle.state == State::Unsent);
+            packet.io_vec.iov_len = packet.buffer.inner.len();
             let tag = Tag(idx as u64);
             unsafe {
                 submit.submit_send(iter::once((packet, tag)));
@@ -330,7 +334,8 @@ impl Queue {
 
 impl nic::Handle for Handle {
     fn queue(&mut self) -> Result<(), layer::Error> {
-        unimplemented!()
+        self.state = State::Unsent;
+        Ok(())
     }
 
     fn info(&self) -> &dyn nic::Info {
@@ -340,20 +345,21 @@ impl nic::Handle for Handle {
 
 impl wire::Payload for PacketBuf {
     fn payload(&self) -> &wire::payload {
-        self.inner.payload()
+        <Partial<_> as wire::Payload>::payload(&self.inner)
     }
 }
 
 impl wire::PayloadMut for PacketBuf {
     fn payload_mut(&mut self) -> &mut wire::payload {
-        self.inner.payload_mut()
+        <Partial<_> as wire::PayloadMut>::payload_mut(&mut self.inner)
     }
 
     fn resize(&mut self, length: usize) -> Result<(), wire::PayloadError> {
-        self.inner.resize(length)
+        <Partial<_> as wire::PayloadMut>::resize(&mut self.inner, length)
     }
 
     fn reframe(&mut self, frame: wire::Reframe) -> Result<(), wire::PayloadError> {
-        self.inner.reframe(frame)
+        <Partial<_> as wire::PayloadMut>::reframe(&mut self.inner, frame)
     }
 }
+

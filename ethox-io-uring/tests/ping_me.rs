@@ -48,14 +48,14 @@ impl<P: wire::PayloadMut> eth::Send<P> for Dummy {
             src_addr: self.0,
             ethertype: wire::ethernet::EtherType::Ipv4,
             payload: HELLO.len(),
-        }).expect("Initialization success");
+        }).expect("Initialization failed");
 
         out
             .payload_mut()
             .as_mut_slice()
             .copy_from_slice(HELLO);
 
-        out.send().expect("Sending success");
+        out.send().expect("Sending failed");
     }
 }
 

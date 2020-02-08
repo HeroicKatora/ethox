@@ -1,6 +1,8 @@
 //! A memory pool used for io-uring operations.
 use core::{cell, mem, ops, slice, ptr};
+
 use alloc::rc::Rc;
+use ethox::wire;
 
 pub struct Pool {
     /// The entirety of memory.
@@ -141,5 +143,25 @@ impl Drop for Entry {
         // Besides, it would be technically Copy from within this module.
         let ticket = unsafe { ptr::read(&*self.ticket) };
         self.pool.tickets.borrow_mut().push(ticket);
+    }
+}
+
+impl wire::Payload for Entry {
+    fn payload(&self) -> &wire::payload {
+        (&**self).into()
+    }
+}
+
+impl wire::PayloadMut for Entry {
+    fn payload_mut(&mut self) -> &mut wire::payload {
+        (&mut**self).into()
+    }
+
+    fn resize(&mut self, length: usize) -> Result<(), wire::PayloadError> {
+        (**self).resize(length)
+    }
+
+    fn reframe(&mut self, frame: wire::Reframe) -> Result<(), wire::PayloadError> {
+        (**self).reframe(frame)
     }
 }
