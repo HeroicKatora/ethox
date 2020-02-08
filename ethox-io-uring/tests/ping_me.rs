@@ -1,6 +1,6 @@
-use core::slice;
 use ethox_io_uring::RawRing;
 use ethox::{layer::eth, nic::Device, wire};
+use ethox::wire::{Payload, PayloadMut};
 
 #[test]
 fn ping_self() {
@@ -39,12 +39,28 @@ fn create_ring(sock: libc::c_int) -> RawRing {
 
 struct Dummy(wire::ethernet::Address);
 
+const HELLO: &[u8] = b"Hello, world";
+
 impl<P: wire::PayloadMut> eth::Send<P> for Dummy {
-    fn send(&mut self, _: eth::RawPacket<P>) {
+    fn send(&mut self, raw: eth::RawPacket<P>) {
+        let mut out = raw.prepare(eth::Init {
+            dst_addr: self.0,
+            src_addr: self.0,
+            ethertype: wire::ethernet::EtherType::Ipv4,
+            payload: HELLO.len(),
+        }).expect("Initialization success");
+
+        out
+            .payload_mut()
+            .as_mut_slice()
+            .copy_from_slice(HELLO);
+
+        out.send().expect("Sending success");
     }
 }
 
 impl<P: wire::PayloadMut> eth::Recv<P> for Dummy {
-    fn receive(&mut self, _: eth::InPacket<P>) {
+    fn receive(&mut self, packet: eth::InPacket<P>) {
+        assert_eq!(packet.frame.payload().as_slice(), HELLO);
     }
 }
