@@ -1,9 +1,15 @@
 [package]
 name = "ethox-io-uring"
-version = "0.0.2"
 description = "An io-uring device implementation for ethox"
 authors = ["Andreas Molzer <andreas.molzer@gmx.de>"]
+license = "AGPL-3.0-only"
+version = "0.0.2"
 edition = "2018"
+
+documentation = "https://docs.rs/ethox-io-uring"
+repository = "https://github.com/HeroicKatora/ethox"
+keywords = ["network", "ethernet", "tcp"]
+categories = ["network-programming"]
 
 [dependencies]
 ethox = { path = "../ethox", version = "0.0.2", features = ["std"] }
