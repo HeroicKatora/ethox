@@ -6,6 +6,6 @@ authors = ["Andreas Molzer <andreas.molzer@gmx.de>"]
 edition = "2018"
 
 [dependencies]
-ethox = { path = "../ethox", version = "0.0.1" }
+ethox = { path = "../ethox", version = "0.0.1", features = ["std"] }
 io-uring = "0.3.1"
 libc = { version = "0.2.66", default-features = false }

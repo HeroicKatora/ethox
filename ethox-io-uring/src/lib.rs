@@ -16,6 +16,7 @@ pub struct RawRing {
     /// The ring which we use for the network interface (or UDS, or whatever fd if you go wild).
     io_ring: io_uring::IoUring,
     /// The packet memory allocation.
+    #[allow(dead_code)] // Keep a reference, if we need it later.
     memory: Rc<pool::Pool>,
     /// The fd of our socket.
     fd: libc::c_int,
@@ -33,6 +34,7 @@ pub struct PacketBuf {
 
 pub struct Handle {
     state: State,
+    info: PacketInfo,
 }
 
 /// Contains packet buffers that may be submitted to the io-uring.
@@ -40,6 +42,11 @@ struct Queue {
     /// ManuallyDrop since we can't allow the data to be dropped and freed while the kernel is
     /// still working on it. Otherwise, it might get reclaimed for another object that is then
     /// thoroughly destroyed.
+    // TODO: drop it anyways if the queue is empty on drop or by closing the uring first. Unclear
+    // question about blocking entries in the uring (of which we should not have any, but how to
+    // ensure this?): The kernel worker will remain active but does closing the uring succeed
+    // anyways? If yes then that risks memory unsafety and we can't rely on the closing to make the
+    // decision to drop the buffers here.
     buffers: mem::ManuallyDrop<Box<[PacketData]>>,
     /// Buffers we still haven't sent but should.
     to_send: VecDeque<usize>,
@@ -58,6 +65,11 @@ enum State {
     Receiving,
 }
 
+struct PacketInfo {
+    // TODO cmsg buffer for kernel generated timestamps.
+    timestamp: ethox::time::Instant,
+}
+
 struct Tag(u64);
 
 struct PacketData {
@@ -65,7 +77,6 @@ struct PacketData {
     buffer: PacketBuf,
     io_vec: libc::iovec,
     io_hdr: libc::msghdr,
-    // TODO cmsg buffer for the timestamps.
 }
 
 impl RawRing {
@@ -167,7 +178,12 @@ impl PacketData {
     pub fn new(buffer: pool::Entry) -> Self {
         let io_vec = pool::Entry::io_vec(&buffer);
         PacketData {
-            handle: Handle { state: State::Raw },
+            handle: Handle {
+                state: State::Raw,
+                info: PacketInfo {
+                    timestamp: ethox::time::Instant::from_secs(0),
+                },
+            },
             buffer: PacketBuf {
                 inner: Partial::new(buffer),
             },
@@ -197,7 +213,7 @@ impl nic::Device for RawRing {
     type Handle = Handle;
 
     fn personality(&self) -> nic::Personality {
-        unimplemented!()
+        nic::Personality::baseline()
     }
 
     fn rx(&mut self, max: usize, mut receiver: impl nic::Recv<Handle, PacketBuf>)
@@ -266,6 +282,7 @@ impl nic::Device for RawRing {
 
             let packet = self.io_queue.get_mut(idx).unwrap();
             packet.handle.state = State::Raw;
+            packet.handle.info.timestamp = ethox::time::Instant::now();
 
             sender.send(nic::Packet {
                 handle: &mut packet.handle,
@@ -359,6 +376,7 @@ impl Queue {
             packet.handle.state = State::Received;
             if entry.result() >= 0 {
                 packet.buffer.inner.set_len_unchecked(entry.result() as usize);
+                packet.handle.info.timestamp = ethox::time::Instant::now();
                 self.to_recv.push_back(idx);
             } else {
                 // Unhandled error.
@@ -387,7 +405,17 @@ impl nic::Handle for Handle {
     }
 
     fn info(&self) -> &dyn nic::Info {
-        unimplemented!()
+        &self.info
+    }
+}
+
+impl nic::Info for PacketInfo {
+    fn capabilities(&self) -> nic::Capabilities {
+        nic::Capabilities::no_support()
+    }
+
+    fn timestamp(&self) -> ethox::time::Instant {
+        self.timestamp
     }
 }
 
