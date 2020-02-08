@@ -3,7 +3,7 @@ name = "ethox"
 description = "A standalone network stack for user-space networking and unikernels"
 authors = ["Andreas Molzer <andreas.molzer@gmx.de>"]
 license = "AGPL-3.0-only"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2018"
 
 documentation = "https://docs.rs/ethox"
