@@ -18,13 +18,15 @@ fn ping_self() {
     let mut eth_b = eth::Endpoint::new(ADDR_B);
     println!("Starting sending");
 
-    assert_eq!(ring_a.tx(10, eth_a.send(Dummy(ADDR_B))), Ok(10));
     println!("Starting receives");
-    let mut received = 0;
-    while received != 10 {
+    const PACKET_COUNT: usize = 1000;
+    let mut to_send = PACKET_COUNT;
+    let mut to_recv = PACKET_COUNT;
+    while to_recv != 0 {
+        to_send -= ring_a.tx(to_send, eth_a.send(Dummy(ADDR_B))).expect("Sending failed");
         ring_a.flush_and_reap().expect("Sending failed");
-        received += ring_b.rx(10, eth_b.recv(Dummy(ADDR_A))).expect("Receiving failed");
-        println!("{}", received);
+        to_recv -= ring_b.rx(to_recv, eth_b.recv(Dummy(ADDR_A))).expect("Receiving failed");
+        println!("{} {}", to_send, to_recv);
     }
     
 }
