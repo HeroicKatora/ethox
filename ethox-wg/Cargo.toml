@@ -10,7 +10,14 @@ curve25519-dalek = "3"
 # Needed for the network operations in IP/UDP
 ethox = { path = "../ethox" }
 # Needed for ChaCha20Poly1305 AEAD.
-ring = "0.16"
+# Alternatives:
+# * `chacha20-poly1305-aead` has no in-place and looks primitive.
+# * `ring` does not have a 24 byte nonce option. But we use a structure similar
+#    to its `NonceSequence` trait to avoid nonce reuse.
+[dependencies. chacha20poly1305]
+version = "0.6"
+default-features = false
+features = ["alloc", "xchacha20poly1305"]
 
 [dependencies.mio]
 version = "0.6.2"

@@ -6,7 +6,7 @@
 use core::time::Duration;
 
 use ethox::time::Instant;
-use ring::aead;
+use chacha20poly1305::{aead::{self, AeadInPlace}, XChaCha20Poly1305};
 
 pub struct Peer {
     /// Send empty packet if we haven't heard for a while.
@@ -28,6 +28,8 @@ pub struct Peer {
     rekey_after_time: Duration,
     /// The last timestamp when we rekeyed.
     last_rekey_time: Instant,
+    /// The greatest received timestamp for this peer.
+    tai64n: u64,
 }
 
 /// State of one handshake.
@@ -38,4 +40,20 @@ pub struct Handshake {
     rekey_timeout: Duration,
     /// Currently chosen jitter duration.
     jitter: Duration,
+}
+
+type Nonce = aead::Nonce::<<XChaCha20Poly1305 as AeadInPlace>::NonceSize>;
+
+pub struct CreatedNonce {
+}
+
+/// Sliding window validator for nonces.
+///
+/// This is NOT a `NonceSequence`.
+pub struct SlidingWindowNonce {
+}
+
+/// A nonce valid for the sliding window.
+pub struct SlidingWindowValidatedNonce {
+    nonce: Option<Nonce>,
 }
