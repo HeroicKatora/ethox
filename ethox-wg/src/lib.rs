@@ -3,13 +3,16 @@
 //! It's not no-alloc since the underlying crypto implementation is not. If you find a library as
 //! good as `ring` which provides this then we might consider switching.
 #![no_std]
+/// Defines the wire formats for packets..
+mod wire;
+
 use core::convert::TryFrom;
 use core::time::Duration;
 
 use ethox::managed::Slice;
 use ethox::time::Instant;
 use ethox::wire::ip::Address;
-use chacha20poly1305::{aead::{self, AeadInPlace}, XChaCha20Poly1305};
+use chacha20poly1305::{aead::{self, AeadInPlace}, ChaCha20Poly1305, XChaCha20Poly1305};
 
 type NotSoSafeKey = aead::Key::<XChaCha20Poly1305>;
 
@@ -53,6 +56,9 @@ pub struct Handshake {
     jitter: Duration,
 }
 
+type XChaCha20Poly1305Nonce = aead::Nonce::<<XChaCha20Poly1305 as AeadInPlace>::NonceSize>;
+type ChaCha20Poly1305Nonce = aead::Nonce::<<ChaCha20Poly1305 as AeadInPlace>::NonceSize>;
+
 /// The nonce representation plus some common operations.
 /// This CAN be cloned so be careful. The unique version is `Nonce` and that can not be cloned.
 #[derive(Clone)]
@@ -86,8 +92,16 @@ pub struct SlidingWindowValidatedNonce {
 impl RawNonce {
     fn new(init: u64) -> Self {
         let mut repr = [0; 24];
-        repr[..8].copy_from_slice(&init.to_ne_bytes());
+        repr[16..].copy_from_slice(&init.to_ne_bytes());
         RawNonce { repr: repr.into() }
+    }
+
+    fn as_xaead_nonce(&self) -> &XChaCha20Poly1305Nonce {
+        &self.repr
+    }
+
+    fn as_aead_nonce(&self) -> &ChaCha20Poly1305Nonce {
+        ChaCha20Poly1305Nonce::from_slice(&self.repr[12..])
     }
 
     fn inc(&mut self) -> Result<(), UnspecifiedCryptoFailure> {
@@ -98,10 +112,10 @@ impl RawNonce {
         let mut carry = small;
         let mut repr = self.repr;
 
-        for chunk in repr.as_mut_slice().chunks_exact_mut(8) {
+        for chunk in repr.as_mut_slice().chunks_exact_mut(8).rev() {
             let bytes: &mut [u8; 8] = TryFrom::try_from(chunk).unwrap();
-            let (s, bit) = u64::from_ne_bytes(*bytes).overflowing_add(carry);
-            *bytes = s.to_ne_bytes();
+            let (s, bit) = u64::from_le_bytes(*bytes).overflowing_add(carry);
+            *bytes = s.to_le_bytes();
             carry = u64::from(bit);
         }
 
@@ -121,23 +135,23 @@ impl RawNonce {
 
         // Subtract self from the future.
         for (this, chunk) in {
-            self.repr.as_slice().chunks_exact(8)
-                .zip(repr.as_mut_slice().chunks_exact_mut(8))
+            self.repr.as_slice().chunks_exact(8).rev()
+                .zip(repr.as_mut_slice().chunks_exact_mut(8).rev())
         }{
             let sub: &[u8; 8] = TryFrom::try_from(this).unwrap();
             let bytes: &mut [u8; 8] = TryFrom::try_from(chunk).unwrap();
             
             // subtract sub from bytes with carry
-            let sub = u64::from_ne_bytes(*sub);
-            let (s, c0) = u64::from_ne_bytes(*bytes).overflowing_sub(sub);
+            let sub = u64::from_le_bytes(*sub);
+            let (s, c0) = u64::from_le_bytes(*bytes).overflowing_sub(sub);
             let (s, c1) = s.overflowing_sub(carry);
 
-            *bytes = s.to_ne_bytes();
+            *bytes = s.to_le_bytes();
             carry = u64::from(c0 | c1);
         }
 
-        let small_bytes: &mut [u8; 8] = TryFrom::try_from(&mut repr[..8]).unwrap();
-        let small = u64::from_ne_bytes(*small_bytes);
+        let small_bytes: &mut [u8; 8] = TryFrom::try_from(&mut repr[16..]).unwrap();
+        let small = u64::from_le_bytes(*small_bytes);
 
         *small_bytes = [0; 8];
         if repr.iter().any(|b| *b != 0) || carry != 0 {
@@ -276,6 +290,10 @@ fn raw_nonce_manip() {
     assert!(raw.forward_until(&zero).is_err());
 
     let one = raw.clone();
+    // On the definiton of Aead:
+    // > [..] with its nonce being composed of 32 bits of zeros followed by the 64-bit
+    // little-endian value of counter.
+    assert_eq!(one.as_aead_nonce().as_slice(), &[0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0]);
     assert!(raw.add_small(u64::MAX).is_ok());
     assert!(zero.forward_until(&raw).is_err());
     assert!(matches!(one.forward_until(&raw), Ok(u64::MAX)));
