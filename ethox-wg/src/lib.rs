@@ -74,7 +74,8 @@ pub struct CounterNonce {
 ///
 /// This is NOT a `NonceSequence`.
 pub struct SlidingWindowNonce {
-    base: RawNonce,
+    latest_seen_nonce: RawNonce,
+    words: [u64; Self::WORD_COUNT],
 }
 
 /// A nonce valid for the sliding window.
@@ -95,7 +96,9 @@ impl RawNonce {
 
     fn add_small(&mut self, small: u64) -> Result<(), UnspecifiedCryptoFailure> {
         let mut carry = small;
-        for chunk in self.repr.as_mut_slice().chunks_exact_mut(8) {
+        let mut repr = self.repr;
+
+        for chunk in repr.as_mut_slice().chunks_exact_mut(8) {
             let bytes: &mut [u8; 8] = TryFrom::try_from(chunk).unwrap();
             let (s, bit) = u64::from_ne_bytes(*bytes).overflowing_add(carry);
             *bytes = s.to_ne_bytes();
@@ -103,6 +106,7 @@ impl RawNonce {
         }
 
         if carry == 0 {
+            self.repr = repr;
             Ok(())
         } else {
             Err(UnspecifiedCryptoFailure)
@@ -134,9 +138,9 @@ impl RawNonce {
 
         let small_bytes: &mut [u8; 8] = TryFrom::try_from(&mut repr[..8]).unwrap();
         let small = u64::from_ne_bytes(*small_bytes);
-        *small_bytes = [0; 8];
 
-        if repr.iter().any(|b| *b != 0) {
+        *small_bytes = [0; 8];
+        if repr.iter().any(|b| *b != 0) || carry != 0 {
             Err(UnspecifiedCryptoFailure)
         } else {
             Ok(small)
@@ -152,16 +156,112 @@ impl CounterNonce {
     }
 }
 
+impl Default for SlidingWindowNonce {
+    fn default() -> Self {
+        // Requires that it is valid to round-trip those constants.
+        // This catches mistakes as it makes it an effective safety invariant of the type.
+        assert_eq!(Self::WORD_COUNT as u64 as usize, Self::WORD_COUNT);
+        assert_eq!(Self::WORD_BITS as u64 as usize, Self::WORD_BITS);
+        assert_eq!(Self::BITS as u64 as usize, Self::BITS);
+
+        SlidingWindowNonce {
+            latest_seen_nonce: RawNonce::new(0),
+            words: [0; Self::WORD_COUNT],
+        }
+    }
+}
+
 impl SlidingWindowNonce {
+    const WORD_COUNT: usize = 16;
+    const WORD_BITS: usize = 64;
+    const BITS: usize = Self::WORD_BITS*Self::WORD_COUNT;
+
     /// Do an operation if the nonce might be valid, then invalidate the nonce on success.
     fn validate_nonce(
         &mut self,
         nonce: RawNonce,
-        cb: impl FnOnce(Nonce) -> Result<(), UnspecifiedCryptoFailure>
+        message_validator: impl FnOnce(Nonce) -> Result<(), UnspecifiedCryptoFailure>
     ) -> Result<(), UnspecifiedCryptoFailure> {
+        if let Ok(by_n) = nonce.forward_until(&self.latest_seen_nonce) {
+            // When the nonce is not in the future..
+            // Let's see if it is inside the window.
+            let (word, bit) = self.word_and_bit_of(by_n)?;
+            // And when it is, it must be unused.
+            // Note that initial even the `latest_seen_nonce = 0` is unused.
+            self.require_empty_relative(word, bit)?;
+            // Okay, is a unique nonce. Now, is it a valid message?
+            message_validator(Nonce(nonce.clone()))?;
+            // Invalidate the nonce, no update of latest_seen_nonce.
+            self.strike_out_relative(word, bit);
+            Ok(())
+        } else if let Ok(n) = self.latest_seen_nonce.forward_until(&nonce) {
+            assert!(n > 0, "None can not be last seen"); // Was handled before in `if`.
+            // The nonce is in the future.
+            // This is always valid.
+            message_validator(Nonce(nonce.clone()))?;
+            // Okay, now update the latest_seen_nonce.
+            self.slide_window(n);
+            self.latest_seen_nonce = nonce;
+            // And remove the just used none.
+            self.strike_out_relative(0, 0);
+            Ok(())
+        } else {
+            // Validate the nonce is new.
+            Err(UnspecifiedCryptoFailure)
+        }
+    }
 
-        // Validate the nonce is new.
-        Err(UnspecifiedCryptoFailure)
+    fn window_size(&self) -> u64 {
+        Self::BITS as u64
+    }
+
+    fn slide_window(&mut self, by: u64) {
+        if by >= self.window_size() {
+            return self.words.iter_mut().for_each(|b| *b = 0);
+        }
+
+        let by = by as usize;
+        let full_words = by / Self::WORD_BITS;
+        let bits = (by % Self::WORD_BITS) as u64;
+        // First shift everything by full bytes, filling zeros.
+        self.words[..].rotate_right(full_words);
+        self.words[..full_words].iter_mut().for_each(|b| *b = 0);
+        // Then shift the bits, new bits enter from the bottom.
+        self.words[full_words..]
+            .iter_mut()
+            .fold(0u64, |next_bits, word| {
+                let temp = *word;
+                *word = (temp << bits) | next_bits;
+                // Spiritually, temp >> (Self::WORD_BITS as u64 - bits)
+                // But for bits == 0 we can not do that.
+                // However, we shift by at least one.
+                (temp >> 1) >> (Self::WORD_BITS as u64 - bits - 1)
+            });
+    }
+
+    fn word_and_bit_of(&self, backwards: u64) -> Result<(usize, usize), UnspecifiedCryptoFailure> {
+        if backwards >= self.window_size() {
+            Err(UnspecifiedCryptoFailure)
+        } else {
+            let offset = backwards as usize;
+            Ok((offset / Self::WORD_BITS, offset % Self::WORD_BITS))
+        }
+    }
+
+    fn require_empty_relative(&self, word: usize, bit: usize) -> Result<(), UnspecifiedCryptoFailure> {
+        assert!(word < Self::WORD_COUNT);
+        assert!(bit < Self::WORD_BITS);
+        if self.words[word] & 1 << bit == 0 {
+            Ok(())
+        } else {
+            Err(UnspecifiedCryptoFailure)
+        }
+    }
+
+    fn strike_out_relative(&mut self, word: usize, bit: usize) {
+        assert!(word < Self::WORD_COUNT);
+        assert!(bit < Self::WORD_BITS);
+        self.words[word] |= 1 << bit;
     }
 }
 
@@ -185,8 +285,68 @@ fn raw_nonce_manip() {
     assert!(matches!(one.forward_until(&other_one), Ok(0)));
     assert!(matches!(other_one.forward_until(&one), Ok(0)));
 
-
     // Can not occur in practice but okay.
     let mut last = RawNonce { repr: [0xff; 24].into() };
     assert!(last.inc().is_err());
+    assert!(last.inc().is_err());
+    assert!(last.forward_until(&zero).is_err());
+}
+
+#[test]
+fn sliding_window() {
+    let mut window = SlidingWindowNonce::default();
+    assert!(window.require_empty_relative(0, 0).is_ok());
+    window.strike_out_relative(0, 1);
+    assert!(window.require_empty_relative(0, 0).is_ok());
+    assert!(window.require_empty_relative(0, 1).is_err());
+    window.slide_window(2);
+    assert!(window.require_empty_relative(0, 1).is_ok());
+    assert!(window.require_empty_relative(0, 3).is_err());
+    window.slide_window(SlidingWindowNonce::WORD_BITS as u64);
+    assert!(window.require_empty_relative(0, 3).is_ok());
+    assert!(window.require_empty_relative(1, 3).is_err());
+    window.slide_window(SlidingWindowNonce::WORD_BITS as u64 - 3);
+    assert!(window.require_empty_relative(1, 3).is_ok());
+    assert!(window.require_empty_relative(2, 0).is_err());
+}
+
+#[test]
+fn sliding_validation() {
+    let mut window = SlidingWindowNonce::default();
+
+    // A function that says the mac was good.
+    let ok = |_| Ok(());
+    // A function that says the message was not authenticated.
+    let err = |_| Err(UnspecifiedCryptoFailure);
+    // A function that tests the sliding window filtered correctly.
+    let must_not_be_called = |nonce: Nonce| panic!("Invalid nonce passed {:?}", nonce.0.repr);
+
+    // Check: we can initialize the sequence by starting at 0.
+    assert!(window.validate_nonce(RawNonce::new(0), &err).is_err());
+    assert!(window.validate_nonce(RawNonce::new(0), &ok).is_ok());
+    assert!(window.require_empty_relative(0, 0).is_err());
+    assert!(window.validate_nonce(RawNonce::new(0), &must_not_be_called).is_err());
+
+    // Check: we can use the next in sequence.
+    assert!(window.validate_nonce(RawNonce::new(1), &ok).is_ok());
+    assert!(window.require_empty_relative(0, 0).is_err());
+    assert!(window.require_empty_relative(0, 1).is_err());
+    assert!(window.validate_nonce(RawNonce::new(0), &must_not_be_called).is_err());
+    assert!(window.validate_nonce(RawNonce::new(1), &must_not_be_called).is_err());
+
+    // Check: we can skip forward.
+    assert!(window.validate_nonce(RawNonce::new(64), &ok).is_ok());
+    assert!(window.validate_nonce(RawNonce::new(0), &must_not_be_called).is_err());
+    assert!(window.validate_nonce(RawNonce::new(1), &must_not_be_called).is_err());
+    assert!(window.require_empty_relative(0, 0).is_err());
+    assert!(window.require_empty_relative(0, 63).is_err());
+    assert!(window.require_empty_relative(1, 0).is_err());
+
+    // Check: we can deliver missing out-of-order.
+    assert!(window.require_empty_relative(0, 1).is_ok());
+    assert!(window.validate_nonce(RawNonce::new(63), &err).is_err());
+    assert!(window.require_empty_relative(0, 1).is_ok());
+    assert!(window.validate_nonce(RawNonce::new(63), &ok).is_ok());
+    assert!(window.require_empty_relative(0, 1).is_err());
+    assert!(window.validate_nonce(RawNonce::new(63), &must_not_be_called).is_err());
 }
