@@ -5,6 +5,12 @@ authors = ["Andreas Molzer <andreas.molzer@gmx.de>"]
 edition = "2018"
 
 [dependencies]
+# Needed for curve25519 operations.
+curve25519-dalek = "3"
+# Needed for the network operations in IP/UDP
+ethox = { path = "../ethox" }
+# Needed for ChaCha20Poly1305 AEAD.
+ring = "0.16"
 
 [dependencies.mio]
 version = "0.6.2"
