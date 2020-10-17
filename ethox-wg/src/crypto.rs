@@ -238,6 +238,15 @@ impl super::This {
         }
     }
 
+    pub(crate) fn from_key(system: System, private: StaticSecret) -> Self {
+        let public = PublicKey::from(&private);
+        super::This {
+            private,
+            public,
+            system,
+        }
+    }
+
     /// Prepare a handshake with one particular peer.
     ///
     /// This does some pre-calculation.
