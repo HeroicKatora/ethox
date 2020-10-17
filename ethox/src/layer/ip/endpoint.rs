@@ -126,6 +126,19 @@ impl<'a> Endpoint<'a> {
         Layer { endpoint: self.ip() }
     }
 
+    /// Use this endpoint as a controller.
+    ///
+    /// This may be used by an upper layer to emulate a fake ip layer without actually
+    /// receiving or sending packets through the traits.
+    pub fn controller<'ctrl>(&'ctrl mut self, eth: layer::eth::Controller<'ctrl>)
+        -> Controller<'ctrl>
+    {
+        Controller {
+            eth,
+            endpoint: self,
+        }
+    }
+
     fn ip(&mut self) -> IpEndpoint<'_, 'a> {
         IpEndpoint {
             inner: self,
@@ -191,15 +204,17 @@ impl Routing<'_> {
     }
 }
 
-impl<'data> IpEndpoint<'_, 'data> {
+impl<'data> Endpoint<'data> {
     pub(crate) fn neighbors(&self) -> &layer::arp::NeighborCache<'data> {
-        self.inner.arp.neighbors()
+        self.arp.neighbors()
     }
 
     pub(crate) fn neighbors_mut(&mut self) -> &mut layer::arp::NeighborCache<'data> {
-        self.inner.arp.neighbors_mut()
+        self.arp.neighbors_mut()
     }
+}
 
+impl<'data> IpEndpoint<'_, 'data> {
     fn into_arp_receiver(&mut self) -> layer::arp::Receiver<'_, 'data> {
         let Endpoint { routing, arp } = self.inner;
         arp.answer_for(routing)
@@ -211,9 +226,9 @@ impl<'data> IpEndpoint<'_, 'data> {
     }
 }
 
-impl packet::Endpoint for IpEndpoint<'_, '_> {
+impl packet::Endpoint for Endpoint<'_> {
     fn local_ip(&self, subnet: ip::Subnet) -> Option<ip::Address> {
-        self.inner.routing.addr
+        self.routing.addr
             .iter()
             .cloned()
             .map(|cidr| cidr.address())
@@ -222,7 +237,7 @@ impl packet::Endpoint for IpEndpoint<'_, '_> {
     }
 
     fn route(&self, dst_addr: ip::Address, time: Instant) -> Option<Route> {
-        self.inner.routing.route(dst_addr, time)
+        self.routing.route(dst_addr, time)
     }
 
     fn resolve(&mut self, addr: ip::Address, time: Instant, look: bool) -> Result<ethernet::Address> {
@@ -273,7 +288,7 @@ where
         self.handler.receive(packet::In {
             control: Controller {
                 eth: control.borrow_mut(),
-                endpoint: &mut self.endpoint,
+                endpoint: self.endpoint.inner,
             },
             packet,
         })
@@ -287,7 +302,7 @@ where
 {
     fn send(&mut self, packet: layer::eth::RawPacket<P>) {
         // FIXME: will *always* intercept, even if we can't actually send any arp.
-        if self.endpoint.neighbors().missing().count() > 0 {
+        if self.endpoint.inner.neighbors().missing().count() > 0 {
             return self.endpoint.into_arp_sender().send(packet);
         }
 
@@ -296,7 +311,7 @@ where
         self.handler.send(packet::Raw {
             control: Controller {
                 eth: eth_handle.borrow_mut(),
-                endpoint: &mut self.endpoint
+                endpoint: self.endpoint.inner,
             },
             payload,
         });

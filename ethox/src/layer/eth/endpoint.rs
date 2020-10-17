@@ -87,6 +87,19 @@ impl<'a> Endpoint<'a> {
         self.send(FnHandler(handler))
     }
 
+    /// Use this endpoint as a controller.
+    ///
+    /// This may be used by an upper layer to emulate a fake ethernet layer without actually
+    /// receiving or sending packets through the traits.
+    pub fn controller<'ctrl>(&'ctrl mut self, nic_handle: &'ctrl mut dyn nic::Handle)
+        -> Controller<'ctrl>
+    {
+        Controller {
+            nic_handle,
+            endpoint: self,
+        }
+    }
+
     fn eth(&mut self) -> EthEndpoint<'_, 'a> {
         EthEndpoint {
             inner: self,
@@ -99,9 +112,9 @@ impl<'a> Endpoint<'a> {
     }
 }
 
-impl packet::Endpoint for EthEndpoint<'_, '_> {
+impl packet::Endpoint for Endpoint<'_> {
     fn src_addr(&mut self) -> ethernet::Address {
-        self.inner.addr
+        self.addr
     }
 }
 
@@ -122,10 +135,7 @@ where
             return
         }
 
-        let control = Controller {
-            nic_handle: packet.handle,
-            endpoint: &mut self.endpoint,
-        };
+        let control = self.endpoint.inner.controller(packet.handle);
 
         let packet = packet::In { control, frame };
         self.handler.receive(packet)
@@ -139,11 +149,7 @@ where
     T: Send<P>,
 {
     fn send(&mut self, nic::Packet { handle, payload }: nic::Packet<H, P>) {
-        let control = Controller {
-            nic_handle: handle,
-            endpoint: &mut self.endpoint,
-        };
-
+        let control = self.endpoint.inner.controller(handle);
         let packet = packet::Raw { control, payload };
         self.handler.send(packet)
     }
