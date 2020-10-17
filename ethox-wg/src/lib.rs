@@ -2,7 +2,7 @@
 //!
 //! It's not no-alloc since the underlying crypto implementation is not. If you find a library as
 //! good as `ring` which provides this then we might consider switching.
-#![no_std]
+// #![no_std]
 extern crate alloc;
 
 /// Maps the libraries to the crypto primitives defined in the Whitepaper.
@@ -19,6 +19,10 @@ use ethox::wire::ip::Address;
 use chacha20poly1305::{aead::{self, AeadInPlace}, ChaCha20Poly1305, XChaCha20Poly1305};
 use x25519_dalek::{PublicKey, StaticSecret};
 
+/// A key for which we haven't decided if its sealing, unsealing, or raw key material.
+///
+/// In particular it might be dangerous to use this with a new nonce sequence if we don't ensure
+/// that the key is immediately discarded afterwards.
 type NotSoSafeKey = aead::Key::<XChaCha20Poly1305>;
 
 pub struct This {
@@ -32,7 +36,10 @@ pub struct PreHandshake {
     initiator_key: NotSoSafeKey,
     initiator_hash: [u8; 32],
     mac1_key: NotSoSafeKey,
+    initiator_public: PublicKey,
     peer_public: PublicKey,
+    /// Optional preshared key.
+    pre_shared_key: [u8; 32],
 }
 
 /// The state after a handshake init.
@@ -49,6 +56,7 @@ pub struct PostInitHandshake {
     ephemeral_public: PublicKey,
     /// The ephemeral private key if we created the handshake.
     ephemeral_private: Option<StaticSecret>,
+    pre_shared_key_q: [u8; 32],
 }
 
 /// The state after a handshake response.
@@ -63,6 +71,8 @@ pub struct PostResponseHandshake {
     responder_send: NotSoSafeKey,
     /// The current hash after the response message.
     responder_recv: NotSoSafeKey,
+    /// The final chaining hash.
+    chaining_hash: [u8; 32],
 }
 
 /// Static information about another Wireguard end point.
@@ -73,6 +83,7 @@ pub struct Peer {
     labelled_mac1_key: NotSoSafeKey,
     /// Precomputed derived keys for populating mac1 in cookie replies.
     labelled_cookie_key: NotSoSafeKey,
+    pre_shared_key: [u8; 32],
 }
 
 /// Non crypto graphic state for a connection.

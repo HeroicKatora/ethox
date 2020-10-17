@@ -213,16 +213,83 @@ impl System {
 }
 
 impl super::This {
+    pub(crate) fn ephemeral(mut system: System) -> Self {
+        let (private, public) = system.dh_generate();
+        super::This {
+            private,
+            public,
+            system,
+        }
+    }
+
     /// Prepare a handshake with one particular peer.
     ///
     /// This does some pre-calculation.
-    pub fn prepare(&mut self, to: &super::Peer) -> super::PreHandshake {
-        super::PreHandshake::for_peer(&mut self.system, to)
+    pub fn prepare_send(&mut self, to: &super::Peer) -> super::PreHandshake {
+        super::PreHandshake::for_peer(&mut self.system, self.public, to)
+    }
+
+    /// Prepare a handshake with one particular peer.
+    ///
+    /// This does some pre-calculation.
+    pub fn prepare_recv(&mut self, initiator: &super::Peer) -> super::PreHandshake {
+        let this = super::Peer::new(&mut self.system, self.public);
+        super::PreHandshake::for_peer(&mut self.system, initiator.public, &this)
+    }
+
+    /// Write one sealed initial handshake.
+    pub fn write_init(&mut self, pre: &super::PreHandshake, msg: &mut wireguard)
+        -> Result<super::PostInitHandshake, UnspecifiedCryptoFailure>
+    {
+        super::PostInitHandshake::write(self, pre, msg)
+    }
+
+    /// Read and unseal an incoming initial handshake.
+    pub fn read_init(&mut self, pre: &super::PreHandshake, msg: &mut wireguard)
+        -> Result<super::PostInitHandshake, UnspecifiedCryptoFailure>
+    {
+        super::PostInitHandshake::for_incoming(self, pre, msg)
+    }
+
+    /// Write one handshake response.
+    pub fn write_response(&mut self, pre: super::PostInitHandshake, msg: &mut wireguard)
+        -> Result<super::PostResponseHandshake, UnspecifiedCryptoFailure>
+    {
+        super::PostResponseHandshake::write(self, pre, msg)
+    }
+
+    /// Write one handshake response.
+    pub fn read_response(&mut self, pre: super::PostInitHandshake, msg: &mut wireguard)
+        -> Result<super::PostResponseHandshake, UnspecifiedCryptoFailure>
+    {
+        super::PostResponseHandshake::for_incoming(self, pre, msg)
+    }
+}
+
+impl super::Peer {
+    pub(crate) fn new(system: &mut System, public: PublicKey) -> Self {
+        let labelled_mac1_key = system.hash([
+            System::LABEL_MAC1.as_bytes(),
+            public.as_bytes()
+        ].iter().copied());
+
+        let labelled_cookie_key = system.hash([
+            System::LABEL_COOKIE.as_bytes(),
+            public.as_bytes()
+        ].iter().copied());
+
+        super::Peer {
+            public,
+            addresses: (&mut [][..]).into(),
+            labelled_mac1_key: NotSoSafeKey::from(labelled_mac1_key),
+            labelled_cookie_key: NotSoSafeKey::from(labelled_cookie_key),
+            pre_shared_key: [0; 32],
+        }
     }
 }
 
 impl super::PreHandshake {
-    pub(crate) fn for_peer(system: &mut System, to: &super::Peer) -> Self {
+    pub(crate) fn for_peer(system: &mut System, initiator: PublicKey, to: &super::Peer) -> Self {
         let c_i = system.hash_one(System::CONSTRUCTION.as_bytes());
         let h_i = system.hash([&c_i, System::IDENTIFIER.as_bytes()].iter().cloned());
         let h_i = system.hash([&h_i[..], to.public.as_bytes()].iter().cloned());
@@ -233,6 +300,8 @@ impl super::PreHandshake {
             initiator_hash: h_i,
             mac1_key: NotSoSafeKey::from(c),
             peer_public: to.public,
+            initiator_public: initiator,
+            pre_shared_key: to.pre_shared_key,
         }
     }
 }
@@ -255,10 +324,10 @@ impl super::PostInitHandshake {
         // msg.ephemeral:=Epubi
         msg.init_ephemeral().copy_from_slice(epub_i.as_bytes());
         // Hi:=Hash(Hi‖msg.ephemeral)
-        let h_i = system.update_hash(h_i, msg.init_ephemeral());
+        let h_i = system.update_hash(h_i, epub_i.as_bytes());
         // (Ci,κ):=Kdf2(Ci,DH(Eprivi,Spubr))
         let (c_i, k) = {
-            let dh = system.dh(&epriv_i, &this.public);
+            let dh = system.dh(&epriv_i, &pre.peer_public);
             system.kdf2(c_i, dh.as_bytes())
         };
         // msg.static:=Aead(κ,0,Spubi,Hi)
@@ -294,6 +363,7 @@ impl super::PostInitHandshake {
             initiator_public: this.public,
             ephemeral_public: epub_i,
             ephemeral_private: Some(epriv_i),
+            pre_shared_key_q: pre.pre_shared_key,
         })
     }
 
@@ -320,8 +390,10 @@ impl super::PostInitHandshake {
             let dh = system.dh(&this.private, &epub_i);
             system.kdf2(c_i, dh.as_bytes())
         };
-        // Aead(κ,0,Spubi,Hi)?=msg.static
+        // Hi:=Hash(Hi‖msg.static)
         let msg_static = msg.init_static();
+        let u_i = system.update_hash(h_i, msg_static);
+        // Aead(κ,0,Spubi,Hi)?=msg.static
         system.undo_aead(
             &k,
             &mut SlidingWindowNonce::default(),
@@ -329,15 +401,16 @@ impl super::PostInitHandshake {
             &mut msg_static[..],
             &h_i,
         )?;
-        // Hi:=Hash(Hi‖msg.static)
-        let h_i = system.update_hash(h_i, msg_static);
+        let h_i = u_i;
         // (Ci,κ):=Kdf2(Ci,DH(Spubi,Sprivr))
         let (c_i, k) = {
-            let dh = system.dh(&this.private, &epub_i);
+            let dh = system.dh(&this.private, &pre.initiator_public);
             system.kdf2(c_i, dh.as_bytes())
         };
-        // Aead(κ,0,Timestamp(),Hi)?=msg.timestamp
+        // Hi:=Hash(Hi‖msg.timestamp)
         let msg_timestamp = msg.init_timestamp();
+        let u_i = system.update_hash(h_i, msg_timestamp);
+        // Aead(κ,0,Timestamp(),Hi)?=msg.timestamp
         system.undo_aead(
             &k,
             &mut SlidingWindowNonce::default(),
@@ -345,8 +418,7 @@ impl super::PostInitHandshake {
             &mut msg_timestamp[..],
             &h_i,
         )?;
-        // Hi:=Hash(Hi‖msg.timestamp)
-        let h_i = system.update_hash(h_i, msg_timestamp);
+        let h_i = u_i;
 
         Ok(super::PostInitHandshake {
             initiator_key: c_i,
@@ -354,12 +426,9 @@ impl super::PostInitHandshake {
             initiator_public: pre.peer_public,
             ephemeral_public: epub_i,
             ephemeral_private: None,
+            pre_shared_key_q: pre.pre_shared_key,
         })
     }
-}
-
-extern "Rust" {
-    fn invoke_q() -> NotSoSafeKey;
 }
 
 impl super::PostResponseHandshake {
@@ -393,12 +462,10 @@ impl super::PostResponseHandshake {
             let dh = system.dh(&epriv_r, &pre.initiator_public);
             system.kdf1(c_r, dh.as_bytes())
         };
-        // FIXME!!!! What is Q.
-        let q: NotSoSafeKey = unsafe { invoke_q() };
+        // TODO: Is this it?
+        let q: NotSoSafeKey = NotSoSafeKey::from(pre.pre_shared_key_q);
         // (Cr,τ,κ):=Kdf3(Cr,Q)
         let (c_r, t, k) = system.kdf3(c_r, &q);
-        // Hr:=Hash(Hr‖τ)
-        let h_r = system.update_hash(h_r, &t);
         // Hr:=Hash(Hr‖τ)
         let h_r = system.update_hash(h_r, &t);
         // msg.empty:=Aead(κ,0,,Hr)
@@ -421,6 +488,7 @@ impl super::PostResponseHandshake {
             initiator_recv,
             responder_send,
             responder_recv,
+            chaining_hash: h_r,
         })
     }
 
@@ -451,14 +519,16 @@ impl super::PostResponseHandshake {
             let dh = system.dh(&this.private, &epub_r);
             system.kdf1(c_r, dh.as_bytes())
         };
-        // FIXME!!!! What is Q.
-        let q: NotSoSafeKey = unsafe { invoke_q() };
+        // TODO: Is this it?
+        let q: NotSoSafeKey = NotSoSafeKey::from(pre.pre_shared_key_q);
         // (Cr,τ,κ):=Kdf3(Cr,Q)
         let (c_r, t, k) = system.kdf3(c_r, &q);
         // Hr:=Hash(Hr‖τ)
         let h_r = system.update_hash(h_r, &t);
-        // Aead(κ,0,,Hr):=msg.empty
+        //Hr:=Hash(Hr‖msg.empty)
         let msg_empty = msg.resp_empty();
+        let u_r = system.update_hash(h_r, msg_empty);
+        // Aead(κ,0,,Hr):=msg.empty
         system.undo_aead(
             &k,
             &mut SlidingWindowNonce::default(),
@@ -466,8 +536,7 @@ impl super::PostResponseHandshake {
             &mut msg_empty[..],
             &h_r,
         )?;
-        //Hr:=Hash(Hr‖msg.empty)
-        let h_r = system.update_hash(h_r, msg_empty);
+        let h_r = u_r;
         let responder_chaining_key = c_r;
 
         let (initiator_send, initiator_recv) = system.kdf2(initiator_chaining_key, &[]);
@@ -477,6 +546,7 @@ impl super::PostResponseHandshake {
             initiator_recv,
             responder_send,
             responder_recv,
+            chaining_hash: h_r,
         })
     }
 }
@@ -488,7 +558,6 @@ fn test_handshake() {
     let (priv_r, pub_r) = system.dh_generate();
 
     let (epub_i, epub_r);
-    let (saved_epriv_i, saved_epriv_r);
 
     // Things that are transported over the channel.
     let (
@@ -502,6 +571,9 @@ fn test_handshake() {
         msg_c,
         msg_h,
     );
+
+    // Pre-Shared key Q.
+    let psk_q = NotSoSafeKey::from([0u8; 32]);
 
     {
         // The initiator side.
@@ -554,8 +626,6 @@ fn test_handshake() {
         let h_i = system.hash([&h_i[..], &msg_timestamp[..]].iter().cloned());
         msg_c = c_i;
         msg_h = h_i;
-
-        saved_epriv_i = epriv_i;
     }
 
     let (
@@ -566,8 +636,6 @@ fn test_handshake() {
         // these are implicit transmissions..
         rsp_c,
         rsp_h,
-        // Pre-Shared key Q.
-        rsp_q,
     );
 
     {
@@ -611,11 +679,7 @@ fn test_handshake() {
         };
 
         let (c_r, t, k) = {
-            // Assuming definition of Q here..
-            let q = system.dh(&epriv_r, &epub_i);
-            let mut kdf = system.kdf(&c_r, q.as_bytes());
-            rsp_q = q;
-
+            let mut kdf = system.kdf(&c_r, &psk_q);
             (kdf.next().unwrap(), kdf.next().unwrap(), kdf.next().unwrap())
         };
 
@@ -635,15 +699,10 @@ fn test_handshake() {
         let h_r = system.hash([&h_r[..], &rsp_empty[..]].iter().cloned());
         rsp_c = c_r;
         rsp_h = h_r;
-
-        saved_epriv_r = epriv_r;
     }
 
     // Final check by initiator..
     {
-        let msg_q = system.dh(&saved_epriv_i, &epub_r);
-        assert_eq!(msg_q.as_bytes(), rsp_q.as_bytes());
-
         let mut nonce = SlidingWindowNonce::default();
         system.undo_aead(
             &rsp_empty_key,
@@ -655,5 +714,39 @@ fn test_handshake() {
     }
 
     // Those would be used only when proceeding..
-    let _ = (rsp_c, rsp_h, saved_epriv_r);
+    let _ = (rsp_c, rsp_h);
+}
+
+#[test]
+fn test_handshake_with_packets() {
+    let init = System::new();
+    let resp = System::new();
+    
+    let mut init = super::This::ephemeral(init);
+    let mut resp = super::This::ephemeral(resp);
+    let send_peer = super::Peer::new(&mut init.system, resp.public);
+    let recv_peer = super::Peer::new(&mut resp.system, init.public);
+
+    let i_pre = init.prepare_send(&send_peer);
+    let r_pre = resp.prepare_recv(&recv_peer);
+
+    let mut message_buffer = alloc::vec::Vec::from([0; 120]);
+    // We don't use the full messages here..
+    let wireguard = wireguard::new_unchecked_mut(&mut message_buffer);
+
+    let i_post = init.write_init(&i_pre, wireguard)
+        .expect("Failed to write handshake");
+    let r_post = resp.read_init(&r_pre, wireguard)
+        .expect("Failed to read handshake");
+
+    let r_done = resp.write_response(r_post, wireguard)
+        .expect("Failed to write response");
+    let i_done = resp.read_response(i_post, wireguard)
+        .expect("Failed to write response");
+
+    assert_eq!(i_done.initiator_send, r_done.initiator_send);
+    assert_eq!(i_done.initiator_recv, r_done.initiator_recv);
+    assert_eq!(i_done.responder_send, r_done.responder_send);
+    assert_eq!(i_done.responder_recv, r_done.responder_recv);
+    assert_eq!(i_done.chaining_hash, r_done.chaining_hash);
 }
