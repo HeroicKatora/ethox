@@ -151,6 +151,38 @@ impl wireguard {
         &mut self.as_bytes_mut()[field::INIT_STATIC]
     }
 
+    /// Get all bytes before the init mac1 field.
+    ///
+    /// # Panics
+    /// This will not verify if the message has the right length to contain this field.
+    pub fn init_pre_mac1(&mut self) -> &mut [u8] {
+        &mut self.as_bytes_mut()[..field::INIT_MAC1.start]
+    }
+
+    /// Get the init mac1 field.
+    ///
+    /// # Panics
+    /// This will not verify if the message has the right length to contain this field.
+    pub fn init_mac1(&mut self) -> &mut [u8] {
+        &mut self.as_bytes_mut()[field::INIT_MAC1]
+    }
+
+    /// Get all bytes before the init mac2 field.
+    ///
+    /// # Panics
+    /// This will not verify if the message has the right length to contain this field.
+    pub fn init_pre_mac2(&mut self) -> &mut [u8] {
+        &mut self.as_bytes_mut()[..field::INIT_MAC2.start]
+    }
+
+    /// Get the init mac2 field.
+    ///
+    /// # Panics
+    /// This will not verify if the message has the right length to contain this field.
+    pub fn init_mac2(&mut self) -> &mut [u8] {
+        &mut self.as_bytes_mut()[field::INIT_MAC2]
+    }
+
     /// Get the init timestamp field.
     ///
     /// # Panics

@@ -30,6 +30,9 @@ default-features = false
 [dependencies.digest]
 version = "0.9"
 default-features = false
+[dependencies.subtle]
+version = "2.3"
+default-features = false
 
 [dependencies.rand]
 version = "0.7"

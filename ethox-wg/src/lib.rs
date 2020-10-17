@@ -2,13 +2,15 @@
 //!
 //! It's not no-alloc since the underlying crypto implementation is not. If you find a library as
 //! good as `ring` which provides this then we might consider switching.
-// #![no_std]
+#![no_std]
 extern crate alloc;
 
 /// Maps the libraries to the crypto primitives defined in the Whitepaper.
 mod crypto;
-/// Defines the wire formats for packets..
+/// Defines the wire formats for packets.
 mod wire;
+/// Defines the ethox-layer for the handler.
+mod layer;
 
 use core::convert::TryFrom;
 use core::time::Duration;

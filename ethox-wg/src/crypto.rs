@@ -138,6 +138,22 @@ impl System {
         output
     }
 
+    pub(crate) fn verify_mac(&mut self, key: &NotSoSafeKey, value: &[u8], mac: [u8; 16])
+        -> Result<(), UnspecifiedCryptoFailure>
+    {
+        use digest::VariableOutputDirty;
+        use subtle::ConstantTimeEq;
+        let mut keyed = VarBlake2s::new_keyed(key.as_slice(), 16);
+        keyed.update(value);
+        let mut output = [0u8; 16];
+        keyed.finalize_variable_dirty(|cb| output.copy_from_slice(cb));
+        if output.ct_eq(&mac).into() {
+            Ok(())
+        } else {
+            Err(UnspecifiedCryptoFailure)
+        }
+    }
+
     pub(crate) fn hmac(&mut self, key: &NotSoSafeKey, value: &[u8]) -> [u8; 32] {
         let mut hmac = Hmac::<Blake2s>::new_varkey(key.as_slice()).unwrap();
         hmac.update(value);
@@ -357,6 +373,10 @@ impl super::PostInitHandshake {
         // Hi:=Hash(Hi‖msg.timestamp)
         let h_i = system.update_hash(h_i, msg_timestamp);
 
+        // msg.mac1:=Mac(Hash(Label-Mac1‖Spubm′),msgα)
+        let mac1 = system.mac(&pre.mac1_key, msg.init_pre_mac1());
+        msg.init_mac1().copy_from_slice(&mac1);
+
         Ok(super::PostInitHandshake {
             initiator_key: NotSoSafeKey::from(c_i),
             initiator_hash: h_i,
@@ -376,6 +396,11 @@ impl super::PostInitHandshake {
         let c_i = pre.initiator_key;
         let h_i = pre.initiator_hash;
         let system = &mut this.system;
+
+        // msg.mac1:=Mac(Hash(Label-Mac1‖Spubm′),msgα)
+        let mut expected = [0u8; 16];
+        expected.copy_from_slice(msg.init_mac1());
+        system.verify_mac(&pre.mac1_key, msg.init_pre_mac1(), expected)?;
 
         // Epubi:=msg.ephemeral
         let epub_i = msg.init_ephemeral();
@@ -730,7 +755,7 @@ fn test_handshake_with_packets() {
     let i_pre = init.prepare_send(&send_peer);
     let r_pre = resp.prepare_recv(&recv_peer);
 
-    let mut message_buffer = alloc::vec::Vec::from([0; 120]);
+    let mut message_buffer = alloc::vec::Vec::from([0; 132]);
     // We don't use the full messages here..
     let wireguard = wireguard::new_unchecked_mut(&mut message_buffer);
 
@@ -749,4 +774,28 @@ fn test_handshake_with_packets() {
     assert_eq!(i_done.responder_send, r_done.responder_send);
     assert_eq!(i_done.responder_recv, r_done.responder_recv);
     assert_eq!(i_done.chaining_hash, r_done.chaining_hash);
+}
+
+#[test]
+fn silence_on_bad_mac1() {
+    let init = System::new();
+    let resp = System::new();
+    
+    let mut init = super::This::ephemeral(init);
+    let mut resp = super::This::ephemeral(resp);
+    let send_peer = super::Peer::new(&mut init.system, resp.public);
+    let recv_peer = super::Peer::new(&mut resp.system, init.public);
+
+    let i_pre = init.prepare_send(&send_peer);
+    let r_pre = resp.prepare_recv(&recv_peer);
+
+    let mut message_buffer = alloc::vec::Vec::from([0; 132]);
+    // We don't use the full messages here..
+    let wireguard = wireguard::new_unchecked_mut(&mut message_buffer);
+
+    init.write_init(&i_pre, wireguard)
+        .expect("Failed to write handshake");
+    // Zero the mac1.
+    wireguard.init_mac1().iter_mut().for_each(|b| *b = 0);
+    assert!(resp.read_init(&r_pre, wireguard).is_err());
 }
