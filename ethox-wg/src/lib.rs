@@ -17,12 +17,57 @@ use ethox::managed::Slice;
 use ethox::time::Instant;
 use ethox::wire::ip::Address;
 use chacha20poly1305::{aead::{self, AeadInPlace}, ChaCha20Poly1305, XChaCha20Poly1305};
+use x25519_dalek::{PublicKey, StaticSecret};
 
 type NotSoSafeKey = aead::Key::<XChaCha20Poly1305>;
 
+pub struct This {
+    private: StaticSecret,
+    public: PublicKey,
+    system: crypto::System,
+}
+
+/// A pre-calculation for a handshake to a peer.
+pub struct PreHandshake {
+    initiator_key: NotSoSafeKey,
+    initiator_hash: [u8; 32],
+    mac1_key: NotSoSafeKey,
+    peer_public: PublicKey,
+}
+
+/// The state after a handshake init.
+///
+/// Construct it by creating a message, or by unsealing one to us.
+pub struct PostInitHandshake {
+    /// The rolling key for the hash observing the handshake.
+    initiator_key: NotSoSafeKey,
+    /// The current hash after the init message.
+    initiator_hash: [u8; 32],
+    /// The ephemeral public key of the initiator.
+    initiator_public: PublicKey,
+    /// The ephemeral public key.
+    ephemeral_public: PublicKey,
+    /// The ephemeral private key if we created the handshake.
+    ephemeral_private: Option<StaticSecret>,
+}
+
+/// The state after a handshake response.
+///
+/// Construct it by responding to a `PostInitHandshake`, or by unsealing a response.
+pub struct PostResponseHandshake {
+    /// The rolling key for the hash observing the handshake.
+    initiator_send: NotSoSafeKey,
+    /// The current hash after the init message.
+    initiator_recv: NotSoSafeKey,
+    /// The rolling key for the hash observing the handshake.
+    responder_send: NotSoSafeKey,
+    /// The current hash after the response message.
+    responder_recv: NotSoSafeKey,
+}
+
 /// Static information about another Wireguard end point.
 pub struct Peer {
-    unbound_key: NotSoSafeKey,
+    public: PublicKey,
     addresses: Slice<'static, Address>,
     /// Precomputed derived keys for populating mac1 in cookie requests.
     labelled_mac1_key: NotSoSafeKey,
@@ -30,6 +75,7 @@ pub struct Peer {
     labelled_cookie_key: NotSoSafeKey,
 }
 
+/// Non crypto graphic state for a connection.
 pub struct Client {
     /// Send empty packet if we haven't heard for a while.
     keepalive: Duration,

@@ -134,6 +134,46 @@ impl wireguard {
             Ok(())
         }
     }
+
+    /// Get the init ephemeral field.
+    ///
+    /// # Panics
+    /// This will not verify if the message has the right length to contain this field.
+    pub fn init_ephemeral(&mut self) -> &mut [u8] {
+        &mut self.as_bytes_mut()[field::INIT_EPHEMERAL]
+    }
+
+    /// Get the init static field.
+    ///
+    /// # Panics
+    /// This will not verify if the message has the right length to contain this field.
+    pub fn init_static(&mut self) -> &mut [u8] {
+        &mut self.as_bytes_mut()[field::INIT_STATIC]
+    }
+
+    /// Get the init timestamp field.
+    ///
+    /// # Panics
+    /// This will not verify if the message has the right length to contain this field.
+    pub fn init_timestamp(&mut self) -> &mut [u8] {
+        &mut self.as_bytes_mut()[field::INIT_TIMESTAMP]
+    }
+
+    /// Get the response ephemeral field.
+    ///
+    /// # Panics
+    /// This will not verify if the message has the right length to contain this field.
+    pub fn resp_ephemeral(&mut self) -> &mut [u8] {
+        &mut self.as_bytes_mut()[field::RESP_EPHEMERAL]
+    }
+
+    /// Get the response empty field.
+    ///
+    /// # Panics
+    /// This will not verify if the message has the right length to contain this field.
+    pub fn resp_empty(&mut self) -> &mut [u8] {
+        &mut self.as_bytes_mut()[field::RESP_EMPTY]
+    }
 }
 
 impl Repr {
