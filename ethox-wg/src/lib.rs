@@ -78,7 +78,7 @@ struct RawNonce {
 struct Nonce(RawNonce);
 
 #[derive(Debug)]
-struct UnspecifiedCryptoFailure;
+pub struct UnspecifiedCryptoFailure;
 
 pub struct CounterNonce {
     state: RawNonce,
@@ -175,6 +175,24 @@ impl CounterNonce {
         let only_on_success = RawNonce { repr: self.state.repr };
         self.state.inc()?;
         Ok(Nonce(only_on_success))
+    }
+}
+
+impl Default for CounterNonce {
+    fn default() -> CounterNonce {
+        CounterNonce {
+            state: RawNonce::new(0),
+        }
+    }
+}
+
+impl Nonce {
+    fn as_xaead_nonce(&self) -> &XChaCha20Poly1305Nonce {
+        self.0.as_xaead_nonce()
+    }
+
+    fn as_aead_nonce(&self) -> &ChaCha20Poly1305Nonce {
+        self.0.as_aead_nonce()
     }
 }
 

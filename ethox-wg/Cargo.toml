@@ -21,6 +21,16 @@ version = "0.6"
 default-features = false
 features = ["alloc", "xchacha20poly1305"]
 
+[dependencies.blake2]
+version = "0.9"
+default-features = false
+[dependencies.hmac]
+version = "0.10"
+default-features = false
+[dependencies.digest]
+version = "0.9"
+default-features = false
+
 [dependencies.rand]
 version = "0.7"
 default-features = false
@@ -31,6 +41,7 @@ default-features = false
 [dependencies.rand_chacha]
 version = "0.2"
 default-features = false
+
 
 [dependencies.mio]
 version = "0.6.2"
