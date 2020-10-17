@@ -5,19 +5,32 @@ authors = ["Andreas Molzer <andreas.molzer@gmx.de>"]
 edition = "2018"
 
 [dependencies]
-# Needed for curve25519 operations.
-curve25519-dalek = "3"
+# Needed for curve25519 DH operations (RFC 7748).
+# Based on curve25519-dalek montgomery representation.
+x25519-dalek = "1"
 # Needed for the network operations in IP/UDP
 ethox = { path = "../ethox" }
+
 # Needed for ChaCha20Poly1305 AEAD.
 # Alternatives:
 # * `chacha20-poly1305-aead` has no in-place and looks primitive.
 # * `ring` does not have a 24 byte nonce option. But we use a structure similar
 #    to its `NonceSequence` trait to avoid nonce reuse.
-[dependencies. chacha20poly1305]
+[dependencies.chacha20poly1305]
 version = "0.6"
 default-features = false
 features = ["alloc", "xchacha20poly1305"]
+
+[dependencies.rand]
+version = "0.7"
+default-features = false
+features = ["alloc", "getrandom"]
+[dependencies.rand_core]
+version = "0.5"
+default-features = false
+[dependencies.rand_chacha]
+version = "0.2"
+default-features = false
 
 [dependencies.mio]
 version = "0.6.2"

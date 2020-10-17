@@ -1,6 +1,9 @@
-use ethox::wire::ip::Address;
+use ethox::wire::{ip::Address, Error};
+use ethox::byte_wrapper;
 
-/// A read/write wrapper around a Wireguard packet buffer.
+/// A read/writer wrapper for a sealed Wireguard packet buffer.
+///
+/// Try to unseal it by providing your own private key.
 #[derive(Debug, PartialEq, Clone)]
 pub struct Packet<T> {
     buffer: T,
@@ -44,20 +47,109 @@ mod field {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Repr {
-    FirstMessage {
+    Init {
         sender: Address,
     },
-    Transport {
+    Response {
+    },
+    Cookie {
+    },
+    Data {
         receiver: Address,
-        counter: u64,
+        datalen: usize,
+    },
+}
+
+byte_wrapper! {
+    #[derive(Debug, PartialEq, Eq)]
+    pub struct wireguard([u8]);
+}
+
+impl wireguard {
+    pub const MSG_INIT: u8 = 1;
+    pub const MSG_RESPOND: u8 = 2;
+    pub const MSG_COOKIE: u8 = 3;
+    pub const MSG_DATA: u8 = 4;
+
+    /// Imbue a raw octet buffer with IPv4 packet structure.
+    pub fn new_unchecked(data: &[u8]) -> &Self {
+        Self::__from_macro_new_unchecked(data)
+    }
+
+    /// Imbue a mutable octet buffer with IPv4 packet structure.
+    pub fn new_unchecked_mut(data: &mut [u8]) -> &mut Self {
+        Self::__from_macro_new_unchecked_mut(data)
+    }
+
+    pub fn new_checked(data: &[u8]) -> Result<&Self, Error> {
+        Self::new_unchecked(data).check_len()?;
+        Ok(Self::new_unchecked(data))
+    }
+
+    pub fn new_checked_mut(data: &mut [u8]) -> Result<&mut Self, Error> {
+        Self::new_checked(&data[..])?;
+        Ok(Self::new_unchecked_mut(data))
+    }
+
+    /// Unwrap the packet as a raw byte slice.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    /// Unwrap the packet as a mutable raw byte slice.
+    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+
+    /// Ensure that no accessor method will panic if called.
+    /// Returns `Err(Error::Truncated)` if the buffer is too short.
+    /// Returns `Err(Error::Malformed)` if the length field has a value smaller
+    /// than the header length.
+    ///
+    /// The result of this check is invalidated by calling [set_len].
+    ///
+    /// [set_len]: #method.set_len
+    pub fn check_len(&self) -> Result<(), Error> {
+        let assumed_len = match self.0.get(0) {
+            // FIXME: use associated constant if possible..
+            Some(1) /* init */ => field::INIT_MAC2.end,
+            Some(2) /* respond */ => field::RESP_MAC2.end,
+            Some(3) /* cookie */ => field::COOKIE_COOKIE.end,
+            Some(4) /* data */ => {
+                // Any length divisible by 16 (the padding) is okay.
+                if self.0.len() % 16 != 0 {
+                    return Err(Error::Malformed)
+                }
+
+                // But at least an empty package must be there.
+                field::DATA_MESSAGE(0).end
+            },
+            None => return Err(Error::Truncated),
+            _ => return Err(Error::Malformed),
+        };
+
+        if self.0.len() < assumed_len {
+            Err(Error::Truncated)
+        } else {
+            Ok(())
+        }
     }
 }
 
-struct wireguard([u8]);
+impl Repr {
+    pub fn parse(packet: &wireguard) -> Result<Repr, Error> {
+        todo!()
+    }
 
-/// A sealed Wireguard message.
-///
-/// Try to unseal it by providing a private key.
+    pub fn buffer_len(&self) -> usize {
+        match self {
+            Repr::Init { .. } => field::INIT_MAC2.end,
+            Repr::Response { .. } => field::RESP_MAC2.end,
+            Repr::Cookie { .. } => field::COOKIE_COOKIE.end,
+            Repr::Data { datalen, .. } => field::DATA_MESSAGE(*datalen).end,
+        }
+    }
+}
 #[derive(Debug, PartialEq, Clone)]
 struct Sealed<T> {
     buffer: T,

@@ -3,6 +3,10 @@
 //! It's not no-alloc since the underlying crypto implementation is not. If you find a library as
 //! good as `ring` which provides this then we might consider switching.
 #![no_std]
+extern crate alloc;
+
+/// Maps the libraries to the crypto primitives defined in the Whitepaper.
+mod crypto;
 /// Defines the wire formats for packets..
 mod wire;
 
@@ -20,9 +24,13 @@ type NotSoSafeKey = aead::Key::<XChaCha20Poly1305>;
 pub struct Peer {
     unbound_key: NotSoSafeKey,
     addresses: Slice<'static, Address>,
+    /// Precomputed derived keys for populating mac1 in cookie requests.
+    labelled_mac1_key: NotSoSafeKey,
+    /// Precomputed derived keys for populating mac1 in cookie replies.
+    labelled_cookie_key: NotSoSafeKey,
 }
 
-pub struct Client{
+pub struct Client {
     /// Send empty packet if we haven't heard for a while.
     keepalive: Duration,
     /// The last time we heard from the peer.
