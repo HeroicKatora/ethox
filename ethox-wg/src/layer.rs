@@ -1,8 +1,10 @@
 use alloc::{string::String, vec::Vec};
-use super::{crypto, Peer, This};
+use super::{crypto, Peer, This, wire::Packet, wire::Repr, wire::wireguard};
 use ethox::managed::Slice;
+use ethox::nic::{self, common::{EnqueueFlag, PacketInfo}, Capabilities};
 use ethox::layer::{arp, eth, ip, udp};
-use ethox::wire::{self, Payload, PayloadMut};
+use ethox::wire::{self, PayloadMut};
+use ethox::time::Instant;
 use x25519_dalek::{PublicKey, StaticSecret};
 
 /// Open configuration.
@@ -23,7 +25,10 @@ pub struct InterfaceConfig {
 pub struct PeerConfig {
     /// Public key of the peer.
     pub public_key: KeyConfig,
-    pub allowed_ips: Slice<'static, wire::ip::v4::Cidr>,
+    /// The subnets dedicated to this peer.
+    pub allowed_ips: Slice<'static, wire::ip::v4::Subnet>,
+    /// An optional address of the peer.
+    pub assumed_at: Option<(wire::ip::v4::Address, u16)>,
 }
 
 pub enum KeyConfig {
@@ -55,18 +60,31 @@ impl Wireguard {
         let fake_src = wire::ethernet::Address([0; 6]);
         let fake_gw = wire::ip::v4::Address([0; 4]);
 
+        let routes: usize = config.peers
+            .iter()
+            .map(|peer| peer.allowed_ips.len())
+            .sum();
+
         let mut neighbors = arp::NeighborCache::new({
             Slice::One(arp::Neighbor::default())
         });
 
         let mut routes = ip::Routes::new({
-            Slice::One(ip::Route::unspecified())
+            alloc::vec![ip::Route::unspecified(); routes]
         });
 
         neighbors.fill(fake_gw.into(), fake_src, None)
             .expect("The neighbor was still available");
-        routes.add_route(ip::Route::new_ipv4_gateway(fake_gw))
-            .expect("The route was still available");
+
+        for peer in config.peers.iter() {
+            for &subnet in peer.allowed_ips.iter() {
+                routes.add_route(ip::Route {
+                    net: subnet.into(),
+                    next_hop: fake_gw.into(),
+                    expires_at: ethox::time::Expiration::Never,
+                }).expect("The route was still available");
+            }
+        }
 
         let private_key = config.interface.private_key.to_private();
         let mut system = crypto::System::new();
@@ -78,7 +96,7 @@ impl Wireguard {
                 let mut peer = Peer::new(&mut system, public);
                 peer.addresses = cpeer.allowed_ips
                     .iter()
-                    .map(|cidr| cidr.address().into())
+                    .map(|&cidr| cidr.into())
                     .collect::<Vec<_>>()
                     .into();
                 peer.into()
@@ -102,6 +120,19 @@ impl Wireguard {
     /// The return value can be used as an `ip` sender or receiver.
     pub fn tunnel<IpHandler>(&mut self, handler: IpHandler) -> WithState<'_, IpHandler> {
         WithState { inner: self, handler }
+    }
+
+    fn fake_info(ts: Instant) -> PacketInfo {
+        // In particular, pretend to do all checksum so that packet generation does not waste those
+        // cycles.
+        PacketInfo {
+            timestamp: ts,
+            capabilities: {
+                let mut caps = Capabilities::no_support();
+                *caps.ipv4_mut() = nic::Protocol::offloaded();
+                caps
+            },
+        }
     }
 }
 
@@ -147,6 +178,30 @@ where
 {
     fn receive(&mut self, pkg: udp::Packet<P>) {
         let udp::Packet { packet, control } = pkg;
+
+        // Parse packet.
+        let packet = match Packet::new_checked(packet) {
+            Err(_) => return,
+            Ok(packet) => packet,
+        };
+
+        // Check if this is meta traffic.
+        match packet.repr() {
+            // Or if it corresponds to some of our peers.
+            Repr::Data { receiver, .. } => {}
+            _ => todo!(),
+        }
+
+        let ts = control.info().timestamp();
+        // Setup a fake nic+eth+ip stack below.
+        let mut fake_nic = EnqueueFlag::set_true(Wireguard::fake_info(ts));
+        let eth = self.inner.eth.controller(&mut fake_nic);
+        let control = self.inner.ip.controller(eth);
+
+        let fake = ip::InPacket::<P> { packet: todo!(), control };
+        self.handler.receive(fake);
+
+        // Check the handle for send.
         todo!();
     }
 }
@@ -157,8 +212,18 @@ where
 {
     fn send(&mut self, pkg: udp::RawPacket<P>) {
         let udp::RawPacket { payload, control } = pkg;
+
+        let ts = control.info().timestamp();
+        // Setup a fake nic+eth+ip stack below.
+        let mut fake_nic = EnqueueFlag::set_true(Wireguard::fake_info(ts));
+        let eth = self.inner.eth.controller(&mut fake_nic);
+        let control = self.inner.ip.controller(eth);
+
         // Check for outstanding cookie messages to deliver?
+        let fake = ip::RawPacket { payload, control };
+        self.handler.send(fake);
+
+        // Check the handle for send.
         todo!();
-        // Check the handler.
     }
 }

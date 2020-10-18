@@ -17,7 +17,7 @@ use core::time::Duration;
 
 use ethox::managed::Slice;
 use ethox::time::Instant;
-use ethox::wire::ip::Address;
+use ethox::wire::ip::Subnet;
 use chacha20poly1305::{aead::{self, AeadInPlace}, ChaCha20Poly1305, XChaCha20Poly1305};
 use x25519_dalek::{PublicKey, StaticSecret};
 
@@ -26,6 +26,23 @@ use x25519_dalek::{PublicKey, StaticSecret};
 /// In particular it might be dangerous to use this with a new nonce sequence if we don't ensure
 /// that the key is immediately discarded afterwards.
 type NotSoSafeKey = aead::Key::<XChaCha20Poly1305>;
+
+pub use layer::{
+    Config,
+    InterfaceConfig,
+    KeyConfig,
+    PeerConfig,
+    Wireguard,
+    WithState,
+};
+
+pub use wire::{
+    wireguard,
+    Packet,
+    Repr,
+    Type,
+    Unsealed,
+};
 
 pub struct This {
     private: StaticSecret,
@@ -66,13 +83,9 @@ pub struct PostInitHandshake {
 /// Construct it by responding to a `PostInitHandshake`, or by unsealing a response.
 pub struct PostResponseHandshake {
     /// The rolling key for the hash observing the handshake.
-    initiator_send: NotSoSafeKey,
+    initiator_key: NotSoSafeKey,
     /// The current hash after the init message.
-    initiator_recv: NotSoSafeKey,
-    /// The rolling key for the hash observing the handshake.
-    responder_send: NotSoSafeKey,
-    /// The current hash after the response message.
-    responder_recv: NotSoSafeKey,
+    responder_key: NotSoSafeKey,
     /// The final chaining hash.
     chaining_hash: [u8; 32],
 }
@@ -80,7 +93,7 @@ pub struct PostResponseHandshake {
 /// Static information about another Wireguard end point.
 pub struct Peer {
     public: PublicKey,
-    addresses: Slice<'static, Address>,
+    addresses: Slice<'static, Subnet>,
     /// Precomputed derived keys for populating mac1 in cookie requests.
     labelled_mac1_key: NotSoSafeKey,
     /// Precomputed derived keys for populating mac1 in cookie replies.
@@ -88,7 +101,7 @@ pub struct Peer {
     pre_shared_key: [u8; 32],
 }
 
-/// Non crypto graphic state for a connection.
+/// Online state for a connection.
 pub struct Client {
     /// Send empty packet if we haven't heard for a while.
     keepalive: Duration,
@@ -111,6 +124,18 @@ pub struct Client {
     last_rekey_time: Instant,
     /// The greatest received timestamp for this peer.
     tai64n: u64,
+}
+
+/// Cryptographic state for a connection.
+pub struct CryptConnection {
+    /// The key for receiving.
+    receive: NotSoSafeKey,
+    /// The nonce state for receiving.
+    receive_nonce: SlidingWindowNonce,
+    /// The key for sending.
+    sender: NotSoSafeKey,
+    /// The nonce state for sending.
+    sender_nonce: CounterNonce,
 }
 
 /// State of one handshake.
@@ -252,6 +277,14 @@ impl Nonce {
 
     fn as_aead_nonce(&self) -> &ChaCha20Poly1305Nonce {
         self.0.as_aead_nonce()
+    }
+
+    fn as_lower_order_counter(&self) -> u64 {
+        // Counter is _NOT_ critical.
+        // It's an information but the cipher text secrecy depends on `Nonce` only.
+        let le = &self.0.repr.as_slice()[16..24];
+        let le: &[u8; 8] = TryFrom::try_from(le).unwrap();
+        u64::from_le_bytes(*le)
     }
 }
 

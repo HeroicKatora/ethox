@@ -7,8 +7,16 @@ use x25519_dalek::{PublicKey, SharedSecret, StaticSecret};
 use chacha20poly1305::{ChaCha20Poly1305, XChaCha20Poly1305, Tag};
 use chacha20poly1305::aead::{AeadInPlace, NewAead};
 
-use super::{ChaCha20Poly1305Nonce, CounterNonce, NotSoSafeKey, RawNonce, SlidingWindowNonce, UnspecifiedCryptoFailure};
-use super::wire::wireguard;
+use super::{
+    ChaCha20Poly1305Nonce,
+    CryptConnection,
+    CounterNonce,
+    NotSoSafeKey,
+    RawNonce,
+    SlidingWindowNonce,
+    UnspecifiedCryptoFailure,
+    wire::wireguard,
+};
 
 trait Rng: rand_core::RngCore + rand_core::CryptoRng {}
 impl<T: rand_core::RngCore + rand_core::CryptoRng> Rng for T {}
@@ -53,13 +61,13 @@ impl System {
         nonce: &mut CounterNonce,
         plain_plus_tag: &mut [u8],
         ad: &[u8],
-    ) -> Result<(), UnspecifiedCryptoFailure> {
+    ) -> Result<u64, UnspecifiedCryptoFailure> {
         let (text, tag) = Self::split_plain_text_plus_tag(plain_plus_tag)?;
         let nonce = nonce.next_nonce()?;
         let aead = XChaCha20Poly1305::new(key);
         *tag = aead.encrypt_in_place_detached(nonce.as_xaead_nonce(), ad, text)
             .map_err(|_| UnspecifiedCryptoFailure)?;
-        Ok(())
+        Ok(nonce.as_lower_order_counter())
     }
 
     /// Unseal one message using a sliding window acceptance window.
@@ -289,6 +297,34 @@ impl super::This {
     {
         super::PostResponseHandshake::for_incoming(self, pre, msg)
     }
+
+    /// Encrypt the data in the message.
+    pub fn seal(&mut self, state: &mut CryptConnection, msg: &mut wireguard)
+        -> Result<(), UnspecifiedCryptoFailure>
+    {
+        let counter = self.system.aead(
+            &state.sender,
+            &mut state.sender_nonce,
+            msg.data_payload_mut(),
+            &[],
+        )?;
+        msg.set_data_counter(counter);
+        Ok(())
+    }
+
+    /// Decrypt the data in the message.
+    pub fn unseal(&mut self, state: &mut CryptConnection, msg: &mut wireguard)
+        -> Result<(), UnspecifiedCryptoFailure>
+    {
+        let counter = msg.data_counter();
+        self.system.undo_aead(
+            &state.receive,
+            &mut state.receive_nonce,
+            RawNonce::new(counter),
+            msg.data_payload_mut(),
+            &[],
+        )
+    }
 }
 
 impl super::Peer {
@@ -472,7 +508,6 @@ impl super::PostResponseHandshake {
     pub(crate) fn write(this: &mut super::This, pre: super::PostInitHandshake, msg: &mut wireguard)
         -> Result<Self, UnspecifiedCryptoFailure>
     {
-        let initiator_chaining_key = pre.initiator_key;
         let c_r = pre.initiator_key;
         let h_r = pre.initiator_hash;
         let system = &mut this.system;
@@ -515,13 +550,10 @@ impl super::PostResponseHandshake {
 
         let responder_chaining_key = c_r;
 
-        let (initiator_send, initiator_recv) = system.kdf2(initiator_chaining_key, &[]);
-        let (responder_send, responder_recv) = system.kdf2(responder_chaining_key, &[]);
+        let (initiator_key, responder_key) = system.kdf2(responder_chaining_key, &[]);
         Ok(super::PostResponseHandshake {
-            initiator_send,
-            initiator_recv,
-            responder_send,
-            responder_recv,
+            initiator_key,
+            responder_key,
             chaining_hash: h_r,
         })
     }
@@ -529,7 +561,6 @@ impl super::PostResponseHandshake {
     pub(crate) fn for_incoming(this: &mut super::This, pre: super::PostInitHandshake, msg: &mut wireguard)
         -> Result<Self, UnspecifiedCryptoFailure>
     {
-        let initiator_chaining_key = pre.initiator_key;
         let c_r = pre.initiator_key;
         let h_r = pre.initiator_hash;
         let system = &mut this.system;
@@ -573,15 +604,32 @@ impl super::PostResponseHandshake {
         let h_r = u_r;
         let responder_chaining_key = c_r;
 
-        let (initiator_send, initiator_recv) = system.kdf2(initiator_chaining_key, &[]);
-        let (responder_send, responder_recv) = system.kdf2(responder_chaining_key, &[]);
+        let (initiator_key, responder_key) = system.kdf2(responder_chaining_key, &[]);
         Ok(super::PostResponseHandshake {
-            initiator_send,
-            initiator_recv,
-            responder_send,
-            responder_recv,
+            initiator_key,
+            responder_key,
             chaining_hash: h_r,
         })
+    }
+
+    /// Recover the crypt state for the initiator.
+    pub fn into_initiator(self) -> CryptConnection {
+        CryptConnection {
+            sender: self.initiator_key,
+            sender_nonce: CounterNonce::default(),
+            receive: self.responder_key,
+            receive_nonce: SlidingWindowNonce::default(),
+        }
+    }
+
+    /// Recover the crypt state for the responder.
+    pub fn into_responder(self) -> CryptConnection {
+        CryptConnection {
+            sender: self.responder_key,
+            sender_nonce: CounterNonce::default(),
+            receive: self.initiator_key,
+            receive_nonce: SlidingWindowNonce::default(),
+        }
     }
 }
 
@@ -778,11 +826,30 @@ fn test_handshake_with_packets() {
     let i_done = resp.read_response(i_post, wireguard)
         .expect("Failed to write response");
 
-    assert_eq!(i_done.initiator_send, r_done.initiator_send);
-    assert_eq!(i_done.initiator_recv, r_done.initiator_recv);
-    assert_eq!(i_done.responder_send, r_done.responder_send);
-    assert_eq!(i_done.responder_recv, r_done.responder_recv);
+    assert_eq!(i_done.initiator_key, r_done.initiator_key);
+    assert_eq!(i_done.responder_key, r_done.responder_key);
     assert_eq!(i_done.chaining_hash, r_done.chaining_hash);
+
+    let mut crypt_init = i_done.into_initiator();
+    let mut crypt_resp = r_done.into_responder();
+
+    const MSG: &[u8] = b"Hello, world";
+
+    wireguard.data_payload_mut().iter_mut().for_each(|b| *b = 0);
+    wireguard.data_payload_mut()[..MSG.len()].copy_from_slice(MSG);
+    init.seal(&mut crypt_init, wireguard)
+        .expect("Failed to sealed first message");
+    resp.unseal(&mut crypt_resp, wireguard)
+        .expect("Failed to unsealed first message");
+    assert_eq!(&wireguard.data_payload()[..MSG.len()], MSG);
+
+    wireguard.data_payload_mut().iter_mut().for_each(|b| *b = 0);
+    wireguard.data_payload_mut()[..MSG.len()].copy_from_slice(MSG);
+    resp.seal(&mut crypt_resp, wireguard)
+        .expect("Failed to sealed second message");
+    init.unseal(&mut crypt_init, wireguard)
+        .expect("Failed to unsealed second message");
+    assert_eq!(&wireguard.data_payload()[..MSG.len()], MSG);
 }
 
 #[test]
