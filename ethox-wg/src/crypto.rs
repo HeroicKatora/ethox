@@ -292,7 +292,7 @@ impl super::This {
     }
 
     /// Write one handshake response.
-    pub fn read_response(&mut self, pre: super::PostInitHandshake, msg: &mut wireguard)
+    pub fn read_response(&mut self, pre: &super::PostInitHandshake, msg: &mut wireguard)
         -> Result<super::PostResponseHandshake, UnspecifiedCryptoFailure>
     {
         super::PostResponseHandshake::for_incoming(self, pre, msg)
@@ -569,7 +569,7 @@ impl super::PostResponseHandshake {
         })
     }
 
-    pub(crate) fn for_incoming(this: &mut super::This, pre: super::PostInitHandshake, msg: &mut wireguard)
+    pub(crate) fn for_incoming(this: &mut super::This, pre: &super::PostInitHandshake, msg: &mut wireguard)
         -> Result<Self, UnspecifiedCryptoFailure>
     {
         let c_r = pre.initiator_key;
@@ -836,7 +836,7 @@ fn test_handshake_with_packets() {
 
     let r_done = resp.write_response(r_post, wireguard)
         .expect("Failed to write response");
-    let i_done = init.read_response(i_post, wireguard)
+    let i_done = init.read_response(&i_post, wireguard)
         .expect("Failed to read response");
 
     assert_eq!(i_done.initiator_key, r_done.initiator_key);

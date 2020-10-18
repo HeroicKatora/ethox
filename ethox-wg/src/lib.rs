@@ -2,7 +2,7 @@
 //!
 //! It's not no-alloc since the underlying crypto implementation is not. If you find a library as
 //! good as `ring` which provides this then we might consider switching.
-// #![no_std]
+#![no_std]
 extern crate alloc;
 
 /// Maps the libraries to the crypto primitives defined in the Whitepaper.
@@ -113,10 +113,10 @@ pub struct Client {
     reject_after_time: Duration,
     /// The REKEY_AFTER_MESSAGES constant.
     /// After this number of packets we initiate a new handshake.
-    rekey_after_messages: u32,
+    rekey_after_messages: u64,
     /// The number of message we sent without rekey according to `rekey_after_messages`.
     /// Begin to drop packets when this is greater than `rekey_after_messages`.
-    messages_without_rekey: u32,
+    messages_without_rekey: u64,
     /// Timeout until we rekey independent of messages or keep-alive.
     rekey_after_time: Duration,
     /// The last timestamp when we rekeyed.
@@ -178,6 +178,22 @@ pub struct SlidingWindowNonce {
 /// A nonce valid for the sliding window.
 pub struct SlidingWindowValidatedNonce {
     nonce: Option<Nonce>,
+}
+
+impl Client {
+    fn from_initial_key(now: Instant) -> Client {
+        Client {
+            keepalive: Duration::from_secs(10),
+            last_alive: now,
+            rekey_timeout: Duration::from_secs(5),
+            reject_after_time: Duration::from_secs(180),
+            rekey_after_messages: 1 << 60,
+            messages_without_rekey: 0,
+            rekey_after_time: Duration::from_secs(120),
+            last_rekey_time: now,
+            tai64n: now.millis as u64,
+        }
+    }
 }
 
 impl RawNonce {

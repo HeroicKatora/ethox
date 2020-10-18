@@ -355,6 +355,16 @@ impl Repr {
         })
     }
 
+    pub fn payload_offset() -> usize {
+        field::DATA_MESSAGE(0).start
+    }
+
+    pub fn len_for_payload(len: usize) -> usize {
+        // Round up to  next multiple of 128.
+        let padded = len + len.wrapping_neg() & 127;
+        field::DATA_MESSAGE(padded).end
+    }
+
     pub fn buffer_len(&self) -> usize {
         match self {
             Repr::Init { .. } => field::INIT_MAC2.end,
@@ -420,7 +430,7 @@ impl<T: PayloadMut> Packet<T> {
         }
     }
 
-    pub fn consume_response(mut self, this: &mut This, hs: PostInitHandshake)
+    pub fn consume_response(mut self, this: &mut This, hs: &PostInitHandshake)
         -> Result<PostResponseHandshake, Self>
     {
         let wg = wireguard::new_unchecked_mut(self.buffer.payload_mut());
