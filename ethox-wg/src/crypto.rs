@@ -259,15 +259,15 @@ impl super::This {
     ///
     /// This does some pre-calculation.
     pub fn prepare_send(&mut self, to: &super::Peer) -> super::PreHandshake {
-        super::PreHandshake::for_peer(&mut self.system, self.public, to)
+        super::PreHandshake::for_peer(&mut self.system, to)
     }
 
     /// Prepare a handshake with one particular peer.
     ///
     /// This does some pre-calculation.
-    pub fn prepare_recv(&mut self, initiator: &super::Peer) -> super::PreHandshake {
+    pub fn prepare_recv(&mut self) -> super::PreHandshake {
         let this = super::Peer::new(&mut self.system, self.public);
-        super::PreHandshake::for_peer(&mut self.system, initiator.public, &this)
+        super::PreHandshake::for_peer(&mut self.system, &this)
     }
 
     /// Write one sealed initial handshake.
@@ -350,7 +350,7 @@ impl super::Peer {
 }
 
 impl super::PreHandshake {
-    pub(crate) fn for_peer(system: &mut System, initiator: PublicKey, to: &super::Peer) -> Self {
+    pub(crate) fn for_peer(system: &mut System, to: &super::Peer) -> Self {
         let c_i = system.hash_one(System::CONSTRUCTION.as_bytes());
         let h_i = system.hash([&c_i, System::IDENTIFIER.as_bytes()].iter().cloned());
         let h_i = system.hash([&h_i[..], to.public.as_bytes()].iter().cloned());
@@ -361,7 +361,6 @@ impl super::PreHandshake {
             initiator_hash: h_i,
             mac1_key: NotSoSafeKey::from(c),
             peer_public: to.public,
-            initiator_public: initiator,
             pre_shared_key: to.pre_shared_key,
         }
     }
@@ -472,9 +471,15 @@ impl super::PostInitHandshake {
             &h_i,
         )?;
         let h_i = u_i;
+        // Recover Spubi from the message.
+        let initiator_public = {
+            let mut public: [u8; 32] = [0; 32];
+            public.copy_from_slice(&msg_static[..32]);
+            PublicKey::from(public)
+        };
         // (Ci,κ):=Kdf2(Ci,DH(Spubi,Sprivr))
         let (c_i, k) = {
-            let dh = system.dh(&this.private, &pre.initiator_public);
+            let dh = system.dh(&this.private, &initiator_public);
             system.kdf2(c_i, dh.as_bytes())
         };
         // Hi:=Hash(Hi‖msg.timestamp)
@@ -493,11 +498,17 @@ impl super::PostInitHandshake {
         Ok(super::PostInitHandshake {
             initiator_key: c_i,
             initiator_hash: h_i,
-            initiator_public: pre.peer_public,
+            initiator_public: initiator_public,
             ephemeral_public: epub_i,
             ephemeral_private: None,
             pre_shared_key_q: pre.pre_shared_key,
         })
+    }
+
+    /// The public key of the initiator.
+    /// Use to lookup which peer tried to initialize the connection.
+    pub fn initiator_public(&self) -> PublicKey {
+        self.initiator_public
     }
 }
 
@@ -531,7 +542,7 @@ impl super::PostResponseHandshake {
             let dh = system.dh(&epriv_r, &pre.initiator_public);
             system.kdf1(c_r, dh.as_bytes())
         };
-        // TODO: Is this it?
+        // TODO: Should we have a post-quantum mode to require this? Is this it?
         let q: NotSoSafeKey = NotSoSafeKey::from(pre.pre_shared_key_q);
         // (Cr,τ,κ):=Kdf3(Cr,Q)
         let (c_r, t, k) = system.kdf3(c_r, &q);
@@ -584,7 +595,7 @@ impl super::PostResponseHandshake {
             let dh = system.dh(&this.private, &epub_r);
             system.kdf1(c_r, dh.as_bytes())
         };
-        // TODO: Is this it?
+        // TODO: Should we have a post-quantum mode to require this? Is this it?
         let q: NotSoSafeKey = NotSoSafeKey::from(pre.pre_shared_key_q);
         // (Cr,τ,κ):=Kdf3(Cr,Q)
         let (c_r, t, k) = system.kdf3(c_r, &q);
@@ -807,10 +818,9 @@ fn test_handshake_with_packets() {
     let mut init = super::This::ephemeral(init);
     let mut resp = super::This::ephemeral(resp);
     let send_peer = super::Peer::new(&mut init.system, resp.public);
-    let recv_peer = super::Peer::new(&mut resp.system, init.public);
 
     let i_pre = init.prepare_send(&send_peer);
-    let r_pre = resp.prepare_recv(&recv_peer);
+    let r_pre = resp.prepare_recv();
 
     let mut message_buffer = alloc::vec::Vec::from([0; 132]);
     // We don't use the full messages here..
@@ -821,10 +831,13 @@ fn test_handshake_with_packets() {
     let r_post = resp.read_init(&r_pre, wireguard)
         .expect("Failed to read handshake");
 
+    assert_eq!(i_post.initiator_public().as_bytes(), init.public.as_bytes());
+    assert_eq!(r_post.initiator_public().as_bytes(), init.public.as_bytes());
+
     let r_done = resp.write_response(r_post, wireguard)
         .expect("Failed to write response");
-    let i_done = resp.read_response(i_post, wireguard)
-        .expect("Failed to write response");
+    let i_done = init.read_response(i_post, wireguard)
+        .expect("Failed to read response");
 
     assert_eq!(i_done.initiator_key, r_done.initiator_key);
     assert_eq!(i_done.responder_key, r_done.responder_key);
@@ -860,10 +873,9 @@ fn silence_on_bad_mac1() {
     let mut init = super::This::ephemeral(init);
     let mut resp = super::This::ephemeral(resp);
     let send_peer = super::Peer::new(&mut init.system, resp.public);
-    let recv_peer = super::Peer::new(&mut resp.system, init.public);
 
     let i_pre = init.prepare_send(&send_peer);
-    let r_pre = resp.prepare_recv(&recv_peer);
+    let r_pre = resp.prepare_recv();
 
     let mut message_buffer = alloc::vec::Vec::from([0; 132]);
     // We don't use the full messages here..

@@ -10,6 +10,8 @@ edition = "2018"
 x25519-dalek = "1"
 # Needed for the network operations in IP/UDP
 ethox = { path = "../ethox" }
+# Used as our no_std hashmap
+hashbrown = "0.9"
 
 # Needed for ChaCha20Poly1305 AEAD.
 # Alternatives:
@@ -44,7 +46,6 @@ default-features = false
 [dependencies.rand_chacha]
 version = "0.2"
 default-features = false
-
 
 [dependencies.mio]
 version = "0.6.2"

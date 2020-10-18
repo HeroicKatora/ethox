@@ -3,8 +3,9 @@ use super::{crypto, Peer, This, wire::Packet, wire::Repr, wire::wireguard};
 use ethox::managed::Slice;
 use ethox::nic::{self, common::{EnqueueFlag, PacketInfo}, Capabilities};
 use ethox::layer::{arp, eth, ip, udp};
-use ethox::wire::{self, PayloadMut};
+use ethox::wire::{self, Payload, PayloadMut, PayloadMutExt};
 use ethox::time::Instant;
+use hashbrown::hash_map::HashMap;
 use x25519_dalek::{PublicKey, StaticSecret};
 
 /// Open configuration.
@@ -44,10 +45,28 @@ pub struct Wireguard {
     /// Fake ip data.
     ip: ip::Endpoint<'static>,
     peers: Vec<PeerState>,
+    /// Connections for which we have completed the handshake.
+    active: HashMap<u32, ConnectionState>,
 }
 
 struct PeerState {
     peer: super::Peer,
+    handshake: super::PreHandshake,
+}
+
+struct ConnectionState {
+    /// The peer on the other side.
+    peer: usize,
+    /// The client state for re-keying etc.
+    client: super::Client,
+    /// The crypto state.
+    crypt: super::CryptConnection,
+}
+
+struct Connection<'lt> {
+    this: &'lt mut This,
+    peer: &'lt mut PeerState,
+    state: &'lt mut ConnectionState,
 }
 
 pub struct WithState<'guard, H> {
@@ -56,9 +75,17 @@ pub struct WithState<'guard, H> {
 }
 
 impl Wireguard {
+    // The destination address we use when pretending to send packets.
+    const FAKE_ETH_SRC: wire::ethernet::Address = wire::ethernet::Address([0; 6]);
+    // The receiver address we use when pretending to receive packets.
+    const FAKE_ETH_DST: wire::ethernet::Address = wire::ethernet::Address([0x8; 6]);
+    // An address for routing, pretending to be the next hop for all packets.
+    // This is only used internally to resolve to the FAKE_ETH_DST in the arp cache.
+    const FAKE_IP_GW: wire::ip::v4::Address = wire::ip::v4::Address([0; 4]);
+
     pub fn new(config: &Config) -> Self {
-        let fake_src = wire::ethernet::Address([0; 6]);
-        let fake_gw = wire::ip::v4::Address([0; 4]);
+        let fake_src = Self::FAKE_ETH_SRC;
+        let fake_gw = Self::FAKE_IP_GW;
 
         let routes: usize = config.peers
             .iter()
@@ -87,24 +114,24 @@ impl Wireguard {
         }
 
         let private_key = config.interface.private_key.to_private();
-        let mut system = crypto::System::new();
+        let mut this = This::from_key(crypto::System::new(), private_key);
 
         let peers = config.peers
             .iter()
             .map(|cpeer| {
                 let public = cpeer.public_key.to_public();
-                let mut peer = Peer::new(&mut system, public);
+                let mut peer = Peer::new(&mut this.system, public);
                 peer.addresses = cpeer.allowed_ips
                     .iter()
                     .map(|&cidr| cidr.into())
                     .collect::<Vec<_>>()
                     .into();
-                peer.into()
+                PeerState::from(peer, &mut this)
             })
             .collect::<Vec<_>>();
 
         Wireguard {
-            this: This::from_key(system, private_key),
+            this,
             eth: eth::Endpoint::new(fake_src),
             ip: ip::Endpoint::new(
                 Slice::One(wire::ip::v4::Cidr::new(fake_gw, 0).into()),
@@ -112,6 +139,7 @@ impl Wireguard {
                 neighbors,
             ),
             peers,
+            active: HashMap::default(),
         }
     }
 
@@ -134,12 +162,32 @@ impl Wireguard {
             },
         }
     }
+
+    fn connection(&mut self, nr: u32) -> Option<Connection<'_>> {
+        let state = self.active.get_mut(&nr)?;
+        let peer = &mut self.peers[state.peer];
+        let this = &mut self.this;
+        Some(Connection {
+            this,
+            state,
+            peer,
+        })
+    }
+
+    fn handle_response<T: PayloadMut>(
+        &mut self,
+        response: Packet<T>,
+    ) {
+        let repr = response.repr();
+    }
 }
 
-impl From<Peer> for PeerState {
-    fn from(peer: Peer) -> Self {
+impl PeerState {
+    fn from(peer: Peer, this: &mut This) -> Self {
+        let handshake = this.prepare_send(&peer);
         PeerState {
             peer,
+            handshake,
         }
     }
 }
@@ -185,12 +233,88 @@ where
             Ok(packet) => packet,
         };
 
-        // Check if this is meta traffic.
-        match packet.repr() {
-            // Or if it corresponds to some of our peers.
-            Repr::Data { receiver, .. } => {}
-            _ => todo!(),
-        }
+        // Check if it corresponds to some of our peers.
+        let con = match packet.repr() {
+            // Or if this is meta traffic.
+            Repr::Init { sender } => {
+                todo!()
+            }
+            Repr::Response { sender, receiver } => {
+                todo!()
+            }
+            Repr::Cookie { receiver } => {
+                todo!()
+            }
+            Repr::Data { receiver, .. } => {
+                match self.inner.connection(receiver) {
+                    None => return,
+                    Some(connection) => connection,
+                }
+            }
+        };
+
+        // There _is_ a connection for this, let's try to unseal the packet.
+        let unsealed = match packet.unseal(con.this, &mut con.state.crypt) {
+            // Something was invalid. Maybe nonce reuse, an attack, a packet delayed for too long,
+            // etc. We don't care, just drop it. If the inner was a stream it will retry anyways.
+            // TODO: might reuse this buffer?
+            Err(_) => return,
+            Ok(unsealed) => unsealed,
+        };
+
+        // Nice. So let's see if our peer 
+        // TODO: should we enforce checksums or provide a nob?
+        let ip = match wire::ip::v4::Packet::new_checked(&unsealed, wire::Checksum::Manual) {
+            Err(_) => return,
+            Ok(ip) => ip,
+        };
+
+        // Let's see if this is in fact valid to come for the peer.
+        let ip_repr = ip.repr();
+        let sender = ip_repr.src_addr;
+        if {
+            let sources = &con.peer.peer.addresses;
+            let matches = |subnet: &wire::ip::Subnet| subnet.contains(sender.into());
+            !sources.iter().any(matches)
+        } {
+            // Bad origin for this peer.
+            return;
+        };
+
+        // By this point, we can discard the Wireguard information.
+        // The next handler also expects a fully owned buffer.
+        let wg_len = unsealed.payload().len();
+        let wg_start = unsealed.payload().as_ptr() as usize;
+        let raw = unsealed
+            .into_inner() // wg
+            .into_inner() // udp
+            .into_inner() // ip
+            .into_inner(); // eth
+        let raw_start = raw.payload().as_ptr() as usize;
+        let rel = wg_start - raw_start;
+        // We want only a synthetic ethernet header.
+        let hdr = wire::ethernet::Repr {
+            dst_addr: Wireguard::FAKE_ETH_DST,
+            src_addr: Wireguard::FAKE_ETH_SRC,
+            ethertype: wire::ethernet::EtherType::Ipv4,
+        };
+        let want_len = hdr.header_len();
+
+        // This should succeed since we shorten the packet.
+        raw.reframe_payload(wire::ReframePayload {
+            length: wg_len,
+            old_payload: rel..rel+wg_len,
+            new_payload: want_len..want_len+wg_len,
+        }).unwrap();
+
+        let eth = {
+            let frame = wire::ethernet::frame::new_unchecked_mut(raw.payload_mut());
+            hdr.emit(frame);
+            wire::ethernet::Frame::new_unchecked(raw, hdr)
+        };
+
+        // Reassemble the packet using the repr we had before.
+        let packet = wire::ip::v4::Packet::new_unchecked(eth, ip_repr);
 
         let ts = control.info().timestamp();
         // Setup a fake nic+eth+ip stack below.
@@ -198,8 +322,11 @@ where
         let eth = self.inner.eth.controller(&mut fake_nic);
         let control = self.inner.ip.controller(eth);
 
-        let fake = ip::InPacket::<P> { packet: todo!(), control };
-        self.handler.receive(fake);
+        // Receive our fake packet.
+        self.handler.receive(ip::InPacket::<P> {
+            packet: ip::IpPacket::V4(packet),
+            control,
+        });
 
         // Check the handle for send.
         todo!();

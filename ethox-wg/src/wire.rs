@@ -1,7 +1,15 @@
 use core::{convert::TryFrom, ops};
-use ethox::wire::{Error, Payload, PayloadMut};
+use ethox::wire::{Error, Payload, PayloadMut, payload};
 use ethox::byte_wrapper;
-use super::{CryptConnection, This, UnspecifiedCryptoFailure};
+
+use super::{
+    CryptConnection,
+    PreHandshake,
+    PostInitHandshake,
+    PostResponseHandshake,
+    This,
+    UnspecifiedCryptoFailure,
+};
 
 /// A read/writer wrapper for a sealed Wireguard packet buffer.
 ///
@@ -402,6 +410,26 @@ impl<T: Payload> Packet<T> {
 }
 
 impl<T: PayloadMut> Packet<T> {
+    pub fn consume_init(mut self, this: &mut This, hs: &PreHandshake)
+        -> Result<PostInitHandshake, Self>
+    {
+        let wg = wireguard::new_unchecked_mut(self.buffer.payload_mut());
+        match this.read_init(hs, wg) {
+            Ok(post) => Ok(post),
+            Err(UnspecifiedCryptoFailure) => Err(self),
+        }
+    }
+
+    pub fn consume_response(mut self, this: &mut This, hs: PostInitHandshake)
+        -> Result<PostResponseHandshake, Self>
+    {
+        let wg = wireguard::new_unchecked_mut(self.buffer.payload_mut());
+        match this.read_response(hs, wg) {
+            Ok(post) => Ok(post),
+            Err(UnspecifiedCryptoFailure) => Err(self),
+        }
+    }
+
     /// Unseal the packet.
     /// Note that you can do this at most once as it _will_ consume the nonce on success!
     pub fn unseal(mut self, this: &mut This, state: &mut CryptConnection)
@@ -427,6 +455,14 @@ impl<T: Payload> ops::Deref for Packet<T> {
     }
 }
 
+impl<T: Payload> Payload for Unsealed<T> {
+    fn payload(&self) -> &payload {
+        wireguard::new_unchecked(self.buffer.payload())
+            .data_payload()
+            .into()
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 struct Sealed<T> {
     buffer: T,
@@ -440,6 +476,12 @@ struct Sealed<T> {
 pub struct Unsealed<T> {
     buffer: T,
     repr: Repr,
+}
+
+impl<T> Unsealed<T> {
+    pub fn into_inner(self) -> T {
+        self.buffer
+    }
 }
 
 impl<T: Payload> ops::Deref for Unsealed<T> {

@@ -2,7 +2,7 @@
 //!
 //! It's not no-alloc since the underlying crypto implementation is not. If you find a library as
 //! good as `ring` which provides this then we might consider switching.
-#![no_std]
+// #![no_std]
 extern crate alloc;
 
 /// Maps the libraries to the crypto primitives defined in the Whitepaper.
@@ -55,7 +55,6 @@ pub struct PreHandshake {
     initiator_key: NotSoSafeKey,
     initiator_hash: [u8; 32],
     mac1_key: NotSoSafeKey,
-    initiator_public: PublicKey,
     peer_public: PublicKey,
     /// Optional preshared key.
     pre_shared_key: [u8; 32],
