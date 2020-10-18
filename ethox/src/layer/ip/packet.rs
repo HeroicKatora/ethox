@@ -97,10 +97,10 @@ pub(crate) struct Route {
 }
 
 #[derive(Clone, Copy)]
-struct EthRoute {
-    src_mac: ethernet::Address,
-    src_addr: ip::Address,
-    next_mac: ethernet::Address,
+pub struct NextHopRoute {
+    pub src_mac: ethernet::Address,
+    pub src_addr: ip::Address,
+    pub next_mac: ethernet::Address,
 }
 
 /// The interface to the endpoint.
@@ -150,7 +150,7 @@ impl<'a> Controller<'a> {
         self.endpoint.resolve(dst_addr, time, true)
     }
 
-    fn route_to(&mut self, dst_addr: ip::Address) -> Result<EthRoute> {
+    pub fn route_to(&mut self, dst_addr: ip::Address) -> Result<NextHopRoute> {
         let now = self.eth.info().timestamp();
         let Route { next_hop, src_addr } = self.endpoint
             .route(dst_addr, now)
@@ -158,7 +158,7 @@ impl<'a> Controller<'a> {
         let next_mac = self.resolve(next_hop)?;
         let src_mac = self.eth.src_addr();
 
-        Ok(EthRoute {
+        Ok(NextHopRoute {
             src_mac,
             src_addr,
             next_mac,
@@ -313,7 +313,7 @@ impl Init {
         repr.lower(&[]).ok_or(Error::Illegal)
     }
 
-    fn init_eth(&self, route: EthRoute, payload: usize) -> Result<eth::Init> {
+    fn init_eth(&self, route: NextHopRoute, payload: usize) -> Result<eth::Init> {
         enum Protocol { Ipv4, Ipv6 }
 
         let protocol = match self.dst_addr {

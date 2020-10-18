@@ -65,6 +65,7 @@ pub use packet::{
     Controller,
     Init,
     IpPacket,
+    NextHopRoute,
     V4Packet,
     V6Packet,
     In as InPacket,

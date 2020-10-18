@@ -88,6 +88,11 @@ impl<'a> Controller<'a> {
             inner: self.inner.borrow_mut(),
         }
     }
+
+    /// Unwrap the inner ip controller.
+    pub fn into_ip(self) -> ip::Controller<'a> {
+        self.inner
+    }
 }
 
 impl<'a, P: Payload> Packet<'a, P> {
