@@ -576,7 +576,7 @@ impl super::PostResponseHandshake {
         let h_r = pre.initiator_hash;
         let system = &mut this.system;
         // We must have a private key still.
-        let epriv_i = pre.ephemeral_private.unwrap();
+        let epriv_i = pre.ephemeral_private.as_ref().unwrap();
         // Epubr:=msg.ephemeral
         let msg_ephemeral = msg.resp_ephemeral();
         let epub_r: &[u8; 32] = TryFrom::try_from(&msg_ephemeral[..]).unwrap();

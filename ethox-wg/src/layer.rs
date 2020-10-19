@@ -11,6 +11,7 @@ use super::{
     Client,
     Peer,
     This,
+    wire::Unsealed,
     wire::Packet,
     wire::Repr,
     wire::wireguard,
@@ -337,6 +338,15 @@ impl Wireguard {
             Some(tup) => tup,
         };
 
+        // Do we have an active crypto connection?
+        let receiver = match peer.active {
+            None => return,
+            Some(receiver) => receiver,
+        };
+
+        let crypt = self.active.get_mut(&receiver)
+            .expect("Active connection information of peer inconsistent");
+
         let (ip, port) = match peer.reachable_ip {
             // Hm, nope. Maybe we should only have routes to known peers?
             None => return,
@@ -409,9 +419,20 @@ impl Wireguard {
         ip_hdr.emit(wire::ip::v4::packet::new_unchecked_mut(eth.payload_mut()), wire::Checksum::Manual);
         let mut ip = wire::ip::v4::Packet::new_unchecked(eth, ip_hdr);
         udp_hdr.emit(wire::udp::packet::new_unchecked_mut(ip.payload_mut()), udp_chk);
-        let udp = wire::udp::Packet::new_unchecked(ip, udp_hdr);
+        let mut udp = wire::udp::Packet::new_unchecked(ip, udp_hdr);
 
         // Huh, reached the Wireguard things..
+        let wg = Repr::Data { receiver, datalen: ipv4_len };
+        wg.emit(wireguard::new_unchecked_mut(udp.payload_mut()));
+
+        // Now, if everything went to plan then the payload is already in-place
+        // Let's seal this packet!
+        let sealed = match Unsealed::new_unchecked(udp, wg).seal(&mut self.this, &mut crypt.crypt) {
+            Err(_) => return,
+            Ok(sealed) => sealed,
+        };
+
+        // Send the complete Wireguard packet to its destination!
         todo!()
     }
 }
@@ -564,7 +585,7 @@ where
         // Reassemble the packet using the repr we had before.
         let packet = wire::ip::v4::Packet::new_unchecked(eth, ip_repr);
 
-        let ts = control.info().timestamp();
+        let ts = original_control.info().timestamp();
         // Setup a fake nic+eth+ip stack below.
         let mut fake_nic = EnqueueFlag::set_true(Wireguard::fake_info(ts));
         let eth = self.inner.eth.controller(&mut fake_nic);

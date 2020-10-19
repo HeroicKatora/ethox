@@ -106,6 +106,8 @@ pub struct Client {
     keepalive: Duration,
     /// The last time we heard from the peer.
     last_alive: Instant,
+    /// The last time we wanted to send something.
+    next_ping: Instant,
     /// The constant rekey timeout.
     /// If keepalive times out then we initiate rekey handshake.
     rekey_timeout: Duration,
@@ -185,6 +187,7 @@ impl Client {
         Client {
             keepalive: Duration::from_secs(10),
             last_alive: now,
+            next_ping: now,
             rekey_timeout: Duration::from_secs(5),
             reject_after_time: Duration::from_secs(180),
             rekey_after_messages: 1 << 60,

@@ -165,13 +165,25 @@ impl wireguard {
     /// # Panics
     /// This will not verify if the message has the right length to contain this field.
     pub fn wg_type(&self) -> Option<Type> {
-        Some(match self.as_bytes()[0] {
+        let tag: [u8; 4] = TryFrom::try_from(&self.as_bytes()[..4]).unwrap();
+        Some(match u32::from_le_bytes(tag) {
             0x1 => Type::Init,
             0x2 => Type::Response,
             0x3 => Type::Cookie,
             0x4 => Type::Data,
             _ => return None,
         })
+    }
+
+    /// Set the message type.
+    ///
+    /// This will also overwrite the currently unused, three byte 0-padding.
+    ///
+    /// # Panics
+    /// This will not verify if the message has the right length to contain this field.
+    pub fn set_type(&mut self, wg_type: Type) {
+        let full_type = u32::from(wg_type as u8);
+        self.as_bytes_mut()[..4].copy_from_slice(&full_type.to_le_bytes());
     }
 
     /// Get the init sender field.
@@ -296,6 +308,15 @@ impl wireguard {
         u32::from_le_bytes(*bytes)
     }
 
+    /// Set the data receiver field.
+    ///
+    /// # Panics
+    /// This will not verify if the message has the right length to contain this field.
+    pub fn set_data_receiver(&mut self, receiver: u32) {
+        self.as_bytes_mut()[field::DATA_RECEIVER]
+            .copy_from_slice(&receiver.to_le_bytes());
+    }
+
     /// Get the data nonce counter field.
     ///
     /// # Panics
@@ -353,6 +374,21 @@ impl Repr {
                 datalen: packet.data_payload().len(),
             },
         })
+    }
+
+    pub fn emit(&self, wg: &mut wireguard) {
+        match self {
+            Repr::Init { sender } => {
+            },
+            Repr::Response { sender, receiver } => {
+            },
+            Repr::Cookie { receiver } => {
+            },
+            Repr::Data { receiver, .. } => {
+                wg.set_type(Type::Data);
+                wg.set_data_receiver(*receiver);
+            },
+        }
     }
 
     pub fn payload_offset() -> usize {
@@ -473,8 +509,9 @@ impl<T: Payload> Payload for Unsealed<T> {
     }
 }
 
+/// An outgoing packet, sealed to a sender.
 #[derive(Debug, PartialEq, Clone)]
-struct Sealed<T> {
+pub struct Sealed<T> {
     buffer: T,
     repr: Repr,
 }
@@ -486,6 +523,28 @@ struct Sealed<T> {
 pub struct Unsealed<T> {
     buffer: T,
     repr: Repr,
+}
+
+impl<T: PayloadMut> Unsealed<T> {
+    pub fn new_unchecked(buffer: T, repr: Repr) -> Self {
+        Unsealed {
+            buffer,
+            repr,
+        }
+    }
+
+    pub fn seal(mut self, this: &mut This, state: &mut CryptConnection)
+        -> Result<Sealed<T>, Self>
+    {
+        let wg = wireguard::new_unchecked_mut(self.buffer.payload_mut());
+        match this.seal(state, wg) {
+            Ok(()) => Ok(Sealed {
+                repr: self.repr,
+                buffer: self.buffer,
+            }),
+            Err(UnspecifiedCryptoFailure) => Err(self),
+        }
+    }
 }
 
 impl<T> Unsealed<T> {
