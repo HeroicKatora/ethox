@@ -4,6 +4,7 @@ members = [
 	"ethox-iperf",
 	"ethox-io-uring",
 	"ethox-xdp",
+	"ethox-afxdp",
 ]
 
 [profile.release]

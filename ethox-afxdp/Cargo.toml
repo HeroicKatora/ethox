@@ -1,0 +1,10 @@
+[package]
+name = "ethox-afxdp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ethox = { path = "../ethox" }
+
+arraydeque = "0.4"
+afxdp = "0.4"
