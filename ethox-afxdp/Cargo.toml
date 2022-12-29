@@ -1,10 +1,14 @@
 [package]
 name = "ethox-afxdp"
-version = "0.1.0"
+version = "0.0.0"
 edition = "2021"
 
 [dependencies]
 ethox = { path = "../ethox" }
-
 arraydeque = "0.4"
-afxdp = "0.4"
+[dependencies.afxdp]
+version = "0.4"
+path = "../../afxdp-rs"
+
+[dev-dependencies.ethox-iperf]
+path = "../ethox-iperf"

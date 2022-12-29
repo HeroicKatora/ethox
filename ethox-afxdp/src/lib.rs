@@ -2,10 +2,11 @@
 extern crate alloc;
 
 use afxdp::buf_mmap::BufMmap;
-use afxdp::socket::{Socket, SocketRx, SocketTx};
-use afxdp::umem::{UmemCompletionQueue, UmemError, UmemFillQueue};
+use afxdp::mmap_area::{MmapArea, MmapAreaOptions, MmapError};
+use afxdp::socket::{Socket, SocketOptions, SocketRx, SocketTx, SocketNewError};
+use afxdp::umem::{Umem, UmemCompletionQueue, UmemError, UmemFillQueue, UmemNewError};
 use afxdp::PENDING_LEN;
-use alloc::{boxed::Box, vec::Vec};
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
 use arraydeque::{ArrayDeque, Wrapping};
 
@@ -15,11 +16,54 @@ use ethox::wire::{payload, Payload, PayloadMut};
 #[derive(Default, Clone, Copy)]
 pub struct BufTag;
 
+pub struct UmemBuilder {
+    #[allow(dead_code)]
+    umem: Arc<Umem<'static, BufTag>>,
+    link_fq: UmemFillQueue<'static, BufTag>,
+    link_cq: UmemCompletionQueue<'static, BufTag>,
+    buffers: Vec<BufMmap<'static, BufTag>>,
+    sock: Vec<SocketFull>,
+}
+
+struct SocketFull {
+    rx: SocketRx<'static, BufTag>,
+    tx: SocketTx<'static, BufTag>,
+    #[allow(dead_code)]
+    sock: Arc<Socket<'static, BufTag>>,
+}
+
+/// Data that is fixed for a `Umem` region.
+pub struct UmemBuilderOptions {
+    /// The buffer count.
+    pub buf_num: usize,
+    /// The size of each buffer (power-of-two).
+    pub buf_size: usize,
+    /// Number of descriptors in the producer on kernel side.
+    pub xsk_prod_desc_num: u32,
+    /// Number of descriptors in the consumer on kernel side.
+    pub xsk_cons_desc_num: u32,
+}
+
+/// Options for binding a socket as AF XDP.
+pub struct BuilderBindOptions {
+    /// The name of the interface device (e.g. `enp8s0`).
+    pub name: alloc::string::String,
+    /// The channel, usually 0 unless running multiple queues on this device.
+    pub channel: usize,
+    pub rx_ring_desc_num: u32,
+    pub tx_ring_desc_num: u32,
+}
+
+#[derive(Debug)]
+pub struct UmemBuilderError {
+    _inner: Box<dyn core::fmt::Debug + Send + Sync + 'static>,
+}
+
 pub struct AfXdp {
     rx: SocketRx<'static, BufTag>,
     tx: SocketTx<'static, BufTag>,
     #[allow(dead_code)]
-    sock: Socket<'static, BufTag>,
+    sock: Arc<Socket<'static, BufTag>>,
 
     link_fq: UmemFillQueue<'static, BufTag>,
     link_cq: UmemCompletionQueue<'static, BufTag>,
@@ -68,6 +112,7 @@ struct Stats {}
 #[repr(transparent)]
 pub struct Buffer(BufMmap<'static, BufTag>);
 
+#[derive(Clone, Copy)]
 pub struct Handle {
     /// Should we send? TODO: allow more than one transmit queue.
     send: Option<u16>,
@@ -233,6 +278,110 @@ impl AfXdp {
             ingress: 0,
             _inner: (),
         })
+    }
+}
+
+impl UmemBuilder {
+    pub fn new(opt: &UmemBuilderOptions) -> Result<Self, UmemBuilderError> {
+        let options = MmapAreaOptions { huge_tlb: false };
+        let (area, buffers) =
+            MmapArea::new(opt.buf_num, opt.buf_size, options).map_err(Self::mmap_err)?;
+
+        let (umem, link_cq, link_fq) =
+            afxdp::umem::Umem::new(area.clone(), opt.xsk_cons_desc_num, opt.xsk_prod_desc_num)
+                .map_err(Self::umem_err)?;
+
+        Ok(UmemBuilder {
+            umem,
+            link_fq,
+            link_cq,
+            buffers,
+            sock: Vec::with_capacity(1),
+        })
+    }
+
+    /// Bind a new socket into this interface.
+    ///
+    /// Note: currently, only exactly one socket is supported. Multi-Socket support may get added
+    /// to ethox at some point in the future...
+    pub fn with_socket(
+        &mut self,
+        bind: &BuilderBindOptions,
+        sock: SocketOptions,
+    ) -> Result<(), UmemBuilderError> {
+        let (sock, rx, tx) = Socket::new(
+            self.umem.clone(),
+            &bind.name,
+            bind.channel,
+            bind.rx_ring_desc_num,
+            bind.tx_ring_desc_num,
+            sock,
+        )
+        .map_err(Self::sock_err)?;
+
+        self.sock.push(SocketFull { sock, rx, tx });
+
+        Ok(())
+    }
+
+    /// Finalize the builder, returning a configured interface.
+    pub fn build(mut self) -> Result<AfXdp, UmemBuilderError> {
+        let sock = match self.sock.pop() {
+            Some(sock) => sock,
+            None => panic!("no socket"), // FIXME: error
+        };
+
+        Ok(AfXdp {
+            rx: sock.rx,
+            tx: sock.tx,
+            sock: sock.sock,
+            link_fq: self.link_fq,
+            link_cq: self.link_cq,
+            queue_rx: Vec::with_capacity(16),
+            queue_tx: Vec::with_capacity(16),
+            free: self.buffers,
+            pending_rx: Default::default(),
+            pending_fq: Default::default(),
+            pending_tx: Default::default(),
+            pending_cq: Default::default(),
+            handles: alloc::vec![Handle { send: None }; 2048].into_boxed_slice(),
+            stats: Box::new(Stats::default()),
+            watermark_rx: 16,
+            watermark_tx: 16,
+            current_rx: 0,
+            current_tx: 0,
+            essential_free_rx: 16,
+            essential_free_tx: 16,
+        })
+    }
+
+    fn umem_err(err: UmemNewError) -> UmemBuilderError {
+        UmemBuilderError {
+            _inner: Box::new(err),
+        }
+    }
+
+    fn sock_err(err: SocketNewError) -> UmemBuilderError {
+        UmemBuilderError {
+            _inner: Box::new(err),
+        }
+    }
+
+    fn mmap_err(err: MmapError) -> UmemBuilderError {
+        UmemBuilderError {
+            _inner: Box::new(err),
+        }
+    }
+}
+
+impl Default for UmemBuilderOptions {
+    fn default() -> Self {
+        UmemBuilderOptions {
+            buf_num: 2048,
+            buf_size: (1 << 16),
+            xsk_prod_desc_num: 2048,
+            xsk_cons_desc_num: 2048,
+        }
     }
 }
 
