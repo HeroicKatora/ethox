@@ -6,9 +6,9 @@ edition = "2021"
 [dependencies]
 ethox = { path = "../ethox" }
 arraydeque = "0.4"
-[dependencies.afxdp]
-version = "0.4"
-path = "../../afxdp-rs"
+[dependencies.xdpilone]
+version = "0.0.0"
+path = "../../xdpilone"
 
 [dev-dependencies.ethox-iperf]
 path = "../ethox-iperf"

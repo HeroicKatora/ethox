@@ -1,57 +1,52 @@
 #![no_std]
 extern crate alloc;
 
-use afxdp::buf_mmap::BufMmap;
-use afxdp::mmap_area::{MmapArea, MmapAreaOptions, MmapError};
-use afxdp::socket::{Socket, SocketOptions, SocketRx, SocketTx, SocketNewError};
-use afxdp::umem::{Umem, UmemCompletionQueue, UmemError, UmemFillQueue, UmemNewError};
-use afxdp::PENDING_LEN;
+use core::cell::UnsafeCell;
+use core::ptr::NonNull;
+
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
+use xdpilone::xsk::{
+    IfInfo, XskDeviceQueue, XskRxRing, XskSocket, XskSocketConfig, XskTxRing, XskUmem, XskUser,
+};
 
 use arraydeque::{ArrayDeque, Wrapping};
 
 use ethox::nic::Device;
 use ethox::wire::{payload, Payload, PayloadMut};
 
-#[derive(Default, Clone, Copy)]
-pub struct BufTag;
+/// Handled to some area of memory controlled by us.
+///
+/// This way, the socket can optionally *own* a handle to that memory region, allowing it to drop
+/// it at the expected time.
+unsafe trait MemoryArea: Send + Sync + 'static {
+    fn as_ptr(&self) -> NonNull<[UnsafeCell<u8>]>;
+}
 
 pub struct UmemBuilder {
     #[allow(dead_code)]
-    umem: Arc<Umem<'static, BufTag>>,
-    link_fq: UmemFillQueue<'static, BufTag>,
-    link_cq: UmemCompletionQueue<'static, BufTag>,
-    buffers: Vec<BufMmap<'static, BufTag>>,
-    sock: Vec<SocketFull>,
-}
-
-struct SocketFull {
-    rx: SocketRx<'static, BufTag>,
-    tx: SocketTx<'static, BufTag>,
-    #[allow(dead_code)]
-    sock: Arc<Socket<'static, BufTag>>,
+    umem: XskUmem,
+    /// Is the file descriptor of the `umem` itself used as rx/tx?
+    initial_socket: Option<()>,
+    memory: Option<Arc<dyn MemoryArea>>,
+    /// The physical devices managed on this `umem`.
+    device: Vec<XskDeviceQueue>,
+    /// The user queues.
+    rxtx: Vec<XskUser>,
+    /// Physical receive interfaces.
+    rx: Vec<XskRxRing>,
+    /// Physical transmit interfaces.
+    tx: Vec<XskTxRing>,
 }
 
 /// Data that is fixed for a `Umem` region.
-pub struct UmemBuilderOptions {
-    /// The buffer count.
-    pub buf_num: usize,
-    /// The size of each buffer (power-of-two).
-    pub buf_size: usize,
-    /// Number of descriptors in the producer on kernel side.
-    pub xsk_prod_desc_num: u32,
-    /// Number of descriptors in the consumer on kernel side.
-    pub xsk_cons_desc_num: u32,
+pub struct XdpBuilderOptions {
+    /// Optionally, a handle to the memory region to own.
+    pub memory: Option<Arc<dyn MemoryArea>>,
 }
 
-/// Options for binding a socket as AF XDP.
-pub struct BuilderBindOptions {
-    /// The name of the interface device (e.g. `enp8s0`).
-    pub name: alloc::string::String,
-    /// The channel, usually 0 unless running multiple queues on this device.
-    pub channel: usize,
-    pub rx_ring_desc_num: u32,
-    pub tx_ring_desc_num: u32,
+pub struct DeviceOptions<'lt> {
+    pub ifinfo: &'lt IfInfo,
+    pub config: &'lt XskSocketConfig,
 }
 
 #[derive(Debug)]
@@ -60,30 +55,15 @@ pub struct UmemBuilderError {
 }
 
 pub struct AfXdp {
-    rx: SocketRx<'static, BufTag>,
-    tx: SocketTx<'static, BufTag>,
     #[allow(dead_code)]
-    sock: Arc<Socket<'static, BufTag>>,
-
-    link_fq: UmemFillQueue<'static, BufTag>,
-    link_cq: UmemCompletionQueue<'static, BufTag>,
-
-    /// the temporary pool of mapped buffers received.
-    queue_rx: Vec<BufMmap<'static, BufTag>>,
-    /// the temporary pool of mapped buffers ready to fill with transmit data.
-    queue_tx: Vec<BufMmap<'static, BufTag>>,
-
-    /// free buffers with no assigned use.
-    free: Vec<BufMmap<'static, BufTag>>,
-    pending_rx: ArrayDeque<[BufMmap<'static, BufTag>; PENDING_LEN], Wrapping>,
-    /// the temporary pool of mapped buffers ready to add to fill queue.
-    pending_fq: Vec<BufMmap<'static, BufTag>>,
-    /// Buffers enqueued for transmit in order.
-    pending_tx: ArrayDeque<[BufMmap<'static, BufTag>; PENDING_LEN], Wrapping>,
-    pending_cq: Vec<BufMmap<'static, BufTag>>,
+    /// Free buffers with no assigned use.
+    free: Vec<OwnedBuf>,
 
     // A buffer of handles we use temporarily to communicate with the sender and receiver.
     handles: Box<[Handle]>,
+
+    tx: Vec<XskTxRing>,
+    rx: Vec<XskRxRing>,
 
     /// Gathered statistics about socket usage, buffer usage, etc.
     #[allow(dead_code)]
@@ -106,16 +86,45 @@ pub struct AfXdp {
     essential_free_tx: usize,
 }
 
+/// An owning index of a buffer in the `Umem`.
+///
+/// This owns a whole buffer, with the size used in the construction configuration of the umem
+/// ring. For calls that require a distinct length (sent by transmit, received from receive) the
+/// structure `Buffer` is used instead.
+///
+/// This is a unique token on this ring, you can't *safely* get access to a copy.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct OwnedBuf(u32);
+
 #[derive(Default)]
 struct Stats {}
 
-#[repr(transparent)]
-pub struct Buffer(BufMmap<'static, BufTag>);
+/// The buffer representation while owned by User-Space during Rx/TX operations.
+pub struct Buffer {
+    /// The complete view of this buffer.
+    addr: NonNull<[u8]>,
+    /// The index which we use to own the buffer.
+    idx: OwnedBuf,
+    /// The logical length of this buffer.
+    len: u16,
+}
 
 #[derive(Clone, Copy)]
 pub struct Handle {
-    /// Should we send? TODO: allow more than one transmit queue.
+    /// Where should we submit this buffer.
     send: Option<u16>,
+}
+
+/// Designate the fate of a buffer after its operation.
+pub enum Destination {
+    /// Do not use the buffer for anything in particular.
+    Free,
+    /// Submit this descriptor to a transmit queue.
+    Tx(u16),
+    /// Keep the buffer on a local queue (unimplemented at the moment).
+    Keep(u16),
+    /// Submit the buffer to the Fill queue to be received.
+    Fill,
 }
 
 pub struct IoReport {
@@ -172,15 +181,7 @@ impl AfXdp {
         }
 
         let mut tx = 0;
-        for (packet, hdl) in self.queue_rx.drain(..).zip(&self.handles[..]) {
-            match hdl.send {
-                Some(0) if tx < spill => {
-                    tx += 1;
-                    self.pending_tx.push_back(packet);
-                }
-                _ => self.free.push(packet),
-            }
-        }
+        todo!();
 
         self.current_tx += tx;
     }
@@ -191,17 +192,7 @@ impl AfXdp {
     /// * `queue_tx` is empty.
     fn post_tx(&mut self) {
         let mut freed = 0;
-        for (packet, hdl) in self.queue_tx.drain(..).zip(&self.handles[..]) {
-            match hdl.send {
-                Some(0) => {
-                    self.pending_tx.push_back(packet);
-                }
-                _ => {
-                    freed += 1;
-                    self.free.push(packet);
-                }
-            }
-        }
+        todo!();
 
         // Number of essential packets freed.
         let float = self.watermark_tx.saturating_sub(self.current_tx - freed);
@@ -214,9 +205,7 @@ impl AfXdp {
     /// Precondition:
     /// `self.queue_rx` is empty.
     fn pre_rx(&mut self, max: usize) -> usize {
-        let actual = self.pending_rx.len().min(max);
-        self.queue_rx.extend(self.pending_rx.drain(..actual));
-        actual
+        todo!();
     }
 
     /// Prepare some buffers from the free floating buffer.
@@ -230,7 +219,7 @@ impl AfXdp {
         self.current_tx += actual;
         debug_assert!(self.essential_free_rx + self.essential_free_tx <= self.free.len());
 
-        self.queue_rx.extend(self.pending_rx.drain(..actual));
+        todo!();
         actual
     }
 
@@ -244,34 +233,19 @@ impl AfXdp {
     /// Call this eventually after buffers from the fill queue have been consumed. Never consumes
     /// too many packets to starve the transmit queue.
     fn periodic_reap_fq(&mut self) -> usize {
-        let batch = 16;
         debug_assert!(self.essential_free_rx + self.essential_free_tx <= self.free.len());
-        let actual = (self.free.len() - self.essential_free_tx).min(batch);
         todo!();
-
-        self.pending_fq.extend(self.free.drain(..actual));
     }
 
     /// Handle fill and completion queue actions with the kernel.
     ///
     /// Run this periodically.
     pub fn do_io(&mut self) -> Result<IoReport, UmemError> {
-        if self.tx.needs_wakeup() || self.link_fq.needs_wakeup() {
-            self.rx.wake();
+        for tx in &mut self.tx {
+            if tx.needs_wakeup() {
+                tx.wake();
+            }
         }
-
-        let batch = 16;
-        let igress_err = self.rx.try_recv(&mut self.pending_rx, batch, BufTag);
-        let ogress_err = self.tx.try_send(&mut self.pending_tx, batch);
-
-        // Periodic maintenance tasks, the two kernel queues.
-        self.periodic_reap_fq();
-        let fill_err = self.link_fq.fill(&mut self.pending_fq, batch);
-        let complete_err = self.link_cq.service(&mut self.pending_cq, batch);
-        self.periodic_reap_cq();
-
-        let _ = igress_err.and(ogress_err);
-        let _ = fill_err.and(complete_err);
 
         Ok(IoReport {
             egress: 0,
@@ -282,70 +256,63 @@ impl AfXdp {
 }
 
 impl UmemBuilder {
-    pub fn new(opt: &UmemBuilderOptions) -> Result<Self, UmemBuilderError> {
-        let options = MmapAreaOptions { huge_tlb: false };
-        let (area, buffers) =
-            MmapArea::new(opt.buf_num, opt.buf_size, options).map_err(Self::mmap_err)?;
-
-        let (umem, link_cq, link_fq) =
-            afxdp::umem::Umem::new(area.clone(), opt.xsk_cons_desc_num, opt.xsk_prod_desc_num)
-                .map_err(Self::umem_err)?;
-
-        Ok(UmemBuilder {
-            umem,
-            link_fq,
-            link_cq,
-            buffers,
-            sock: Vec::with_capacity(1),
-        })
+    /// Create a umem over a custom memory region to use for buffers.
+    ///
+    /// # Safety
+    ///
+    /// Guarantee that the memory region that had been used to construct the buffer is not aliased.
+    pub unsafe fn new(umem: XskUmem, opt: &XdpBuilderOptions) -> Result<Self, UmemBuilderError> {
+        Ok(UmemBuilder { ..todo!() })
     }
 
     /// Bind a new socket into this interface.
     ///
     /// Note: currently, only exactly one socket is supported. Multi-Socket support may get added
     /// to ethox at some point in the future...
-    pub fn with_socket(
-        &mut self,
-        bind: &BuilderBindOptions,
-        sock: SocketOptions,
-    ) -> Result<(), UmemBuilderError> {
-        let (sock, rx, tx) = Socket::new(
-            self.umem.clone(),
-            &bind.name,
-            bind.channel,
-            bind.rx_ring_desc_num,
-            bind.tx_ring_desc_num,
-            sock,
-        )
-        .map_err(Self::sock_err)?;
+    pub fn with_socket(&mut self, bind: DeviceOptions) -> Result<(), UmemBuilderError> {
+        // Use either the builtin file descriptor or a fresh one if that's already been used.
+        let socket = self
+            .initial_socket
+            .take()
+            .map_or_else(
+                || XskSocket::new(&bind.ifinfo),
+                |()| XskSocket::with_shared(&bind.ifinfo, &self.umem),
+            )
+            .map_err(Self::errno_err)?;
 
-        self.sock.push(SocketFull { sock, rx, tx });
+        let rxtx = self
+            .umem
+            .rx_tx(&socket, &bind.config)
+            .map_err(Self::errno_err)?;
+
+        if bind.config.rx_size.is_some() {
+            self.rx.push(rxtx.map_rx().map_err(Self::errno_err)?);
+        }
+
+        if bind.config.tx_size.is_some() {
+            self.tx.push(rxtx.map_tx().map_err(Self::errno_err)?);
+        }
+
+        self.rxtx.push(rxtx);
 
         Ok(())
     }
 
     /// Finalize the builder, returning a configured interface.
     pub fn build(mut self) -> Result<AfXdp, UmemBuilderError> {
-        let sock = match self.sock.pop() {
+        let sock = match self.device.pop() {
             Some(sock) => sock,
             None => panic!("no socket"), // FIXME: error
         };
 
+        let free = (0..self.umem.len_frames()).map(OwnedBuf).collect();
+
         Ok(AfXdp {
-            rx: sock.rx,
-            tx: sock.tx,
-            sock: sock.sock,
-            link_fq: self.link_fq,
-            link_cq: self.link_cq,
-            queue_rx: Vec::with_capacity(16),
-            queue_tx: Vec::with_capacity(16),
-            free: self.buffers,
-            pending_rx: Default::default(),
-            pending_fq: Default::default(),
-            pending_tx: Default::default(),
-            pending_cq: Default::default(),
+            tx: self.tx,
+            rx: self.rx,
             handles: alloc::vec![Handle { send: None }; 2048].into_boxed_slice(),
             stats: Box::new(Stats::default()),
+            free,
             watermark_rx: 16,
             watermark_tx: 16,
             current_rx: 0,
@@ -355,33 +322,16 @@ impl UmemBuilder {
         })
     }
 
-    fn umem_err(err: UmemNewError) -> UmemBuilderError {
-        UmemBuilderError {
-            _inner: Box::new(err),
-        }
-    }
-
-    fn sock_err(err: SocketNewError) -> UmemBuilderError {
-        UmemBuilderError {
-            _inner: Box::new(err),
-        }
-    }
-
-    fn mmap_err(err: MmapError) -> UmemBuilderError {
+    fn errno_err(err: xdpilone::Errno) -> UmemBuilderError {
         UmemBuilderError {
             _inner: Box::new(err),
         }
     }
 }
 
-impl Default for UmemBuilderOptions {
+impl Default for XdpBuilderOptions {
     fn default() -> Self {
-        UmemBuilderOptions {
-            buf_num: 2048,
-            buf_size: (1 << 16),
-            xsk_prod_desc_num: 2048,
-            xsk_cons_desc_num: 2048,
-        }
+        XdpBuilderOptions { memory: None }
     }
 }
 
@@ -401,17 +351,7 @@ impl Device for AfXdp {
     ) -> ethox::layer::Result<usize> {
         let max = self.handles.len().min(max);
         let count = self.pre_tx(max);
-
-        let packets = self
-            .queue_tx
-            .iter_mut()
-            .zip(&mut self.handles[..])
-            .take(max)
-            .map(|(payload, handle)| ethox::nic::Packet {
-                handle,
-                payload: unsafe { core::mem::transmute::<_, &mut Buffer>(payload) },
-            });
-
+        todo!();
         sender.sendv(packets);
         self.post_tx();
         Ok(count)
@@ -424,17 +364,7 @@ impl Device for AfXdp {
     ) -> ethox::layer::Result<usize> {
         let max = self.handles.len().min(max);
         let count = self.pre_rx(max);
-
-        let packets = self
-            .queue_rx
-            .iter_mut()
-            .take(max)
-            .zip(&mut self.handles[..])
-            .map(|(payload, handle)| ethox::nic::Packet {
-                handle,
-                payload: unsafe { core::mem::transmute::<_, &mut Buffer>(payload) },
-            });
-
+        todo!();
         receiver.receivev(packets);
         self.post_rx();
         Ok(count)
@@ -443,18 +373,22 @@ impl Device for AfXdp {
 
 impl Payload for Buffer {
     fn payload(&self) -> &payload {
-        afxdp::buf::Buf::get_data(&self.0).into()
+        // Safety: we can reference the `OwnedBuf` (`idx`) to this at the moment.
+        let _: &_ = &self.idx;
+        unsafe { self.addr.as_ref() }.into()
     }
 }
 
 impl PayloadMut for Buffer {
     fn payload_mut(&mut self) -> &mut payload {
-        afxdp::buf::Buf::get_data_mut(&mut self.0).into()
+        // Safety: we own the `OwnedBuf` (`idx`) to this at the moment.
+        let _: &mut _ = &mut self.idx;
+        unsafe { self.addr.as_mut() }.into()
     }
 
     fn resize(&mut self, length: usize) -> Result<(), ethox::wire::PayloadError> {
         if let Ok(len) = u16::try_from(length) {
-            Ok(afxdp::buf::Buf::set_len(&mut self.0, len))
+            Ok(self.len = len)
         } else {
             Err(ethox::wire::PayloadError::BadSize)
         }
