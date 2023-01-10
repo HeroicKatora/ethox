@@ -5,10 +5,15 @@ edition = "2021"
 
 [dependencies]
 ethox = { path = "../ethox" }
-arraydeque = "0.4"
 [dependencies.xdpilone]
 version = "0.0.0"
 path = "../../xdpilone"
+[dependencies.bpf-lite]
+version = "0.0.0"
+path = "../../bpf-lite"
+[dependencies.libc]
+version = "0.2.103"
+default-features = false
 
 [dev-dependencies.ethox-iperf]
 path = "../ethox-iperf"

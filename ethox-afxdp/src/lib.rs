@@ -1,15 +1,23 @@
 #![no_std]
 extern crate alloc;
 
+mod buffers;
+mod bpf;
+mod ring;
+mod xdp;
+
+use self::buffers::{BufferManagement, OwnedBuf, RxLease, TxLease};
+
 use core::cell::UnsafeCell;
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
-use xdpilone::xsk::{
-    IfInfo, XskDeviceQueue, XskRxRing, XskSocket, XskSocketConfig, XskTxRing, XskUmem, XskUser,
-};
 
-use arraydeque::{ArrayDeque, Wrapping};
+use xdpilone::xsk::{
+    IfInfo, ReadRx, WriteTx, XskDeviceQueue, XskRxRing, XskSocket, XskSocketConfig, XskTxRing,
+    XskUmem, XskUser,
+};
 
 use ethox::nic::Device;
 use ethox::wire::{payload, Payload, PayloadMut};
@@ -22,8 +30,7 @@ unsafe trait MemoryArea: Send + Sync + 'static {
     fn as_ptr(&self) -> NonNull<[UnsafeCell<u8>]>;
 }
 
-pub struct UmemBuilder {
-    #[allow(dead_code)]
+pub struct AfXdpBuilder {
     umem: XskUmem,
     /// Is the file descriptor of the `umem` itself used as rx/tx?
     initial_socket: Option<()>,
@@ -50,51 +57,28 @@ pub struct DeviceOptions<'lt> {
 }
 
 #[derive(Debug)]
-pub struct UmemBuilderError {
+pub struct AfXdpBuilderError {
     _inner: Box<dyn core::fmt::Debug + Send + Sync + 'static>,
 }
 
 pub struct AfXdp {
+    umem: XskUmem,
     #[allow(dead_code)]
-    /// Free buffers with no assigned use.
-    free: Vec<OwnedBuf>,
-
+    /// The queue's own device handle.
+    device_handle: Arc<DeviceHandle>,
     // A buffer of handles we use temporarily to communicate with the sender and receiver.
     handles: Box<[Handle]>,
 
-    tx: Vec<XskTxRing>,
-    rx: Vec<XskRxRing>,
+    tx: Option<XskTxRing>,
+    // FIXME: figure out how to handle multiple receive rings.
+    rx: Option<XskRxRing>,
 
     /// Gathered statistics about socket usage, buffer usage, etc.
     #[allow(dead_code)]
     stats: Box<Stats>,
 
-    /// Number of packet buffers to reserve for receive.
-    watermark_rx: usize,
-    /// Number of packet buffers to reserve for transmission.
-    watermark_tx: usize,
-
-    /// Packets currently in the RX system (>=watermark_rx).
-    current_rx: usize,
-    /// Packets currently in the TX system (>=watermark_tx).
-    current_tx: usize,
-
-    // Buffer tracking of free float.
-    /// Number of essential RX buffers in the free state.
-    essential_free_rx: usize,
-    /// Number of essential TX buffers in the free state.
-    essential_free_tx: usize,
+    buffers: BufferManagement,
 }
-
-/// An owning index of a buffer in the `Umem`.
-///
-/// This owns a whole buffer, with the size used in the construction configuration of the umem
-/// ring. For calls that require a distinct length (sent by transmit, received from receive) the
-/// structure `Buffer` is used instead.
-///
-/// This is a unique token on this ring, you can't *safely* get access to a copy.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct OwnedBuf(u32);
 
 #[derive(Default)]
 struct Stats {}
@@ -109,13 +93,31 @@ pub struct Buffer {
     len: u16,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Handle {
     /// Where should we submit this buffer.
-    send: Option<u16>,
+    send: Destination,
+    /// Shared state of the device.
+    shared: Arc<DeviceHandle>,
+}
+
+/// The state shared between handles.
+///
+/// This allows a handle to own some unique aspects of a buffer, as well as share common controls
+/// without involving lifetimes. That is, a single allocation exists for expensive to create state,
+/// e.g., current synchronous timestamp data (clock), tracking of allowed destinations. This is
+/// efficient because the allocation is never de-allocated while the device lives.
+#[derive(Default)]
+struct DeviceHandle {
+    /// Atomic timestamp, only the device writes, handles read.
+    /// Access is made non-tearing by not writing while a tx/rx happens, i.e. synchronization in
+    /// those queues.
+    ts_seconds: AtomicU64,
+    ts_nanos: AtomicU32,
 }
 
 /// Designate the fate of a buffer after its operation.
+#[derive(Clone, Copy, Debug)]
 pub enum Destination {
     /// Do not use the buffer for anything in particular.
     Free,
@@ -133,114 +135,56 @@ pub struct IoReport {
     _inner: (),
 }
 
-/// Buffer management operations.
-///
-/// All operations should ensure our local liveness properties:
-/// * Assuming the network card will eventually transmit queued packet and put them into the
-///   completion queue then:
-/// * Eventually some buffers are available for the fill queue (i.e. currently inserted or in the
-///   `pending_fx` buffer).
-/// * Eventually a call to `tx` can enqueue at least one buffer.
-///
-/// This is maintained by treating rx&tx as two separate systems of buffers, with some auxiliary
-/// buffers floating freely between the two. This is _not_ optimal for latency. The pending
-/// transmit queues might still grow large of receive packets sparse if all floating buffers are in
-/// one of the two systems (especially if multiple sockets are involved). But real-time with small
-/// guarantees is better than none.
-///
-/// It follows that, in the current implementation, the total number of buffers should not exceed
-/// `PENDING_LEN` as this many buffers could be put into any queue. Packets would need to be
-/// assigned as free floating buffers otherwise, dropping any egress or ingress content they have.
-/// Not incorrect, but very inconvenient.
-///
-/// Invariants to uphold everywhere:
-/// * Number of buffers in `free`, `pending_fx`, and the fill queue is at least `watermark_rx`.
-/// * Number of buffers in `free`, `pending_tx`, and the completion queue is at least `watermark_tx`.
+/// Borrowed queue/buffer states while receiving.
+struct PreparedRx<'lt> {
+    this: Option<ReadRx<'lt>>,
+    /// Number of packets that are received.
+    lease: RxLease<'lt>,
+}
+
+struct PreparedTx<'lt> {
+    umem: &'lt mut XskUmem,
+    this: Option<WriteTx<'lt>>,
+    /// Number of packets that are sent.
+    lease: TxLease<'lt>,
+}
+
 impl AfXdp {
-    /// Cleanup the receive queue.
-    ///
-    /// Other packets are set aside into our fill queue. Note: sending as an 'instant response' is
-    /// not guaranteed! The implementation should inspect the handles in a smarter way to avoid us
-    /// dropping a retransmit here.
-    ///
-    /// Postcondition:
-    /// * `queue_rx` is empty.
-    fn post_rx(&mut self) {
-        // How many packets can leave the RX loop? These all come from the fill queue.
-        let spill = self.current_rx.saturating_sub(self.watermark_rx);
-        let essential = self.current_rx - spill;
-        // Essential packets are reserved for RX tasks.
-        self.essential_free_rx += essential;
-        // All other packets leave the RX assignment and are floating again.
-        self.current_rx -= spill;
-
-        // None of the packets are allowed to get sent (these packets leave the RX system).
-        if spill == 0 {
-            self.free.extend(self.queue_rx.drain(..));
-            return;
-        }
-
-        let mut tx = 0;
-        todo!();
-
-        self.current_tx += tx;
-    }
-
-    /// Cleanup the transmit queue according to handles.
-    ///
-    /// Other packets are set aside into our fill queue.
-    /// * `queue_tx` is empty.
-    fn post_tx(&mut self) {
-        let mut freed = 0;
-        todo!();
-
-        // Number of essential packets freed.
-        let float = self.watermark_tx.saturating_sub(self.current_tx - freed);
-        self.current_tx -= freed;
-        self.essential_free_tx += float;
-    }
-
     /// Accept some buffers from the `afxdp` receive buffer.
     ///
     /// Precondition:
     /// `self.queue_rx` is empty.
-    fn pre_rx(&mut self, max: usize) -> usize {
-        todo!();
+    fn pre_rx(&mut self, max: u32) -> PreparedRx<'_> {
+        let this = match self.rx.as_mut() {
+            None => None,
+            Some(rx) => Some(rx.receive(max)),
+        };
+
+        let actual = this.as_ref().map_or(0, |rx| rx.capacity());
+        let lease = self.buffers.pre_rx(actual);
+
+        PreparedRx { this, lease }
     }
 
-    /// Prepare some buffers from the free floating buffer.
-    ///
-    /// Precondition:
-    /// `self.queue_rx` is empty.
-    fn pre_tx(&mut self, max: usize) -> usize {
-        debug_assert!(self.essential_free_rx + self.essential_free_tx <= self.free.len());
-        let actual = (self.free.len() - self.essential_free_rx).min(max);
-        self.essential_free_tx = self.essential_free_tx.saturating_sub(actual);
-        self.current_tx += actual;
-        debug_assert!(self.essential_free_rx + self.essential_free_tx <= self.free.len());
+    fn pre_tx(&mut self, max: u32) -> PreparedTx<'_> {
+        let this = match self.tx.as_mut() {
+            None => None,
+            Some(tx) => Some(tx.transmit(max)),
+        };
 
-        todo!();
-        actual
-    }
+        let actual = this.as_ref().map_or(0, |tx| tx.capacity());
+        let lease = self.buffers.pre_tx(actual);
+        let umem = &mut self.umem;
 
-    /// Gather packet buffers from the completion queue.
-    fn periodic_reap_cq(&mut self) -> usize {
-        todo!()
-    }
-
-    /// Gather some free packet buffers into the fill queue.
-    ///
-    /// Call this eventually after buffers from the fill queue have been consumed. Never consumes
-    /// too many packets to starve the transmit queue.
-    fn periodic_reap_fq(&mut self) -> usize {
-        debug_assert!(self.essential_free_rx + self.essential_free_tx <= self.free.len());
-        todo!();
+        PreparedTx { umem, this, lease }
     }
 
     /// Handle fill and completion queue actions with the kernel.
     ///
     /// Run this periodically.
-    pub fn do_io(&mut self) -> Result<IoReport, UmemError> {
+    pub fn do_io(&mut self) -> Result<IoReport, AfXdpBuilderError> {
+        // Note: acknowledge we may have multiple TX, but then the work might be awkwardly high per
+        // iteration. Currently this iterator is an Option.
         for tx in &mut self.tx {
             if tx.needs_wakeup() {
                 tx.wake();
@@ -255,21 +199,29 @@ impl AfXdp {
     }
 }
 
-impl UmemBuilder {
+impl AfXdpBuilder {
     /// Create a umem over a custom memory region to use for buffers.
     ///
     /// # Safety
     ///
     /// Guarantee that the memory region that had been used to construct the buffer is not aliased.
-    pub unsafe fn new(umem: XskUmem, opt: &XdpBuilderOptions) -> Result<Self, UmemBuilderError> {
-        Ok(UmemBuilder { ..todo!() })
+    pub unsafe fn new(umem: XskUmem, opt: &XdpBuilderOptions) -> Result<Self, AfXdpBuilderError> {
+        Ok(AfXdpBuilder {
+            umem,
+            initial_socket: Some(()),
+            memory: opt.memory.clone(),
+            device: Vec::new(),
+            rxtx: Vec::new(),
+            rx: Vec::new(),
+            tx: Vec::new(),
+        })
     }
 
     /// Bind a new socket into this interface.
     ///
     /// Note: currently, only exactly one socket is supported. Multi-Socket support may get added
     /// to ethox at some point in the future...
-    pub fn with_socket(&mut self, bind: DeviceOptions) -> Result<(), UmemBuilderError> {
+    pub fn with_socket(&mut self, bind: DeviceOptions) -> Result<(), AfXdpBuilderError> {
         // Use either the builtin file descriptor or a fresh one if that's already been used.
         let socket = self
             .initial_socket
@@ -299,32 +251,126 @@ impl UmemBuilder {
     }
 
     /// Finalize the builder, returning a configured interface.
-    pub fn build(mut self) -> Result<AfXdp, UmemBuilderError> {
+    pub fn build(mut self) -> Result<AfXdp, AfXdpBuilderError> {
         let sock = match self.device.pop() {
+            Some(sock) if !self.device.is_empty() => {
+                return Err(AfXdpBuilderError::unsupported_too_many_devices())
+            }
             Some(sock) => sock,
-            None => panic!("no socket"), // FIXME: error
+            None => return Err(AfXdpBuilderError::no_device()),
+        };
+
+        let tx = match self.tx.len() {
+            0 | 1 => self.tx.pop(),
+            _ => return Err(AfXdpBuilderError::unsupported_too_many_tx()),
+        };
+
+        let rx = match self.rx.len() {
+            0 | 1 => self.rx.pop(),
+            _ => return Err(AfXdpBuilderError::unsupported_too_many_rx()),
         };
 
         let free = (0..self.umem.len_frames()).map(OwnedBuf).collect();
+        let device_handle = Arc::<DeviceHandle>::default();
+
+        let handles = core::iter::repeat_with(|| Handle {
+            send: Destination::Free,
+            shared: device_handle.clone(),
+        })
+        .take(2048)
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
 
         Ok(AfXdp {
-            tx: self.tx,
-            rx: self.rx,
-            handles: alloc::vec![Handle { send: None }; 2048].into_boxed_slice(),
+            tx,
+            rx,
+            device_handle,
+            handles,
             stats: Box::new(Stats::default()),
-            free,
-            watermark_rx: 16,
-            watermark_tx: 16,
-            current_rx: 0,
-            current_tx: 0,
-            essential_free_rx: 16,
-            essential_free_tx: 16,
+            buffers: BufferManagement {
+                free,
+                watermark_rx: 16,
+                target_rx: 32,
+                watermark_tx: 16,
+                target_tx: 32,
+                current_rx: 0,
+                current_tx: 0,
+                essential_free_rx: 16,
+                essential_free_tx: 16,
+            },
+            umem: self.umem,
         })
     }
 
-    fn errno_err(err: xdpilone::Errno) -> UmemBuilderError {
-        UmemBuilderError {
+    fn errno_err(err: xdpilone::Errno) -> AfXdpBuilderError {
+        AfXdpBuilderError {
             _inner: Box::new(err),
+        }
+    }
+}
+
+impl PreparedRx<'_> {
+    pub(crate) fn close(self, handles: &[Handle]) {
+        let mut rx = match self.this {
+            None => return,
+            Some(rx) => rx,
+        };
+
+        let bufaddr = core::iter::from_fn(|| rx.read());
+
+        for (hdl, addr) in handles.iter().zip(bufaddr) {}
+    }
+}
+
+impl PreparedTx<'_> {
+    pub(crate) fn close(self, handles: &[Handle]) {
+        let mut tx = match self.this {
+            None => return,
+            Some(tx) => tx,
+        };
+
+        for handle in handles {
+            match handle.send {
+                Destination::Tx(0) => {}
+                _ => {
+                    self.lease.skip();
+                    continue;
+                }
+            }
+
+            let sent = self.lease.pop_buf();
+            let frame = self.umem.frame(xdpilone::xsk::BufIdx(sent.0)).unwrap();
+
+            let desc = frame.into_xdp(todo!());
+            tx.insert(core::iter::once(desc));
+        }
+    }
+}
+
+impl AfXdp {}
+
+impl AfXdpBuilderError {
+    fn no_device() -> AfXdpBuilderError {
+        AfXdpBuilderError {
+            _inner: Box::new("no such device"),
+        }
+    }
+
+    fn unsupported_too_many_devices() -> AfXdpBuilderError {
+        AfXdpBuilderError {
+            _inner: Box::new("too many devices, only one supported for now"),
+        }
+    }
+
+    fn unsupported_too_many_tx() -> AfXdpBuilderError {
+        AfXdpBuilderError {
+            _inner: Box::new("too many TX, only one supported for now"),
+        }
+    }
+
+    fn unsupported_too_many_rx() -> AfXdpBuilderError {
+        AfXdpBuilderError {
+            _inner: Box::new("too many RX, only one supported for now"),
         }
     }
 }
@@ -350,10 +396,13 @@ impl Device for AfXdp {
         mut sender: impl ethox::nic::Send<Self::Handle, Self::Payload>,
     ) -> ethox::layer::Result<usize> {
         let max = self.handles.len().min(max);
-        let count = self.pre_tx(max);
-        todo!();
+        let max = u32::try_from(max).unwrap_or(u32::MAX);
+        let lease = self.pre_tx(max);
+
+        let (count, packets) = todo!();
         sender.sendv(packets);
-        self.post_tx();
+        lease.close(&self.handles);
+
         Ok(count)
     }
 
@@ -363,10 +412,17 @@ impl Device for AfXdp {
         mut receiver: impl ethox::nic::Recv<Self::Handle, Self::Payload>,
     ) -> ethox::layer::Result<usize> {
         let max = self.handles.len().min(max);
-        let count = self.pre_rx(max);
-        todo!();
+        let max = u32::try_from(max).unwrap_or(u32::MAX);
+
+        if max == 0 {
+            return Ok(0);
+        }
+
+        let lease = self.pre_rx(max);
+        let (count, packets) = todo!();
         receiver.receivev(packets);
-        self.post_rx();
+        lease.close(&self.handles);
+
         Ok(count)
     }
 }
@@ -413,7 +469,11 @@ impl ethox::nic::Handle for Handle {
 
 impl ethox::nic::Info for Handle {
     fn timestamp(&self) -> ethox::time::Instant {
-        todo!()
+        let ts_secs = self.shared.ts_seconds.load(Ordering::Relaxed);
+        let ts_nanos = self.shared.ts_nanos.load(Ordering::Relaxed);
+        let mut instant = ethox::time::Instant::from_secs(ts_secs as i64);
+        instant.millis += (ts_nanos / 1_000_000) as i64;
+        instant
     }
 
     fn capabilities(&self) -> ethox::nic::Capabilities {
