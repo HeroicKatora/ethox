@@ -1,8 +1,8 @@
 #![no_std]
 extern crate alloc;
 
-mod buffers;
 mod bpf;
+mod buffers;
 mod ring;
 mod xdp;
 
@@ -26,7 +26,7 @@ use ethox::wire::{payload, Payload, PayloadMut};
 ///
 /// This way, the socket can optionally *own* a handle to that memory region, allowing it to drop
 /// it at the expected time.
-unsafe trait MemoryArea: Send + Sync + 'static {
+pub unsafe trait MemoryArea: Send + Sync + 'static {
     fn as_ptr(&self) -> NonNull<[UnsafeCell<u8>]>;
 }
 
@@ -287,17 +287,7 @@ impl AfXdpBuilder {
             device_handle,
             handles,
             stats: Box::new(Stats::default()),
-            buffers: BufferManagement {
-                free,
-                watermark_rx: 16,
-                target_rx: 32,
-                watermark_tx: 16,
-                target_tx: 32,
-                current_rx: 0,
-                current_tx: 0,
-                essential_free_rx: 16,
-                essential_free_tx: 16,
-            },
+            buffers: BufferManagement::new(free),
             umem: self.umem,
         })
     }
@@ -323,7 +313,7 @@ impl PreparedRx<'_> {
 }
 
 impl PreparedTx<'_> {
-    pub(crate) fn close(self, handles: &[Handle]) {
+    pub(crate) fn close(mut self, handles: &[Handle]) {
         let mut tx = match self.this {
             None => return,
             Some(tx) => tx,
@@ -399,7 +389,7 @@ impl Device for AfXdp {
         let max = u32::try_from(max).unwrap_or(u32::MAX);
         let lease = self.pre_tx(max);
 
-        let (count, packets) = todo!();
+        let (count, packets) = (todo!(), core::iter::empty());
         sender.sendv(packets);
         lease.close(&self.handles);
 
@@ -419,7 +409,7 @@ impl Device for AfXdp {
         }
 
         let lease = self.pre_rx(max);
-        let (count, packets) = todo!();
+        let (count, packets) = (todo!(), core::iter::empty());
         receiver.receivev(packets);
         lease.close(&self.handles);
 
@@ -458,7 +448,7 @@ impl PayloadMut for Buffer {
 
 impl ethox::nic::Handle for Handle {
     fn queue(&mut self) -> ethox::layer::Result<()> {
-        self.send = Some(0);
+        self.send = Destination::Free;
         Ok(())
     }
 

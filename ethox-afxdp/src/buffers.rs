@@ -1,5 +1,5 @@
 //! Buffer management, logical core.
-use alloc::collections::VecDeque;
+use alloc::{collections::VecDeque, vec::Vec};
 
 /// An owning index of a buffer in the `Umem`.
 ///
@@ -100,6 +100,20 @@ pub struct FqLease<'lt> {
 /// * Number of buffers in `free`, `pending_fx`, and the fill queue is at least `watermark_rx`.
 /// * Number of buffers in `free`, `pending_tx`, and the completion queue is at least `watermark_tx`.
 impl BufferManagement {
+    pub fn new(free: Vec<OwnedBuf>) -> Self {
+        BufferManagement {
+        free: free.into_iter().collect(),
+        watermark_rx: 16,
+        target_rx: 32,
+        watermark_tx: 16,
+        target_tx: 32,
+        current_rx: 0,
+        current_tx: 0,
+        essential_free_rx: 16,
+        essential_free_tx: 16,
+    }
+    }
+
     /// Cleanup the receive queue.
     ///
     /// Other packets are set aside into our fill queue. Note: sending as an 'instant response' is
