@@ -8,7 +8,6 @@ mod xdp;
 
 use self::buffers::{BufferManagement, OwnedBuf, RxLease, TxLease};
 
-use core::cell::UnsafeCell;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
@@ -16,7 +15,7 @@ use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
 use xdpilone::xsk::{
     IfInfo, ReadRx, WriteTx, XskDeviceQueue, XskRxRing, XskSocket, XskSocketConfig, XskTxRing,
-    XskUmem, XskUser,
+    XskUmem, XskUmemConfig, XskUser,
 };
 
 use ethox::nic::Device;
@@ -27,13 +26,15 @@ use ethox::wire::{payload, Payload, PayloadMut};
 /// This way, the socket can optionally *own* a handle to that memory region, allowing it to drop
 /// it at the expected time.
 pub unsafe trait MemoryArea: Send + Sync + 'static {
-    fn as_ptr(&self) -> NonNull<[UnsafeCell<u8>]>;
+    fn as_ptr(&self) -> NonNull<[u8]>;
 }
 
 pub struct AfXdpBuilder {
     umem: XskUmem,
     /// Is the file descriptor of the `umem` itself used as rx/tx?
     initial_socket: Option<()>,
+    /// The memory RAII, only kept alive after the constructor.
+    #[allow(dead_code)]
     memory: Option<Arc<dyn MemoryArea>>,
     /// The physical devices managed on this `umem`.
     device: Vec<XskDeviceQueue>,
@@ -72,6 +73,8 @@ pub struct AfXdp {
     tx: Option<XskTxRing>,
     // FIXME: figure out how to handle multiple receive rings.
     rx: Option<XskRxRing>,
+    /// The fill/completion queue.
+    sock: XskDeviceQueue,
 
     /// Gathered statistics about socket usage, buffer usage, etc.
     #[allow(dead_code)]
@@ -217,6 +220,69 @@ impl AfXdpBuilder {
         })
     }
 
+    pub fn from_boxed_slice<P: 'static>(
+        memory: Box<[P]>,
+        config: XskUmemConfig,
+    ) -> Result<Self, AfXdpBuilderError> {
+        /// A type that holds onto a memory allocation, but not the values.
+        struct MemoryFromBox<P> {
+            inner: NonNull<[P]>,
+            // Not stable to do this on the pointer. Also, this will statically not overflow.
+            size_of_val: usize,
+        }
+
+        impl<P> MemoryFromBox<P> {
+            pub fn new(mem: Box<[P]>) -> Self {
+                let memory = Box::leak(mem);
+                let size_of_val = core::mem::size_of_val(memory);
+                let inner = NonNull::from(memory);
+
+                // Safety: we own these values as we just leaked them.
+                unsafe { core::ptr::drop_in_place(inner.as_ptr()) };
+
+                MemoryFromBox { inner, size_of_val }
+            }
+        }
+
+        impl<P> Drop for MemoryFromBox<P> {
+            fn drop(&mut self) {
+                let inner = self.inner.cast::<core::mem::MaybeUninit<P>>();
+                let len = self.inner.len();
+                let slice = core::ptr::slice_from_raw_parts_mut(inner.as_ptr(), len);
+
+                // Now deallocate the memory itself. Safety: this comes from `Box::leak` as above.
+                // The layout of `MaybeUninit<P>` is the same as `P` by construction.
+                let _ = unsafe { Box::from_raw(slice) };
+            }
+        }
+
+        // Safety: yes, universally. The argument `P` is preserved only for its layout. No access
+        // to any such object is provided through any means.
+        unsafe impl<P> Sync for MemoryFromBox<P> {}
+        unsafe impl<P> Send for MemoryFromBox<P> {}
+
+        // Safety: is implemented as required, pointing to a memory location not aliased anywhere
+        // due to it coming from an owned `Box` allocation.
+        // Safety: in bounds of the memory by `core::mem::size_of_val()`
+        unsafe impl<P: 'static> MemoryArea for MemoryFromBox<P> {
+            fn as_ptr(&self) -> NonNull<[u8]> {
+                let nn: NonNull<u8> = self.inner.cast();
+                let raw = core::ptr::slice_from_raw_parts_mut(nn.as_ptr(), self.size_of_val);
+                NonNull::new(raw).unwrap()
+            }
+        }
+
+        let memory = MemoryFromBox::new(memory);
+        // Safety: `memory` preserves the allocation while the umem is alive.
+        let umem = unsafe { XskUmem::new(config, memory.as_ptr()) }
+            .map_err(AfXdpBuilderError::umem_error)?;
+        let ref options = XdpBuilderOptions {
+            memory: Some(Arc::new(memory)),
+        };
+
+        unsafe { Self::new(umem, options) }
+    }
+
     /// Bind a new socket into this interface.
     ///
     /// Note: currently, only exactly one socket is supported. Multi-Socket support may get added
@@ -245,6 +311,9 @@ impl AfXdpBuilder {
             self.tx.push(rxtx.map_tx().map_err(Self::errno_err)?);
         }
 
+        let device = self.umem.fq_cq(&socket).map_err(Self::errno_err)?;
+
+        self.device.push(device);
         self.rxtx.push(rxtx);
 
         Ok(())
@@ -284,6 +353,7 @@ impl AfXdpBuilder {
         Ok(AfXdp {
             tx,
             rx,
+            sock,
             device_handle,
             handles,
             stats: Box::new(Stats::default()),
@@ -340,6 +410,12 @@ impl PreparedTx<'_> {
 impl AfXdp {}
 
 impl AfXdpBuilderError {
+    fn umem_error(err: xdpilone::Errno) -> Self {
+        AfXdpBuilderError {
+            _inner: Box::new(err),
+        }
+    }
+
     fn no_device() -> AfXdpBuilderError {
         AfXdpBuilderError {
             _inner: Box::new("no such device"),

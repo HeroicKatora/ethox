@@ -1,24 +1,37 @@
+extern crate alloc;
+
+use alloc::ffi::CString;
+use core::num::NonZeroU32;
 pub use ethox_iperf::{config, iperf2};
 
 use ethox::layer::{arp, eth, ip};
 use ethox::managed::{List, Slice};
-use ethox_afxdp::{AfXdp, UmemBuilder, UmemBuilderOptions};
+use ethox_afxdp::{AfXdp, AfXdpBuilder, DeviceOptions};
+use xdpilone::xsk::{IfInfo, XskSocketConfig, XskUmemConfig};
+
+#[repr(align(4096))]
+#[derive(Clone, Copy)]
+struct Page([u8; 4096]);
 
 fn main() {
     let config = config::Config::from_args();
 
     let mut interface: AfXdp = (|| {
-        let mut builder = UmemBuilder::new(&UmemBuilderOptions::default())?;
+        let cstrname = CString::new(config.tap).unwrap();
+        let mut ifinfo = Box::new(IfInfo::invalid());
+        ifinfo.from_name(&cstrname).unwrap();
 
-        builder.with_socket(
-            &ethox_afxdp::BuilderBindOptions {
-                name: config.tap.clone(),
-                channel: 0,
-                rx_ring_desc_num: 2048,
-                tx_ring_desc_num: 2048,
+        let memory = vec![Page([0; 4096]); 16].into_boxed_slice();
+        let mut builder = AfXdpBuilder::from_boxed_slice(memory, XskUmemConfig::default())?;
+
+        builder.with_socket(DeviceOptions {
+            ifinfo: &*ifinfo,
+            config: &XskSocketConfig {
+                rx_size: NonZeroU32::new(32),
+                tx_size: None,
+                ..XskSocketConfig::default()
             },
-            Default::default(),
-        )?;
+        })?;
 
         builder.build()
     })()
