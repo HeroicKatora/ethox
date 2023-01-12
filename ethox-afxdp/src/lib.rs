@@ -12,7 +12,6 @@ macro_rules! eprint {
     }
 }
 
-mod bpf;
 mod buffers;
 mod ring;
 mod xdp;

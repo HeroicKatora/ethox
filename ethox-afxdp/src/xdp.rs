@@ -200,8 +200,7 @@ impl XdpMultiprog {
                 })?;
 
                 if prog_info.btf_id == 0 {
-                    eprint!("{}", "Huh?\n");
-                    return Err(AttachError::NoLegacySupport);
+                    break 'main;
                 }
 
                 // FIXME: btf__load_from_kernel_by_id
@@ -216,8 +215,6 @@ impl XdpMultiprog {
 
                 sys.get_mapfd_info_mut(&mut map_fd, &mut map_info)?;
 
-                eprint!("{:?}\n", map_info);
-                eprint!("{:?}\n", core::mem::size_of_val(&*self.dispatch_config));
                 let map_key = 0u32;
                 if map_info.key_size != core::mem::size_of_val(&map_key) as u32
                     || map_info.value_size != core::mem::size_of_val(&*self.dispatch_config) as u32
@@ -296,13 +293,6 @@ impl Drop for CloseFd {
     }
 }
 
-pub fn xdp_multiprog__get_from_ifindex() {}
-pub fn xdp_multiprog__next_prog() {}
-pub fn xdp_multiprog__from_fd() {}
-pub fn xdp_multiprog__fill_from_fd() {}
-pub fn xdp_multiprog__from_id() {}
-pub fn xdp_multiprog__close() {}
-
 pub fn xdp_program__from_fd() {}
 pub fn xdp_program__name() {}
 pub fn xdp_program__bpf() {}
@@ -322,12 +312,14 @@ impl From<bpf_lite::Errno> for Errno {
 }
 
 impl From<xdpilone::Errno> for AttachError {
+    #[track_caller]
     fn from(err: xdpilone::Errno) -> Self {
         AttachError::FdError(err.into())
     }
 }
 
 impl From<bpf_lite::Errno> for AttachError {
+    #[track_caller]
     fn from(err: bpf_lite::Errno) -> Self {
         AttachError::FdError(err.into())
     }
