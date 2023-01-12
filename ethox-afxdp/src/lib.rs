@@ -1,6 +1,17 @@
 #![no_std]
 extern crate alloc;
 
+macro_rules! eprint {
+    ($msg:literal, $($arg:expr),*) => {
+        match ::alloc::format!($msg, $($arg),*) {
+            msg => {
+                unsafe { libc::write(2, msg.as_bytes().as_ptr() as *const _, msg.len()) };
+                $($arg)*
+            }
+        }
+    }
+}
+
 mod bpf;
 mod buffers;
 mod ring;
@@ -42,8 +53,14 @@ pub struct AfXdpBuilder {
     rxtx: Vec<XskUser>,
     /// Physical receive interfaces.
     rx: Vec<XskRxRing>,
+    rx_info: Vec<RxInfo>,
     /// Physical transmit interfaces.
     tx: Vec<XskTxRing>,
+}
+
+struct RxInfo {
+    if_info: IfInfo,
+    method: xdp::XdpRxMethod,
 }
 
 /// Data that is fixed for a `Umem` region.
@@ -216,6 +233,7 @@ impl AfXdpBuilder {
             device: Vec::new(),
             rxtx: Vec::new(),
             rx: Vec::new(),
+            rx_info: Vec::new(),
             tx: Vec::new(),
         })
     }
@@ -305,6 +323,10 @@ impl AfXdpBuilder {
 
         if bind.config.rx_size.is_some() {
             self.rx.push(rxtx.map_rx().map_err(Self::errno_err)?);
+            self.rx_info.push(RxInfo {
+                if_info: bind.ifinfo.clone(),
+                method: xdp::XdpRxMethod::DefaultProgram,
+            });
         }
 
         if bind.config.tx_size.is_some() {
@@ -338,6 +360,13 @@ impl AfXdpBuilder {
             0 | 1 => self.rx.pop(),
             _ => return Err(AfXdpBuilderError::unsupported_too_many_rx()),
         };
+
+        if let Some(rx_info) = self.rx_info.get(0) {
+            rx_info
+                .method
+                .attach(&rx_info.if_info)
+                .map_err(AfXdpBuilderError::attach_error)?;
+        }
 
         let free = (0..self.umem.len_frames()).map(OwnedBuf).collect();
         let device_handle = Arc::<DeviceHandle>::default();
@@ -410,6 +439,12 @@ impl PreparedTx<'_> {
 impl AfXdp {}
 
 impl AfXdpBuilderError {
+    fn attach_error(err: xdp::AttachError) -> Self {
+        AfXdpBuilderError {
+            _inner: Box::new(err),
+        }
+    }
+
     fn umem_error(err: xdpilone::Errno) -> Self {
         AfXdpBuilderError {
             _inner: Box::new(err),

@@ -11,7 +11,7 @@ use alloc::{boxed::Box, vec::Vec};
 use core::ffi::CStr;
 use core::num::{NonZeroU32, NonZeroU8};
 
-use bpf_lite::bpf::{BpfProgInfo, BpfProgOut};
+use bpf_lite::bpf::{BpfMapInfo, BpfProgInfo, BpfProgOut};
 use bpf_lite::{sys::ArcTable as BpfSys, Netlink, NetlinkRecvBuffer, ProgramFd};
 use xdpilone::xsk::IfInfo;
 
@@ -30,6 +30,8 @@ pub enum AttachError {
     NoSuchMap,
     FdError(Errno),
     UnknownAttachMode,
+    NoLegacySupport,
+    BadProgConfigMap,
 }
 
 /// A file descriptor we have to close.
@@ -53,6 +55,7 @@ pub struct XdpMultiprog {
     prog: Vec<XdpProg>,
     hw: Option<Box<XdpProg>>,
     attach_mode: Option<AttachMode>,
+    dispatch_config: Box<XdpDispatcherConfig>,
     num_links: usize,
     is_loaded: bool,
     ifindex: u32,
@@ -69,8 +72,19 @@ struct IfindexProgInfo {
     attach_mode: Option<AttachMode>,
 }
 
+#[repr(C)]
+#[derive(Default, Clone, Copy)]
+struct XdpDispatcherConfig {
+    pub num_progs_enabled: u8,
+    pub chain_call_actions: [u32; Self::MAX_DISPATCHER_ACTIONS],
+    pub run_prios: [u32; Self::MAX_DISPATCHER_ACTIONS],
+}
+
+unsafe impl bytemuck::Zeroable for XdpDispatcherConfig {}
+unsafe impl bytemuck::AnyBitPattern for XdpDispatcherConfig {}
+
 impl XdpRxMethod {
-    pub fn attach(self, interface: &IfInfo) -> Result<XdpMapFd, AttachError> {
+    pub fn attach(&self, interface: &IfInfo) -> Result<XdpMapFd, AttachError> {
         // For a compile error when other methods are added.
         let XdpRxMethod::DefaultProgram = self;
         let systable = bpf_lite::sys::SysVTable::new();
@@ -129,6 +143,7 @@ impl XdpMultiprog {
         Ok(XdpMultiprog {
             main,
             prog: Vec::new(),
+            dispatch_config: Box::new(XdpDispatcherConfig::default()),
             hw,
             num_links: 0,
             is_loaded: false,
@@ -173,18 +188,68 @@ impl XdpMultiprog {
 
     fn fill_from_fds(&mut self, sys: &BpfSys) -> Result<(), AttachError> {
         let mut prog_info = BpfProgInfo::default();
+        let mut map_info = BpfMapInfo::default();
 
-        if let Some(main) = &self.main {
-            let mut map_ids = [0u32; 1];
-            sys.get_progfd_info(&main.fd, &mut prog_info, {
-                let mut out = BpfProgOut::default();
-                out.map_ids = Some(&mut map_ids[..]);
-                out
-            })?;
+        'main: {
+            if let Some(main) = &self.main {
+                let mut map_ids = [0u32; 1];
+                sys.get_progfd_info(&main.fd, &mut prog_info, {
+                    let mut out = BpfProgOut::default();
+                    out.map_ids = Some(&mut map_ids[..]);
+                    out
+                })?;
+
+                if prog_info.btf_id == 0 {
+                    eprint!("{}", "Huh?\n");
+                    return Err(AttachError::NoLegacySupport);
+                }
+
+                // FIXME: btf__load_from_kernel_by_id
+                // err = check_dispatcher_version(info.name, btf);
+
+                if prog_info.nr_map_ids != 1 {
+                    return Err(AttachError::NoSuchMap);
+                }
+
+                let map_id = NonZeroU32::new(map_ids[0]).ok_or(AttachError::NoSuchMap)?;
+                let mut map_fd = sys.get_mapfd_by_id(map_id.into())?;
+
+                sys.get_mapfd_info_mut(&mut map_fd, &mut map_info)?;
+
+                eprint!("{:?}\n", map_info);
+                eprint!("{:?}\n", core::mem::size_of_val(&*self.dispatch_config));
+                let map_key = 0u32;
+                if map_info.key_size != core::mem::size_of_val(&map_key) as u32
+                    || map_info.value_size != core::mem::size_of_val(&*self.dispatch_config) as u32
+                {
+                    return Err(AttachError::BadProgConfigMap);
+                }
+
+                sys.lookup_map_element(&map_fd, &map_key, &mut *self.dispatch_config)?;
+
+                // FIXME: bpf_map_lookup_elem
+                self.link_pinned_progs(sys)?;
+            }
         }
 
+        if let Some(_) = self.hw {
+            if self.prog.is_empty() {
+                return Err(AttachError::NoLegacySupport);
+            }
+        }
+
+        self.is_loaded = true;
+
+        Ok(())
+    }
+
+    fn link_pinned_progs(&mut self, sys: &BpfSys) -> Result<(), AttachError> {
         todo!()
     }
+}
+
+impl XdpDispatcherConfig {
+    const MAX_DISPATCHER_ACTIONS: usize = 10;
 }
 
 impl AttachMode {
