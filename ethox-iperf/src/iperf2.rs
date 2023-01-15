@@ -11,9 +11,9 @@
 use core::{mem, ptr};
 
 use ethox::layer::{ip, tcp, udp, Error};
-use ethox::time::{Duration, Instant};
-use ethox::wire::{ip::v4, PayloadMut, tcp::SeqNumber};
 use ethox::managed::{Map, Partial, SlotMap};
+use ethox::time::{Duration, Instant};
+use ethox::wire::{ip::v4, tcp::SeqNumber, PayloadMut};
 
 use super::config;
 
@@ -123,24 +123,24 @@ struct PatternBuffer {
 #[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
 pub struct WireResult {
-    pub a: u32, // 00 00 00 00
-    pub data_len: u32, // 00 02 0a 8a - total data
-    pub delta_s: u32, // 00 00 00 01 - delta t (s)
-    pub delta_ms: u32, // 00 00 4f ad - delta t (ms)
-    pub e: u32, // 00 00 00 00
-    pub f: u32, // 00 00 00 00
+    pub a: u32,            // 00 00 00 00 - flags
+    pub data_len: u32,     // 00 00 00 00 - total data, hi
+    pub data_len2: u32,    // 00 02 0a 8a - total data, lo
+    pub delta_s: i32,      // 00 00 00 01 - delta t (s)
+    pub delta_ms: i32,     // 00 00 4f ad - delta t (ms)
+    pub e: u32,            // 00 00 00 00 - error_cnt
+    pub f: u32,            // 00 00 00 00 - outorder_cnt
     pub packet_count: u32, // 00 00 00 5b - total packets
-    pub h: u32, // 00 00 00 00
-    pub i: u32, // 00 00 00 00
-    pub j: u32, // 00 00 00 09
+    pub h: u32,            // 00 00 00 00 jitter1
+    pub i: u32,            // 00 00 00 00 jitter1
 }
 
 /// The local udp result merging local state and server sent result data.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Result {
-    pub data_len: u32,
-    pub delta_s: u32,
-    pub delta_ms: u32,
+    pub data_len: u64,
+    pub delta_s: i32,
+    pub delta_ms: i32,
     pub packet_count: u32,
     pub total_count: u32,
 }
@@ -193,9 +193,7 @@ impl IperfTcp {
         }
     }
 
-    fn generate_client(client: &config::Client)
-        -> tcp::Client<tcp::io::Sink, PatternBuffer>
-    {
+    fn generate_client(client: &config::Client) -> tcp::Client<tcp::io::Sink, PatternBuffer> {
         let remote = client.host.into();
         let port = client.port;
         let sink = tcp::io::Sink::default();
@@ -212,12 +210,13 @@ impl IperfTcp {
         let isn = tcp::IsnGenerator::from_std_hash();
         // We only need a single connection entry.
         tcp::Endpoint::new(
-            Map::Pairs(Partial::new(
-                vec![Default::default()].into())),
+            Map::Pairs(Partial::new(vec![Default::default()].into())),
             SlotMap::new(
                 vec![Default::default()].into(),
-                vec![Default::default()].into()),
-            isn)
+                vec![Default::default()].into(),
+            ),
+            isn,
+        )
     }
 }
 
@@ -226,7 +225,8 @@ impl Connection {
 
     fn new(config: &config::Client) -> Self {
         let config::Client {
-            host: _, port: _,
+            host: _,
+            port: _,
             buffer_bytes: packet_size,
             total_bytes: remaining,
         } = config;
@@ -274,8 +274,7 @@ impl Connection {
             rate.update_sent(self.packet_size, now);
         }
 
-        self.remaining = self.remaining
-            .saturating_sub(self.packet_size);
+        self.remaining = self.remaining.saturating_sub(self.packet_size);
         self.sent_packets += 1;
     }
 
@@ -284,18 +283,20 @@ impl Connection {
         assert!(packet.len() >= 20);
         crate::pattern::init(packet, 0);
 
-        let secs = time.secs() as u32;
-        let millis = time.millis() as u32;
-        packet[0..4].copy_from_slice(&count.to_be_bytes());
-        packet[4..8].copy_from_slice(&secs.to_be_bytes());
-        packet[8..12].copy_from_slice(&millis.to_be_bytes());
-        // For some reason, these bytes are always zeroed.
-        packet[16..20].copy_from_slice(&[0, 0, 0, 0]);
+        // Last packet marked by negative ID.
+        let marker = if self.remaining <= self.packet_size {
+            -i64::from(count)
+        } else {
+            i64::from(count)
+        };
 
-        // Last packet marker.
-        if self.remaining <= self.packet_size {
-            packet[0] |= 0x80;
-        }
+        let secs = time.secs() as u32;
+        let usecs = time.millis() as u32 * 1_000;
+        packet[0..4].copy_from_slice(&(marker as u32).to_be_bytes());
+        packet[4..8].copy_from_slice(&secs.to_be_bytes());
+        packet[8..12].copy_from_slice(&usecs.to_be_bytes());
+        // Second half of the ID.
+        packet[16..20].copy_from_slice(&((marker as u64 >> 32) as u32).to_be_bytes());
     }
 
     fn error_shutdown(&mut self) {
@@ -319,7 +320,8 @@ impl Server {
 impl ServerConnection {
     pub fn new(config: &config::Server) -> Self {
         let config::Server { host, port } = config;
-        let source = host.map(|ip| ip::Source::Exact(ip.into()))
+        let source = host
+            .map(|ip| ip::Source::Exact(ip.into()))
             .unwrap_or_else(|| ip::Source::Mask {
                 subnet: v4::Subnet::ANY.into(),
             });
@@ -348,13 +350,11 @@ impl ServerConnection {
 
         let be_result = WireResult {
             packet_count: u32::to_be(self.received_packets),
-            .. WireResult::default()
+            ..WireResult::default()
         };
 
         let mem_result = &mut payload[20..][..mem::size_of::<WireResult>()];
-        unsafe {
-            ptr::write_unaligned(mem_result.as_mut_ptr() as *mut WireResult, be_result)
-        };
+        unsafe { ptr::write_unaligned(mem_result.as_mut_ptr() as *mut WireResult, be_result) };
     }
 
     /// Register a valid udp packet as having arrived.
@@ -365,7 +365,7 @@ impl ServerConnection {
         assert!(payload.len() >= 20);
         self.received_bytes = self.received_bytes.saturating_add(payload.len());
 
-        let id_bytes = <[u8;4]>::try_from(&payload[0..4]).unwrap();
+        let id_bytes = <[u8; 4]>::try_from(&payload[0..4]).unwrap();
         let id = u32::from_be_bytes(id_bytes) & 0x7FFF_FFFF;
         let last = payload[0] & 0x80 != 0;
 
@@ -378,8 +378,7 @@ impl ServerConnection {
 
         if last {
             self.result = Some(ServerResult {
-                packet_size: u32::try_from(self.packet_size)
-                    .unwrap_or_else(|_| u32::max_value()),
+                packet_size: u32::try_from(self.packet_size).unwrap_or_else(|_| u32::max_value()),
                 packet_count: self.received_packets,
                 total_count: self.max_packet_id + 1,
                 received_bytes: u64::try_from(self.received_bytes)
@@ -404,18 +403,14 @@ impl SendRate {
     /// Called after a packet has been sent.
     fn update_sent(&mut self, sent: usize, now: Instant) {
         let allowed = self.allowed_bytes(now);
-        self.wrapping_part_bytes = allowed
-            .saturating_sub(sent as u128)
-            as usize;
+        self.wrapping_part_bytes = allowed.saturating_sub(sent as u128) as usize;
         self.last_time = now;
     }
 
     /// Allowed bandwidth use until the timestamp.
     fn allowed_bytes(&self, now: Instant) -> u128 {
         let diff_millis = (now - self.last_time).as_millis();
-        let new_bytes = diff_millis
-            .saturating_mul(self.bytes_per_sec as u128)
-            / 1_000_000;
+        let new_bytes = diff_millis.saturating_mul(self.bytes_per_sec as u128) / 1_000_000;
         let part = self.wrapping_part_bytes as u128;
         new_bytes + part
     }
@@ -424,9 +419,7 @@ impl SendRate {
 impl<P: PayloadMut> ip::Send<P> for Iperf {
     fn send(&mut self, packet: ip::RawPacket<P>) {
         if self.connection.remaining > 0 {
-            self.udp
-                .send(&mut self.connection)
-                .send(packet)
+            self.udp.send(&mut self.connection).send(packet)
         }
     }
 }
@@ -434,9 +427,7 @@ impl<P: PayloadMut> ip::Send<P> for Iperf {
 impl<P: PayloadMut> ip::Recv<P> for Iperf {
     fn receive(&mut self, packet: ip::InPacket<P>) {
         if self.connection.remaining == 0 && self.connection.result.is_none() {
-            self.udp
-                .recv(&mut self.connection)
-                .receive(packet)
+            self.udp.recv(&mut self.connection).receive(packet)
         }
     }
 }
@@ -444,9 +435,7 @@ impl<P: PayloadMut> ip::Recv<P> for Iperf {
 impl<P: PayloadMut> ip::Send<P> for Server {
     fn send(&mut self, packet: ip::RawPacket<P>) {
         if self.connection.result.is_some() && !self.connection.result_sent {
-            self.udp
-                .send(&mut self.connection)
-                .send(packet)
+            self.udp.send(&mut self.connection).send(packet)
         }
     }
 }
@@ -455,9 +444,7 @@ impl<P: PayloadMut> ip::Recv<P> for Server {
     fn receive(&mut self, packet: ip::InPacket<P>) {
         // While we did not yet receive the last packet.
         if self.connection.result.is_none() {
-            self.udp
-                .recv(&mut self.connection)
-                .receive(packet)
+            self.udp.recv(&mut self.connection).receive(packet)
         }
     }
 }
@@ -465,8 +452,7 @@ impl<P: PayloadMut> ip::Recv<P> for Server {
 impl<P: PayloadMut> ip::Send<P> for IperfTcp {
     fn send(&mut self, packet: ip::RawPacket<P>) {
         if !self.client.is_closed() {
-            self.tcp.send(&mut self.client)
-                .send(packet)
+            self.tcp.send(&mut self.client).send(packet)
         } else {
             self.result.get_or_insert_with(|| TcpResult {
                 data_len: 0,
@@ -490,8 +476,7 @@ impl<P: PayloadMut> ip::Send<P> for IperfTcp {
 impl<P: PayloadMut> ip::Recv<P> for IperfTcp {
     fn receive(&mut self, packet: ip::InPacket<P>) {
         if !self.client.is_closed() {
-            self.tcp.recv(&mut self.client)
-                .receive(packet)
+            self.tcp.recv(&mut self.client).receive(packet)
         }
     }
 }
@@ -541,7 +526,9 @@ impl tcp::SendBuf for PatternBuffer {
     fn fill(&mut self, buf: &mut [u8], begin: SeqNumber) {
         const HEAD: [u8; 4] = [0x80, 0x00, 0x00, 0x00];
 
-        let prev = self.at.expect("Fill must not be called before isn indication");
+        let prev = self
+            .at
+            .expect("Fill must not be called before isn indication");
         let relative = begin - prev;
 
         let offset = (self.acked + relative) % 10;
@@ -606,30 +593,28 @@ impl<P: PayloadMut> udp::Recv<P> for Connection {
 
         let payload = packet.packet.payload_slice();
 
-        if payload.len() < 20 + mem::size_of::<WireResult>() {
+        if payload.len() < 16 + mem::size_of::<WireResult>() {
             return;
         }
 
-        let mem_result = &payload[20..][..mem::size_of::<WireResult>()];
-        let be_result = unsafe {
-            ptr::read_unaligned(mem_result.as_ptr() as *const WireResult)
-        };
+        let mem_result = &payload[16..][..mem::size_of::<WireResult>()];
+        let be_result = unsafe { ptr::read_unaligned(mem_result.as_ptr() as *const WireResult) };
 
         let wire_result = WireResult {
             a: u32::from_be(be_result.a),
             data_len: u32::from_be(be_result.data_len),
-            delta_s: u32::from_be(be_result.delta_s),
-            delta_ms: u32::from_be(be_result.delta_ms),
+            data_len2: u32::from_be(be_result.data_len2),
+            delta_s: i32::from_be(be_result.delta_s),
+            delta_ms: i32::from_be(be_result.delta_ms),
             e: u32::from_be(be_result.e),
             f: u32::from_be(be_result.f),
             packet_count: u32::from_be(be_result.packet_count),
             h: u32::from_be(be_result.h),
             i: u32::from_be(be_result.i),
-            j: u32::from_be(be_result.j),
         };
 
         self.result = Some(Result {
-            data_len: wire_result.data_len,
+            data_len: u64::from(wire_result.data_len) << 32 | u64::from(wire_result.data_len2),
             delta_s: wire_result.delta_s,
             delta_ms: wire_result.delta_ms,
             packet_count: wire_result.packet_count,
@@ -658,7 +643,7 @@ impl<P: PayloadMut> udp::Send<P> for ServerConnection {
 
 impl<P: PayloadMut> udp::Recv<P> for ServerConnection {
     fn receive(&mut self, packet: udp::Packet<P>) {
-        let udp::Packet { packet, control, } = packet;
+        let udp::Packet { packet, control } = packet;
 
         let ip_hdr = packet.get_ref().repr();
         let udp_hdr = packet.repr();
