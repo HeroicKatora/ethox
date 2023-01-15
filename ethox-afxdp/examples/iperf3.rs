@@ -7,7 +7,7 @@ pub use ethox_iperf::{config, iperf2};
 use ethox::layer::{arp, eth, ip};
 use ethox::managed::{List, Slice};
 use ethox_afxdp::{AfXdp, AfXdpBuilder, DeviceOptions};
-use xdpilone::xsk::{IfInfo, XskSocketConfig, XskUmemConfig};
+use xdpilone::xsk::{IfInfo, XskSocketConfig, XskUmem, XskUmemConfig};
 
 #[repr(align(4096))]
 #[derive(Clone, Copy)]
@@ -21,14 +21,16 @@ fn main() {
         let mut ifinfo = Box::new(IfInfo::invalid());
         ifinfo.from_name(&cstrname).unwrap();
 
-        let memory = vec![Page([0; 4096]); 16].into_boxed_slice();
+        let memory = vec![Page([0; 4096]); 1 << 7].into_boxed_slice();
+
         let mut builder = AfXdpBuilder::from_boxed_slice(memory, XskUmemConfig::default())?;
 
         builder.with_socket(DeviceOptions {
             ifinfo: &*ifinfo,
             config: &XskSocketConfig {
                 rx_size: NonZeroU32::new(32),
-                tx_size: None,
+                tx_size: NonZeroU32::new(32),
+                bind_flags: XskUmem::XDP_BIND_ZEROCOPY | XskUmem::XDP_BIND_NEED_WAKEUP,
                 ..XskSocketConfig::default()
             },
         })?;

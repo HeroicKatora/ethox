@@ -7,11 +7,13 @@
 //! The implementation tries to do as little as possible. We don't create a program, but we offer
 //! some primitive mechanism to insert the current FD into an existing program. The prominent way
 //! being that a file descriptor is inserted into a map, keyed but the queue ID.
-use alloc::{boxed::Box, vec::Vec};
 use core::ffi::CStr;
 use core::num::{NonZeroU32, NonZeroU8};
 
+use alloc::{boxed::Box, format, string::String, vec::Vec};
+
 use bpf_lite::bpf::{BpfMapInfo, BpfProgInfo, BpfProgOut};
+use bpf_lite::MapFd;
 use bpf_lite::{sys::ArcTable as BpfSys, Netlink, NetlinkRecvBuffer, ProgramFd};
 use xdpilone::xsk::IfInfo;
 
@@ -32,6 +34,12 @@ pub enum AttachError {
     UnknownAttachMode,
     NoLegacySupport,
     BadProgConfigMap,
+    InternalError,
+}
+
+pub struct AttachmentMap {
+    main_prog: ChainedProg,
+    main_map: XdpMap,
 }
 
 /// A file descriptor we have to close.
@@ -41,9 +49,10 @@ struct CloseFd(libc::c_int);
 #[derive(Debug)]
 pub struct Errno(libc::c_int);
 
-pub struct XdpMapFd {
-    /// The *owned* file descriptor for an XDP program attached to a device.
-    prog_fd: CloseFd,
+impl Errno {
+    pub(crate) fn new() -> Errno {
+        Errno(unsafe { *libc::__errno_location() })
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -52,20 +61,37 @@ pub struct AttachMode(NonZeroU8);
 
 pub struct XdpMultiprog {
     main: Option<Box<XdpProg>>,
-    prog: Vec<XdpProg>,
+    prog: Vec<ChainedProg>,
     hw: Option<Box<XdpProg>>,
-    attach_mode: Option<AttachMode>,
     dispatch_config: Box<XdpDispatcherConfig>,
+
+    prog_info: IfindexProgInfo,
     num_links: usize,
     is_loaded: bool,
     ifindex: u32,
 }
 
+/// A program descriptor, with its loaded information.
 pub struct XdpProg {
     fd: ProgramFd,
+    config: Box<BpfProgInfo>,
+    // The ids of maps attach to the program.
+    maps: Vec<u32>,
 }
 
-/// Temporary struct, reduced info from `XdpQuery` based on the attach mode.
+pub struct XdpMap {
+    map: MapFd,
+    config: Box<BpfMapInfo>,
+}
+
+pub struct ChainedProg {
+    prog: XdpProg,
+    chain_call_actions: u32,
+    run_prio: u32,
+}
+
+/// Reduced info from `XdpQuery` based on the attach mode.
+#[derive(Clone, Copy)]
 struct IfindexProgInfo {
     main_id: u32,
     hw_id: u32,
@@ -84,7 +110,11 @@ unsafe impl bytemuck::Zeroable for XdpDispatcherConfig {}
 unsafe impl bytemuck::AnyBitPattern for XdpDispatcherConfig {}
 
 impl XdpRxMethod {
-    pub fn attach(&self, interface: &IfInfo) -> Result<XdpMapFd, AttachError> {
+    pub fn attach(
+        &self,
+        interface: &IfInfo,
+        xsk: libc::c_int,
+    ) -> Result<AttachmentMap, AttachError> {
         // For a compile error when other methods are added.
         let XdpRxMethod::DefaultProgram = self;
         let systable = bpf_lite::sys::SysVTable::new();
@@ -94,17 +124,95 @@ impl XdpRxMethod {
         let mut multiprog = XdpMultiprog::from_if(&mut netlink, &mut buffer, interface)?;
         multiprog.fill_from_fds(netlink.sys())?;
 
-        todo!()
+        let idx = Self::find_default_program(
+            netlink.sys(),
+            &multiprog,
+            CStr::from_bytes_with_nul(b"xsk_def_prog\0").unwrap(),
+            CStr::from_bytes_with_nul(b"xsk_prog_version\0").unwrap(),
+        )?;
+
+        let chained_prog = &mut multiprog.prog[idx];
+        let mut chained_map = Self::lookup_bpf_map(netlink.sys(), chained_prog, &mut |info| {
+            info.key_size == 4 && info.value_size == 4 && {
+                if let Some(name_len) = info.name.iter().position(|&c| c == b'\0') {
+                    info.name[..=name_len] == *b"xsks_map\0"
+                } else {
+                    false
+                }
+            }
+        })?;
+
+        // FIXME: there's some funky stuff with refcount going on in xdp-tools/libxdp. We don't
+        // really do that right now and trust the environment. We shouln't.
+
+        Self::update_map(netlink.sys(), &mut chained_map, interface, xsk)?;
+
+        // Preserve the utilized state, from the BPF overview.
+        let main_prog = multiprog.prog.remove(idx);
+        Ok(AttachmentMap {
+            main_prog,
+            main_map: chained_map,
+        })
     }
 
     fn find_default_program(
-        netlink: &mut Netlink,
-        interface: &IfInfo,
+        bpf: &BpfSys,
+        multiprog: &XdpMultiprog,
         prog_name: &CStr,
         version_name: &CStr,
-    ) -> Result<CloseFd, AttachError> {
-        let idx = interface.ifindex();
-        todo!()
+    ) -> Result<usize, AttachError> {
+        let (idx, program) = multiprog
+            .prog
+            .iter()
+            .enumerate()
+            .find_map(|(idx, chained)| {
+                let name = chained.prog.name();
+
+                if name == Some(prog_name) {
+                    return Some((idx, chained));
+                }
+
+                None
+            })
+            .ok_or(AttachError::NoSuchProgram)?;
+
+        // let version = Self::check_program_version(bpf, program, version_name)?;
+        Ok(idx)
+    }
+
+    fn lookup_bpf_map(
+        bpf: &BpfSys,
+        chained: &mut ChainedProg,
+        fn_: &mut dyn FnMut(&mut BpfMapInfo) -> bool,
+    ) -> Result<XdpMap, AttachError> {
+        let mut map_info = BpfMapInfo::default();
+
+        for &map_id in chained.prog.get_maps(bpf)? {
+            let map_id = match NonZeroU32::new(map_id) {
+                None => continue,
+                Some(nz) => nz,
+            };
+
+            let mut map = bpf.get_mapfd_by_id(map_id.into())?;
+            bpf.get_mapfd_info_mut(&mut map, &mut map_info)?;
+
+            if fn_(&mut map_info) {
+                let config = Box::new(map_info);
+                return Ok(XdpMap { map, config });
+            }
+        }
+
+        Err(AttachError::NoSuchMap)
+    }
+
+    fn update_map(
+        sys: &BpfSys,
+        chained_map: &mut XdpMap,
+        interface: &IfInfo,
+        xsk: libc::c_int,
+    ) -> Result<(), AttachError> {
+        sys.map_update_element(&chained_map.map, &interface.queue_id(), &xsk)?;
+        Ok(())
     }
 }
 
@@ -115,30 +223,32 @@ impl XdpMultiprog {
         interface: &IfInfo,
     ) -> Result<Self, AttachError> {
         let prog_id = Self::get_ifindex_prog_id(netlink, buffer, interface.ifindex())?;
-        let mut this = Self::from_ids(netlink.sys(), prog_id.main_id, prog_id.hw_id, interface)?;
-        this.attach_mode = prog_id.attach_mode;
+        let mut this = Self::from_ids(netlink.sys(), &prog_id, interface)?;
         Ok(this)
     }
 
-    pub fn from_ids(
+    fn from_ids(
         bpf: &BpfSys,
-        id: u32,
-        hw_id: u32,
+        prog_info: &IfindexProgInfo,
         interface: &IfInfo,
     ) -> Result<Self, AttachError> {
-        let main = NonZeroU32::new(id)
+        let main = NonZeroU32::new(prog_info.main_id)
             .map_or(Ok::<_, AttachError>(None), |nz| {
                 let program = bpf.get_progfd_by_id(nz.into())?;
                 Ok(Some(program))
             })?
-            .map(XdpProg::from_raw);
+            .map(|fd| XdpProg::new(bpf, fd))
+            .transpose()?
+            .map(Box::new);
 
-        let hw = NonZeroU32::new(hw_id)
+        let hw = NonZeroU32::new(prog_info.hw_id)
             .map_or(Ok::<_, AttachError>(None), |nz| {
                 let program = bpf.get_progfd_by_id(nz.into())?;
                 Ok(Some(program))
             })?
-            .map(XdpProg::from_raw);
+            .map(|fd| XdpProg::new(bpf, fd))
+            .transpose()?
+            .map(Box::new);
 
         Ok(XdpMultiprog {
             main,
@@ -148,7 +258,7 @@ impl XdpMultiprog {
             num_links: 0,
             is_loaded: false,
             ifindex: interface.ifindex(),
-            attach_mode: None,
+            prog_info: prog_info.clone(),
         })
     }
 
@@ -222,7 +332,7 @@ impl XdpMultiprog {
                     return Err(AttachError::BadProgConfigMap);
                 }
 
-                sys.lookup_map_element(&map_fd, &map_key, &mut *self.dispatch_config)?;
+                sys.map_lookup_element(&map_fd, &map_key, &mut *self.dispatch_config)?;
 
                 // FIXME: bpf_map_lookup_elem
                 self.link_pinned_progs(sys)?;
@@ -241,7 +351,144 @@ impl XdpMultiprog {
     }
 
     fn link_pinned_progs(&mut self, sys: &BpfSys) -> Result<(), AttachError> {
-        todo!()
+        use core::fmt::Write as _;
+
+        struct BpfLock {
+            dirfd: CloseFd,
+        }
+
+        impl BpfLock {
+            fn new(bpffs: &mut String) -> Result<Self, AttachError> {
+                // On success we'll truncate it back to this len (which includes nul-termination);
+                let len = bpffs.len();
+                assert!(len > 0);
+
+                Self::mk_lock_dir(bpffs)?;
+                let dir_path = CStr::from_bytes_with_nul(bpffs.as_bytes())
+                    .map_err(|_| AttachError::InternalError)?;
+
+                let dirfd = unsafe { libc::open(dir_path.as_ptr(), libc::O_DIRECTORY) };
+
+                if dirfd < 0 {
+                    return Err(AttachError::FdError(Errno::new()));
+                }
+
+                let dirfd = CloseFd(dirfd);
+
+                if unsafe { libc::flock(dirfd.0, libc::LOCK_EX) } < 0 {
+                    return Err(AttachError::FdError(Errno::new()));
+                }
+
+                bpffs.truncate(len);
+                let _ = bpffs.pop();
+                bpffs.push('\0');
+
+                Ok(BpfLock { dirfd })
+            }
+
+            /// Create the state directory, modify bpffs to its path.
+            fn mk_lock_dir(bpffs: &mut String) -> Result<(), AttachError> {
+                // Remove nul-terminator.
+                let _ = bpffs.pop();
+                bpffs.push_str("/xdp\0");
+
+                let state_subdir = CStr::from_bytes_with_nul(bpffs.as_bytes())
+                    .map_err(|_| AttachError::InternalError)?;
+
+                match unsafe { libc::mkdir(state_subdir.as_ptr(), libc::S_IRWXU) } {
+                    0 => {}
+                    _ if Errno::new().0 == libc::EEXIST => {}
+                    _ => return Err(AttachError::FdError(Errno::new())),
+                }
+
+                Ok(())
+            }
+        }
+
+        impl Drop for BpfLock {
+            fn drop(&mut self) {
+                let _ = unsafe { libc::flock(self.dirfd.0, libc::LOCK_UN) };
+            }
+        }
+
+        const BPF_SYS_FS: &str = "/sys/fs/bpf";
+        let mut path = format!("{}\0", BPF_SYS_FS);
+        let _lock = BpfLock::new(&mut path);
+
+        path.truncate(BPF_SYS_FS.len());
+        write!(
+            &mut path,
+            "/xdp/dispatch-{ifi}-{prog}\0",
+            ifi = self.ifindex,
+            prog = self.prog_info.main_id,
+        )
+        .unwrap();
+
+        let mut statbuf = core::mem::MaybeUninit::<libc::stat>::uninit();
+        if unsafe {
+            libc::stat(
+                CStr::from_bytes_with_nul(path.as_bytes())
+                    .map_err(|_| AttachError::InternalError)?
+                    .as_ptr(),
+                statbuf.as_mut_ptr(),
+            )
+        } < 0
+        {
+            return Err(AttachError::FdError(Errno::new()));
+        }
+
+        let dir_path_len = path.len() - 1;
+        for i in 0..self.dispatch_config.num_progs_enabled {
+            path.truncate(dir_path_len);
+            write!(&mut path, "/prog{i}-prog\0", i = i).unwrap();
+
+            let prog = sys.get_progfd_pinned(
+                CStr::from_bytes_with_nul(path.as_bytes())
+                    .map_err(|_| AttachError::InternalError)?,
+            )?;
+
+            self.prog.push(ChainedProg {
+                prog: XdpProg::new(sys, prog)?,
+                chain_call_actions: self.dispatch_config.chain_call_actions[usize::from(i)]
+                    & !(1 << 31),
+                run_prio: self.dispatch_config.run_prios[usize::from(i)],
+            });
+        }
+
+        Ok(())
+    }
+}
+
+impl XdpProg {
+    pub fn new(sys: &BpfSys, fd: ProgramFd) -> Result<Self, AttachError> {
+        let mut config = Box::new(BpfProgInfo::default());
+        sys.get_progfd_info(&fd, &mut config, Default::default())?;
+
+        Ok(XdpProg {
+            fd,
+            config,
+            maps: Vec::new(),
+        })
+    }
+
+    pub fn name(&self) -> Option<&CStr> {
+        let end = self.config.name.iter().position(|&x| x == b'\0')?;
+        CStr::from_bytes_with_nul(&self.config.name[..=end]).ok()
+    }
+
+    pub fn get_maps(&mut self, bpf: &BpfSys) -> Result<&[u32], AttachError> {
+        if self.config.nr_map_ids as usize <= self.maps.len() {
+            return Ok(self.maps.as_slice());
+        }
+
+        self.maps.resize(self.config.nr_map_ids as usize, 0);
+        bpf.get_progfd_info(&self.fd, &mut self.config, {
+            let mut out = BpfProgOut::default();
+            out.map_ids = Some(&mut self.maps[..]);
+            out
+        })?;
+
+        Ok(self.maps.as_slice())
     }
 }
 
@@ -281,23 +528,11 @@ impl AttachMode {
     }
 }
 
-impl XdpProg {
-    fn from_raw(fd: ProgramFd) -> Box<Self> {
-        Box::new(XdpProg { fd })
-    }
-}
-
 impl Drop for CloseFd {
     fn drop(&mut self) {
         let _ = unsafe { libc::close(self.0) };
     }
 }
-
-pub fn xdp_program__from_fd() {}
-pub fn xdp_program__name() {}
-pub fn xdp_program__bpf() {}
-pub fn xdp_program__clone() {}
-pub fn xdp_program__close() {}
 
 impl From<xdpilone::Errno> for Errno {
     fn from(err: xdpilone::Errno) -> Self {

@@ -24,8 +24,8 @@ use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
 use xdpilone::xsk::{
-    IfInfo, ReadRx, WriteTx, XskDeviceQueue, XskRxRing, XskSocket, XskSocketConfig, XskTxRing,
-    XskUmem, XskUmemConfig, XskUser,
+    IfInfo, ReadComplete, ReadRx, WriteFill, WriteTx, XskDeviceQueue, XskRxRing, XskSocket,
+    XskSocketConfig, XskTxRing, XskUmem, XskUmemConfig, XskUser,
 };
 
 use ethox::nic::Device;
@@ -44,7 +44,6 @@ pub struct AfXdpBuilder {
     /// Is the file descriptor of the `umem` itself used as rx/tx?
     initial_socket: Option<()>,
     /// The memory RAII, only kept alive after the constructor.
-    #[allow(dead_code)]
     memory: Option<Arc<dyn MemoryArea>>,
     /// The physical devices managed on this `umem`.
     device: Vec<XskDeviceQueue>,
@@ -81,10 +80,15 @@ pub struct AfXdpBuilderError {
 pub struct AfXdp {
     umem: XskUmem,
     #[allow(dead_code)]
+    memory: Option<Arc<dyn MemoryArea>>,
+
+    #[allow(dead_code)]
     /// The queue's own device handle.
     device_handle: Arc<DeviceHandle>,
-    // A buffer of handles we use temporarily to communicate with the sender and receiver.
+    /// A buffer of handles we use temporarily to communicate with the sender and receiver.
     handles: Box<[Handle]>,
+    /// A buffer for constructed, owned packets. Partially initialized while in progress.
+    packets: Box<[Buffer]>,
 
     tx: Option<XskTxRing>,
     // FIXME: figure out how to handle multiple receive rings.
@@ -156,9 +160,16 @@ pub struct IoReport {
 
 /// Borrowed queue/buffer states while receiving.
 struct PreparedRx<'lt> {
+    umem: &'lt mut XskUmem,
     this: Option<ReadRx<'lt>>,
+    /// The fill queue to instantly re-queue buffers to fill.
+    ///
+    /// That keeps them in the RX portion of the buffer manager without going through the VecDeque.
+    this_fq: WriteFill<'lt>,
     /// Number of packets that are received.
     lease: RxLease<'lt>,
+    packets: &'lt mut [Buffer],
+    handle: &'lt mut [Handle],
 }
 
 struct PreparedTx<'lt> {
@@ -166,6 +177,8 @@ struct PreparedTx<'lt> {
     this: Option<WriteTx<'lt>>,
     /// Number of packets that are sent.
     lease: TxLease<'lt>,
+    packets: &'lt mut [Buffer],
+    handle: &'lt mut [Handle],
 }
 
 impl AfXdp {
@@ -174,15 +187,73 @@ impl AfXdp {
     /// Precondition:
     /// `self.queue_rx` is empty.
     fn pre_rx(&mut self, max: u32) -> PreparedRx<'_> {
-        let this = match self.rx.as_mut() {
+        let mut this = match self.rx.as_mut() {
             None => None,
             Some(rx) => Some(rx.receive(max)),
         };
 
+        let this_fq = self.sock.fill(self.buffers.recommended_fq_fill());
+
         let actual = this.as_ref().map_or(0, |rx| rx.capacity());
         let lease = self.buffers.pre_rx(actual);
+        let umem = &mut self.umem;
 
-        PreparedRx { this, lease }
+        let handle = &mut self.handles[..actual as usize];
+        let packets = &mut self.packets[..actual as usize];
+
+        'pkt: {
+            let mut packets = packets.iter_mut();
+            let mut handles = handle.iter_mut();
+            // FIXME: incorrect frame size in general. Also, strength reduce for the division?
+            let frame_size = u64::from(XskUmemConfig::default().frame_size);
+
+            if let Some(rx) = &mut this {
+                loop {
+                    let pkt = match packets.next() {
+                        Some(pkt) => pkt,
+                        None => break 'pkt,
+                    };
+
+                    let hdl = match handles.next() {
+                        Some(hdl) => hdl,
+                        None => break 'pkt,
+                    };
+
+                    let desc = match rx.read() {
+                        Some(desc) => desc,
+                        None => break 'pkt,
+                    };
+
+                    // FIXME: this is soundness critical and must be reviewed.
+                    let buf_id = (desc.addr / frame_size) as u32;
+                    let buf_off = desc.addr % frame_size;
+
+                    // eprint!("Receiving frame {:?}\n", (buf_id, buf_off));
+                    let frame = umem.frame(xdpilone::xsk::BufIdx(buf_id)).unwrap();
+                    // FIXME: there _needs_ to be cleaner solutions.
+                    let inner_ptr =
+                        unsafe { (frame.addr.as_ptr() as *mut u8).offset(buf_off as isize) };
+                    let inner_len =
+                        unsafe { frame.addr.as_ref().len() }.saturating_sub(buf_off as usize);
+                    let inner_addr = core::ptr::slice_from_raw_parts_mut(inner_ptr, inner_len);
+
+                    pkt.idx = OwnedBuf(buf_id);
+                    pkt.addr = core::ptr::NonNull::new(inner_addr).unwrap();
+                    pkt.len = desc.len as u16;
+
+                    hdl.send = Destination::Fill;
+                }
+            }
+        }
+
+        PreparedRx {
+            umem,
+            this,
+            this_fq,
+            lease,
+            packets,
+            handle,
+        }
     }
 
     fn pre_tx(&mut self, max: u32) -> PreparedTx<'_> {
@@ -191,23 +262,79 @@ impl AfXdp {
             Some(tx) => Some(tx.transmit(max)),
         };
 
-        let actual = this.as_ref().map_or(0, |tx| tx.capacity());
-        let lease = self.buffers.pre_tx(actual);
+        let capacity = this.as_ref().map_or(0, |tx| tx.capacity());
+        let mut lease = self.buffers.pre_tx(capacity);
         let umem = &mut self.umem;
 
-        PreparedTx { umem, this, lease }
+        // We're extracting packets from our buffer, let the lease do that.
+        let actual = lease.init_bufs(&mut self.packets);
+        let handle = &mut self.handles[..actual as usize];
+        let packets = &mut self.packets[..actual as usize];
+
+        // FIXME: of course this isn't right..
+        let frame_size = (XskUmemConfig::default().frame_size) as u16;
+        for (pkt, hdl) in packets.iter_mut().zip(&mut *handle) {
+            let frame = umem.frame(xdpilone::xsk::BufIdx(pkt.idx.0)).unwrap();
+
+            pkt.addr = frame.addr;
+            pkt.len = frame_size;
+
+            // Reset the state of the handle.
+            hdl.send = Destination::Free;
+        }
+
+        PreparedTx {
+            umem,
+            this,
+            lease,
+            packets,
+            handle,
+        }
     }
 
     /// Handle fill and completion queue actions with the kernel.
     ///
     /// Run this periodically.
-    pub fn do_io(&mut self) -> Result<IoReport, AfXdpBuilderError> {
+    pub fn do_io(&mut self) -> ethox::layer::Result<IoReport> {
         // Note: acknowledge we may have multiple TX, but then the work might be awkwardly high per
         // iteration. Currently this iterator is an Option.
         for tx in &mut self.tx {
             if tx.needs_wakeup() {
                 tx.wake();
             }
+        }
+
+        '_cq: {
+            let frame_size = u64::from(XskUmemConfig::default().frame_size);
+            let mut cq = self.sock.complete(16);
+
+            while let Some(cid) = cq.read() {
+                let pkt_id = (cid / frame_size) as u32;
+                self.buffers.push_complete(OwnedBuf(pkt_id));
+            }
+
+            cq.release();
+        }
+
+        '_fq: {
+            let frame_count = self.buffers.recommended_fq_fill();
+            let mut fq = self.sock.fill(frame_count);
+            let mut frames = self.buffers.pre_fq(fq.capacity());
+
+            let bufs = frames.iter().map(|OwnedBuf(idx): OwnedBuf| {
+                let frame = self.umem.frame(xdpilone::xsk::BufIdx(idx)).unwrap();
+                frame.offset
+            });
+
+            let _count = fq.insert(bufs);
+
+            frames.debug_assert_done();
+            fq.commit();
+            // eprint!("Pending bufs: {}\n", fq.pending());
+        }
+
+        if self.sock.needs_wakeup() {
+            self.sock.wake();
         }
 
         Ok(IoReport {
@@ -315,6 +442,10 @@ impl AfXdpBuilder {
             )
             .map_err(Self::errno_err)?;
 
+        // We MUST create the fc/cq first. This tells the kernel we're actually ready to listen to
+        // this socket, otherwise bind below will fail with `EINVAL`.
+        let device = self.umem.fq_cq(&socket).map_err(Self::errno_err)?;
+
         let rxtx = self
             .umem
             .rx_tx(&socket, &bind.config)
@@ -322,6 +453,7 @@ impl AfXdpBuilder {
 
         if bind.config.rx_size.is_some() {
             self.rx.push(rxtx.map_rx().map_err(Self::errno_err)?);
+
             self.rx_info.push(RxInfo {
                 if_info: bind.ifinfo.clone(),
                 method: xdp::XdpRxMethod::DefaultProgram,
@@ -332,7 +464,7 @@ impl AfXdpBuilder {
             self.tx.push(rxtx.map_tx().map_err(Self::errno_err)?);
         }
 
-        let device = self.umem.fq_cq(&socket).map_err(Self::errno_err)?;
+        self.umem.bind(&rxtx).map_err(Self::errno_err)?;
 
         self.device.push(device);
         self.rxtx.push(rxtx);
@@ -343,7 +475,7 @@ impl AfXdpBuilder {
     /// Finalize the builder, returning a configured interface.
     pub fn build(mut self) -> Result<AfXdp, AfXdpBuilderError> {
         let sock = match self.device.pop() {
-            Some(sock) if !self.device.is_empty() => {
+            Some(_) if !self.device.is_empty() => {
                 return Err(AfXdpBuilderError::unsupported_too_many_devices())
             }
             Some(sock) => sock,
@@ -361,21 +493,35 @@ impl AfXdpBuilder {
         };
 
         if let Some(rx_info) = self.rx_info.get(0) {
+            let rx = rx.as_ref().unwrap();
+
             rx_info
                 .method
-                .attach(&rx_info.if_info)
+                .attach(&rx_info.if_info, rx.as_raw_fd())
                 .map_err(AfXdpBuilderError::attach_error)?;
         }
 
         let free = (0..self.umem.len_frames()).map(OwnedBuf).collect();
         let device_handle = Arc::<DeviceHandle>::default();
 
+        let buffer_slots: usize = 32;
+
         let handles = core::iter::repeat_with(|| Handle {
             send: Destination::Free,
             shared: device_handle.clone(),
         })
-        .take(2048)
+        .take(buffer_slots)
         .collect::<Vec<_>>()
+        .into_boxed_slice();
+
+        let packets = Vec::from_iter(
+            core::iter::repeat_with(|| Buffer {
+                idx: OwnedBuf(u32::MAX),
+                addr: NonNull::from(&mut []),
+                len: 0,
+            })
+            .take(buffer_slots),
+        )
         .into_boxed_slice();
 
         Ok(AfXdp {
@@ -384,9 +530,13 @@ impl AfXdpBuilder {
             sock,
             device_handle,
             handles,
+            packets,
             stats: Box::new(Stats::default()),
             buffers: BufferManagement::new(free),
+
+            // Move the umem, and potentially its guarding memory, to the new struct.
             umem: self.umem,
+            memory: self.memory,
         })
     }
 
@@ -398,40 +548,68 @@ impl AfXdpBuilder {
 }
 
 impl PreparedRx<'_> {
-    pub(crate) fn close(self, handles: &[Handle]) {
+    pub(crate) fn close(mut self) {
         let mut rx = match self.this {
             None => return,
             Some(rx) => rx,
         };
 
-        let bufaddr = core::iter::from_fn(|| rx.read());
+        let mut fill_space = self.this_fq.capacity();
+        for (buf, handle) in self.packets.iter_mut().zip(self.handle) {
+            match handle.send {
+                Destination::Fill if fill_space > 0 => {
+                    let owned_id = buf.idx.take_private();
+                    let frame = self.umem.frame(xdpilone::xsk::BufIdx(owned_id.0)).unwrap();
 
-        for (hdl, addr) in handles.iter().zip(bufaddr) {}
+                    self.this_fq.insert_once(frame.offset);
+                    fill_space -= 1;
+                    self.lease.refill();
+                }
+                Destination::Free | _ => {
+                    self.lease.release_buf(buf.idx.take_private());
+                    continue;
+                }
+            }
+        }
+
+        rx.release();
     }
 }
 
 impl PreparedTx<'_> {
-    pub(crate) fn close(mut self, handles: &[Handle]) {
+    pub(crate) fn close(mut self) {
         let mut tx = match self.this {
             None => return,
             Some(tx) => tx,
         };
 
-        for handle in handles {
-            match handle.send {
-                Destination::Tx(0) => {}
+        for (buf, handle) in self.packets.iter_mut().zip(self.handle) {
+            let sent = match handle.send {
+                Destination::Tx(0) => {
+                    self.lease.pop_buf();
+                    buf.idx.take_private()
+                }
                 _ => {
-                    self.lease.skip();
+                    self.lease.skip(buf.idx.take_private());
                     continue;
                 }
-            }
+            };
 
-            let sent = self.lease.pop_buf();
+            /*
+            if let Ok(frm) = ethox::wire::ethernet::Frame::new_checked(buf.payload()) {
+                let pp = ethox::wire::PrettyPrinter::<ethox::wire::ethernet::frame>::print(&frm);
+                eprint!("<-- {}\n", pp);
+            }; */
+
             let frame = self.umem.frame(xdpilone::xsk::BufIdx(sent.0)).unwrap();
+            let desc = frame.into_xdp(u32::from(buf.len));
+            // eprint!("Inserting into TX: {:?}", desc);
 
-            let desc = frame.into_xdp(todo!());
-            tx.insert(core::iter::once(desc));
+            tx.insert_once(desc);
         }
+
+        self.lease.debug_assert_done();
+        tx.commit();
     }
 }
 
@@ -495,13 +673,30 @@ impl Device for AfXdp {
         max: usize,
         mut sender: impl ethox::nic::Send<Self::Handle, Self::Payload>,
     ) -> ethox::layer::Result<usize> {
+        // FIXME: we shouldn't check this every time..
+        self.do_io()?;
+
         let max = self.handles.len().min(max);
         let max = u32::try_from(max).unwrap_or(u32::MAX);
+        let recommend = self.buffers.recommended_tx_fill();
+        let max = max.min(recommend);
+
         let lease = self.pre_tx(max);
 
-        let (count, packets) = (todo!(), core::iter::empty());
+        let count = lease.packets.len();
+        debug_assert!(lease.handle.len() == count);
+
+        let packets = lease
+            .packets
+            .iter_mut()
+            .zip(lease.handle.iter_mut())
+            .map(|(pkt, hdl)| ethox::nic::Packet {
+                payload: pkt,
+                handle: hdl,
+            });
+
         sender.sendv(packets);
-        lease.close(&self.handles);
+        lease.close();
 
         Ok(count)
     }
@@ -511,6 +706,9 @@ impl Device for AfXdp {
         max: usize,
         mut receiver: impl ethox::nic::Recv<Self::Handle, Self::Payload>,
     ) -> ethox::layer::Result<usize> {
+        // FIXME: we shouldn't check this every time..
+        self.do_io()?;
+
         let max = self.handles.len().min(max);
         let max = u32::try_from(max).unwrap_or(u32::MAX);
 
@@ -519,9 +717,29 @@ impl Device for AfXdp {
         }
 
         let lease = self.pre_rx(max);
-        let (count, packets) = (todo!(), core::iter::empty());
+
+        let count = lease.packets.len();
+        debug_assert!(lease.handle.len() == count);
+
+        let packets = lease
+            .packets
+            .iter_mut()
+            .zip(lease.handle.iter_mut())
+            .map(|(pkt, hdl)| {
+                /*if let Ok(frm) = ethox::wire::ethernet::Frame::new_checked(pkt.payload()) {
+                    let pp =
+                        ethox::wire::PrettyPrinter::<ethox::wire::ethernet::frame>::print(&frm);
+                    eprint!("--> {}\n", pp);
+                }; */
+
+                ethox::nic::Packet {
+                    payload: pkt,
+                    handle: hdl,
+                }
+            });
+
         receiver.receivev(packets);
-        lease.close(&self.handles);
+        lease.close();
 
         Ok(count)
     }
@@ -558,7 +776,7 @@ impl PayloadMut for Buffer {
 
 impl ethox::nic::Handle for Handle {
     fn queue(&mut self) -> ethox::layer::Result<()> {
-        self.send = Destination::Free;
+        self.send = Destination::Tx(0);
         Ok(())
     }
 
