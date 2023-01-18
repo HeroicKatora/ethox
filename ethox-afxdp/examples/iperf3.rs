@@ -7,7 +7,7 @@ pub use ethox_iperf::{config, iperf2};
 use ethox::layer::{arp, eth, ip};
 use ethox::managed::{List, Slice};
 use ethox_afxdp::{AfXdp, AfXdpBuilder, DeviceOptions};
-use xdpilone::xsk::{IfInfo, XskSocketConfig, XskUmem, XskUmemConfig};
+use xdpilone::{IfInfo, SocketConfig, UmemConfig};
 
 #[repr(align(4096))]
 #[derive(Clone, Copy)]
@@ -23,15 +23,15 @@ fn main() {
 
         let memory = vec![Page([0; 4096]); 1 << 7].into_boxed_slice();
 
-        let mut builder = AfXdpBuilder::from_boxed_slice(memory, XskUmemConfig::default())?;
+        let mut builder = AfXdpBuilder::from_boxed_slice(memory, UmemConfig::default())?;
 
         builder.with_socket(DeviceOptions {
             ifinfo: &*ifinfo,
-            config: &XskSocketConfig {
+            config: &SocketConfig {
                 rx_size: NonZeroU32::new(32),
                 tx_size: NonZeroU32::new(32),
-                bind_flags: XskUmem::XDP_BIND_ZEROCOPY | XskUmem::XDP_BIND_NEED_WAKEUP,
-                ..XskSocketConfig::default()
+                bind_flags: SocketConfig::XDP_BIND_ZEROCOPY | SocketConfig::XDP_BIND_NEED_WAKEUP,
+                ..SocketConfig::default()
             },
         })?;
 
@@ -57,7 +57,7 @@ fn main() {
             client,
         }) => ethox_iperf::client(
             &mut interface,
-            10,
+            32,
             &mut eth,
             &mut ip,
             iperf2::Iperf::new(client),
@@ -67,7 +67,7 @@ fn main() {
             client,
         }) => ethox_iperf::client(
             &mut interface,
-            10,
+            32,
             &mut eth,
             &mut ip,
             iperf2::IperfTcp::new(client),

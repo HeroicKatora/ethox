@@ -863,7 +863,7 @@ pub(crate) mod checksum {
 
 pub(crate) fn pretty_print_ip_payload<T: Into<Repr>>(f: &mut fmt::Formatter, indent: &mut PrettyIndent,
                                               ip_repr: T, payload: &[u8]) -> fmt::Result {
-    use crate::wire::{tcp, udp};
+    use crate::wire::{tcp, udp, icmpv4};
     use super::ip::checksum::format_checksum;
 
     let repr = ip_repr.into();

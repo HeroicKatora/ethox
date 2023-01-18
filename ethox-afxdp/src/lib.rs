@@ -23,9 +23,9 @@ use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
-use xdpilone::xsk::{
-    IfInfo, ReadComplete, ReadRx, WriteFill, WriteTx, XskDeviceQueue, XskRxRing, XskSocket,
-    XskSocketConfig, XskTxRing, XskUmem, XskUmemConfig, XskUser,
+use xdpilone::{
+    DeviceQueue, IfInfo, ReadRx, RingRx, RingTx, Socket, SocketConfig, Umem, UmemConfig, User,
+    WriteFill, WriteTx,
 };
 
 use ethox::nic::Device;
@@ -40,20 +40,20 @@ pub unsafe trait MemoryArea: Send + Sync + 'static {
 }
 
 pub struct AfXdpBuilder {
-    umem: XskUmem,
+    umem: Umem,
     /// Is the file descriptor of the `umem` itself used as rx/tx?
     initial_socket: Option<()>,
     /// The memory RAII, only kept alive after the constructor.
     memory: Option<Arc<dyn MemoryArea>>,
     /// The physical devices managed on this `umem`.
-    device: Vec<XskDeviceQueue>,
+    device: Vec<DeviceQueue>,
     /// The user queues.
-    rxtx: Vec<XskUser>,
+    rxtx: Vec<User>,
     /// Physical receive interfaces.
-    rx: Vec<XskRxRing>,
+    rx: Vec<RingRx>,
     rx_info: Vec<RxInfo>,
     /// Physical transmit interfaces.
-    tx: Vec<XskTxRing>,
+    tx: Vec<RingTx>,
 }
 
 struct RxInfo {
@@ -69,7 +69,7 @@ pub struct XdpBuilderOptions {
 
 pub struct DeviceOptions<'lt> {
     pub ifinfo: &'lt IfInfo,
-    pub config: &'lt XskSocketConfig,
+    pub config: &'lt SocketConfig,
 }
 
 #[derive(Debug)]
@@ -78,7 +78,7 @@ pub struct AfXdpBuilderError {
 }
 
 pub struct AfXdp {
-    umem: XskUmem,
+    umem: Umem,
     #[allow(dead_code)]
     memory: Option<Arc<dyn MemoryArea>>,
 
@@ -90,11 +90,11 @@ pub struct AfXdp {
     /// A buffer for constructed, owned packets. Partially initialized while in progress.
     packets: Box<[Buffer]>,
 
-    tx: Option<XskTxRing>,
+    tx: Option<RingTx>,
     // FIXME: figure out how to handle multiple receive rings.
-    rx: Option<XskRxRing>,
+    rx: Option<RingRx>,
     /// The fill/completion queue.
-    sock: XskDeviceQueue,
+    sock: DeviceQueue,
 
     /// Gathered statistics about socket usage, buffer usage, etc.
     #[allow(dead_code)]
@@ -160,7 +160,7 @@ pub struct IoReport {
 
 /// Borrowed queue/buffer states while receiving.
 struct PreparedRx<'lt> {
-    umem: &'lt mut XskUmem,
+    umem: &'lt mut Umem,
     this: Option<ReadRx<'lt>>,
     /// The fill queue to instantly re-queue buffers to fill.
     ///
@@ -173,7 +173,7 @@ struct PreparedRx<'lt> {
 }
 
 struct PreparedTx<'lt> {
-    umem: &'lt mut XskUmem,
+    umem: &'lt mut Umem,
     this: Option<WriteTx<'lt>>,
     /// Number of packets that are sent.
     lease: TxLease<'lt>,
@@ -205,7 +205,7 @@ impl AfXdp {
             let mut packets = packets.iter_mut();
             let mut handles = handle.iter_mut();
             // FIXME: incorrect frame size in general. Also, strength reduce for the division?
-            let frame_size = u64::from(XskUmemConfig::default().frame_size);
+            let frame_size = u64::from(UmemConfig::default().frame_size);
 
             if let Some(rx) = &mut this {
                 loop {
@@ -229,7 +229,7 @@ impl AfXdp {
                     let buf_off = desc.addr % frame_size;
 
                     // eprint!("Receiving frame {:?}\n", (buf_id, buf_off));
-                    let frame = umem.frame(xdpilone::xsk::BufIdx(buf_id)).unwrap();
+                    let frame = umem.frame(xdpilone::BufIdx(buf_id)).unwrap();
                     // FIXME: there _needs_ to be cleaner solutions.
                     let inner_ptr =
                         unsafe { (frame.addr.as_ptr() as *mut u8).offset(buf_off as isize) };
@@ -272,9 +272,9 @@ impl AfXdp {
         let packets = &mut self.packets[..actual as usize];
 
         // FIXME: of course this isn't right..
-        let frame_size = (XskUmemConfig::default().frame_size) as u16;
+        let frame_size = (UmemConfig::default().frame_size) as u16;
         for (pkt, hdl) in packets.iter_mut().zip(&mut *handle) {
-            let frame = umem.frame(xdpilone::xsk::BufIdx(pkt.idx.0)).unwrap();
+            let frame = umem.frame(xdpilone::BufIdx(pkt.idx.0)).unwrap();
 
             pkt.addr = frame.addr;
             pkt.len = frame_size;
@@ -305,7 +305,7 @@ impl AfXdp {
         }
 
         '_cq: {
-            let frame_size = u64::from(XskUmemConfig::default().frame_size);
+            let frame_size = u64::from(UmemConfig::default().frame_size);
             let mut cq = self.sock.complete(16);
 
             while let Some(cid) = cq.read() {
@@ -322,7 +322,7 @@ impl AfXdp {
             let mut frames = self.buffers.pre_fq(fq.capacity());
 
             let bufs = frames.iter().map(|OwnedBuf(idx): OwnedBuf| {
-                let frame = self.umem.frame(xdpilone::xsk::BufIdx(idx)).unwrap();
+                let frame = self.umem.frame(xdpilone::BufIdx(idx)).unwrap();
                 frame.offset
             });
 
@@ -351,7 +351,7 @@ impl AfXdpBuilder {
     /// # Safety
     ///
     /// Guarantee that the memory region that had been used to construct the buffer is not aliased.
-    pub unsafe fn new(umem: XskUmem, opt: &XdpBuilderOptions) -> Result<Self, AfXdpBuilderError> {
+    pub unsafe fn new(umem: Umem, opt: &XdpBuilderOptions) -> Result<Self, AfXdpBuilderError> {
         Ok(AfXdpBuilder {
             umem,
             initial_socket: Some(()),
@@ -366,7 +366,7 @@ impl AfXdpBuilder {
 
     pub fn from_boxed_slice<P: 'static>(
         memory: Box<[P]>,
-        config: XskUmemConfig,
+        config: UmemConfig,
     ) -> Result<Self, AfXdpBuilderError> {
         /// A type that holds onto a memory allocation, but not the values.
         struct MemoryFromBox<P> {
@@ -418,8 +418,8 @@ impl AfXdpBuilder {
 
         let memory = MemoryFromBox::new(memory);
         // Safety: `memory` preserves the allocation while the umem is alive.
-        let umem = unsafe { XskUmem::new(config, memory.as_ptr()) }
-            .map_err(AfXdpBuilderError::umem_error)?;
+        let umem =
+            unsafe { Umem::new(config, memory.as_ptr()) }.map_err(AfXdpBuilderError::umem_error)?;
         let ref options = XdpBuilderOptions {
             memory: Some(Arc::new(memory)),
         };
@@ -437,8 +437,8 @@ impl AfXdpBuilder {
             .initial_socket
             .take()
             .map_or_else(
-                || XskSocket::new(&bind.ifinfo),
-                |()| XskSocket::with_shared(&bind.ifinfo, &self.umem),
+                || Socket::new(&bind.ifinfo),
+                |()| Socket::with_shared(&bind.ifinfo, &self.umem),
             )
             .map_err(Self::errno_err)?;
 
@@ -559,7 +559,7 @@ impl PreparedRx<'_> {
             match handle.send {
                 Destination::Fill if fill_space > 0 => {
                     let owned_id = buf.idx.take_private();
-                    let frame = self.umem.frame(xdpilone::xsk::BufIdx(owned_id.0)).unwrap();
+                    let frame = self.umem.frame(xdpilone::BufIdx(owned_id.0)).unwrap();
 
                     self.this_fq.insert_once(frame.offset);
                     fill_space -= 1;
@@ -601,8 +601,8 @@ impl PreparedTx<'_> {
                 eprint!("<-- {}\n", pp);
             }; */
 
-            let frame = self.umem.frame(xdpilone::xsk::BufIdx(sent.0)).unwrap();
-            let desc = frame.into_xdp(u32::from(buf.len));
+            let frame = self.umem.frame(xdpilone::BufIdx(sent.0)).unwrap();
+            let desc = frame.as_xdp_with_len(u32::from(buf.len));
             // eprint!("Inserting into TX: {:?}", desc);
 
             tx.insert_once(desc);

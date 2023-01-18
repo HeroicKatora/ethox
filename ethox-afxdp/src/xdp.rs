@@ -12,10 +12,10 @@ use core::num::{NonZeroU32, NonZeroU8};
 
 use alloc::{boxed::Box, format, string::String, vec::Vec};
 
-use bpf_lite::bpf::{BpfMapInfo, BpfProgInfo, BpfProgOut};
-use bpf_lite::MapFd;
-use bpf_lite::{sys::ArcTable as BpfSys, Netlink, NetlinkRecvBuffer, ProgramFd};
-use xdpilone::xsk::IfInfo;
+use abpfiff::bpf::{BpfMapInfo, BpfProgInfo, BpfProgOut};
+use abpfiff::MapFd;
+use abpfiff::{sys::ArcTable as BpfSys, Netlink, NetlinkRecvBuffer, ProgramFd};
+use xdpilone::IfInfo;
 
 pub enum XdpRxMethod {
     /// Attach to the xdp-tools/XSK default program.
@@ -117,7 +117,7 @@ impl XdpRxMethod {
     ) -> Result<AttachmentMap, AttachError> {
         // For a compile error when other methods are added.
         let XdpRxMethod::DefaultProgram = self;
-        let systable = bpf_lite::sys::SysVTable::new();
+        let systable = abpfiff::sys::SysVTable::new();
         let mut netlink = Netlink::open(systable)?;
         let mut buffer = NetlinkRecvBuffer::new();
 
@@ -540,8 +540,8 @@ impl From<xdpilone::Errno> for Errno {
     }
 }
 
-impl From<bpf_lite::Errno> for Errno {
-    fn from(err: bpf_lite::Errno) -> Self {
+impl From<abpfiff::Errno> for Errno {
+    fn from(err: abpfiff::Errno) -> Self {
         Errno(err.get_raw())
     }
 }
@@ -553,9 +553,9 @@ impl From<xdpilone::Errno> for AttachError {
     }
 }
 
-impl From<bpf_lite::Errno> for AttachError {
+impl From<abpfiff::Errno> for AttachError {
     #[track_caller]
-    fn from(err: bpf_lite::Errno) -> Self {
+    fn from(err: abpfiff::Errno) -> Self {
         AttachError::FdError(err.into())
     }
 }

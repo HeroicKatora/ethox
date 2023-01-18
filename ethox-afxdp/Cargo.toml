@@ -7,14 +7,14 @@ edition = "2021"
 ethox = { path = "../ethox" }
 [dependencies.bytemuck]
 version = "1.7"
-[dependencies.bpf-lite]
-version = "0.0.0"
-path = "../../bpf-lite"
+[dependencies.abpfiff]
+version = "0.1.0"
+path = "../../abpfiff"
 [dependencies.libc]
 version = "0.2.103"
 default-features = false
 [dependencies.xdpilone]
-version = "0.0.0"
+version = "1.0.1"
 path = "../../xdpilone"
 
 [dev-dependencies.ethox-iperf]
