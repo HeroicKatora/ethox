@@ -31,6 +31,8 @@ use xdpilone::{
 use ethox::nic::Device;
 use ethox::wire::{payload, Payload, PayloadMut};
 
+pub use xdp::XdpRxMethod;
+
 /// Handled to some area of memory controlled by us.
 ///
 /// This way, the socket can optionally *own* a handle to that memory region, allowing it to drop
@@ -70,6 +72,7 @@ pub struct XdpBuilderOptions {
 pub struct DeviceOptions<'lt> {
     pub ifinfo: &'lt IfInfo,
     pub config: &'lt SocketConfig,
+    pub bind: XdpRxMethod,
 }
 
 #[derive(Debug)]
@@ -431,36 +434,36 @@ impl AfXdpBuilder {
     ///
     /// Note: currently, only exactly one socket is supported. Multi-Socket support may get added
     /// to ethox at some point in the future...
-    pub fn with_socket(&mut self, bind: DeviceOptions) -> Result<(), AfXdpBuilderError> {
+    pub fn with_socket(&mut self, dev_opt: DeviceOptions) -> Result<(), AfXdpBuilderError> {
         // Use either the builtin file descriptor or a fresh one if that's already been used.
         let socket = self
             .initial_socket
             .take()
             .map_or_else(
-                || Socket::new(&bind.ifinfo),
-                |()| Socket::with_shared(&bind.ifinfo, &self.umem),
+                || Socket::new(&dev_opt.ifinfo),
+                |()| Socket::with_shared(&dev_opt.ifinfo, &self.umem),
             )
             .map_err(Self::errno_err)?;
 
         // We MUST create the fc/cq first. This tells the kernel we're actually ready to listen to
-        // this socket, otherwise bind below will fail with `EINVAL`.
+        // this socket, otherwise dev_opt below will fail with `EINVAL`.
         let device = self.umem.fq_cq(&socket).map_err(Self::errno_err)?;
 
         let rxtx = self
             .umem
-            .rx_tx(&socket, &bind.config)
+            .rx_tx(&socket, &dev_opt.config)
             .map_err(Self::errno_err)?;
 
-        if bind.config.rx_size.is_some() {
+        if dev_opt.config.rx_size.is_some() {
             self.rx.push(rxtx.map_rx().map_err(Self::errno_err)?);
 
             self.rx_info.push(RxInfo {
-                if_info: bind.ifinfo.clone(),
-                method: xdp::XdpRxMethod::DefaultProgram,
+                if_info: dev_opt.ifinfo.clone(),
+                method: dev_opt.bind,
             });
         }
 
-        if bind.config.tx_size.is_some() {
+        if dev_opt.config.tx_size.is_some() {
             self.tx.push(rxtx.map_tx().map_err(Self::errno_err)?);
         }
 
@@ -595,15 +598,8 @@ impl PreparedTx<'_> {
                 }
             };
 
-            /*
-            if let Ok(frm) = ethox::wire::ethernet::Frame::new_checked(buf.payload()) {
-                let pp = ethox::wire::PrettyPrinter::<ethox::wire::ethernet::frame>::print(&frm);
-                eprint!("<-- {}\n", pp);
-            }; */
-
             let frame = self.umem.frame(xdpilone::BufIdx(sent.0)).unwrap();
             let desc = frame.as_xdp_with_len(u32::from(buf.len));
-            // eprint!("Inserting into TX: {:?}", desc);
 
             tx.insert_once(desc);
         }

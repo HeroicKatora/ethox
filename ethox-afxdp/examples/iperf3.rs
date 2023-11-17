@@ -6,7 +6,7 @@ pub use ethox_iperf::{config, iperf2};
 
 use ethox::layer::{arp, eth, ip};
 use ethox::managed::{List, Slice};
-use ethox_afxdp::{AfXdp, AfXdpBuilder, DeviceOptions};
+use ethox_afxdp::{AfXdp, AfXdpBuilder, DeviceOptions, XdpRxMethod};
 use xdpilone::{IfInfo, SocketConfig, UmemConfig};
 
 #[repr(align(4096))]
@@ -33,6 +33,7 @@ fn main() {
                 bind_flags: SocketConfig::XDP_BIND_ZEROCOPY | SocketConfig::XDP_BIND_NEED_WAKEUP,
                 ..SocketConfig::default()
             },
+            bind: XdpRxMethod::DefaultProgram,
         })?;
 
         builder.build()

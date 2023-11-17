@@ -10,7 +10,7 @@
 use core::ffi::CStr;
 use core::num::{NonZeroU32, NonZeroU8};
 
-use alloc::{boxed::Box, format, string::String, vec::Vec};
+use alloc::{boxed::Box, ffi::CString, format, string::String, vec::Vec};
 
 use abpfiff::bpf::{BpfMapInfo, BpfProgInfo, BpfProgOut};
 use abpfiff::MapFd;
@@ -21,8 +21,18 @@ pub enum XdpRxMethod {
     /// Attach to the xdp-tools/XSK default program.
     ///
     /// Will search this program in the chain attached to the device, find the suitable `xsk_map`
-    /// for the file descriptors and insert the file descriptor at the queue index.
+    /// for the file descriptors and insert the file descriptor at the queue index. This is similar
+    /// to `XskMap` with very opinionated defaults.
     DefaultProgram,
+    /// Attach by adding an entry in some program's XskMap.
+    XskMap {
+        /// The identifier of the program.
+        program: CString,
+        /// The name of the map in the BPF program.
+        map: CString,
+        /// Defines the entry in the map to overwrite with the new socket fd.
+        keyid: u32,
+    },
 }
 
 #[derive(Debug)]
@@ -66,7 +76,6 @@ pub struct XdpMultiprog {
     dispatch_config: Box<XdpDispatcherConfig>,
 
     prog_info: IfindexProgInfo,
-    num_links: usize,
     is_loaded: bool,
     ifindex: u32,
 }
@@ -116,7 +125,24 @@ impl XdpRxMethod {
         xsk: libc::c_int,
     ) -> Result<AttachmentMap, AttachError> {
         // For a compile error when other methods are added.
-        let XdpRxMethod::DefaultProgram = self;
+        let (program_cstr, map_cstr, map_key);
+
+        match self {
+            XdpRxMethod::DefaultProgram => {
+                map_cstr = CStr::from_bytes_with_nul(b"xsks_map\0").unwrap();
+                program_cstr = CStr::from_bytes_with_nul(b"xsk_def_prog\0").unwrap();
+                map_key = interface.queue_id();
+            }
+            XdpRxMethod::XskMap {
+                program,
+                map,
+                keyid,
+            } => {
+                map_cstr = map.as_c_str();
+                program_cstr = program.as_c_str();
+                map_key = *keyid;
+            }
+        }
         let systable = abpfiff::sys::SysVTable::new();
         let mut netlink = Netlink::open(systable)?;
         let mut buffer = NetlinkRecvBuffer::new();
@@ -127,7 +153,7 @@ impl XdpRxMethod {
         let idx = Self::find_default_program(
             netlink.sys(),
             &multiprog,
-            CStr::from_bytes_with_nul(b"xsk_def_prog\0").unwrap(),
+            program_cstr,
             CStr::from_bytes_with_nul(b"xsk_prog_version\0").unwrap(),
         )?;
 
@@ -135,7 +161,7 @@ impl XdpRxMethod {
         let mut chained_map = Self::lookup_bpf_map(netlink.sys(), chained_prog, &mut |info| {
             info.key_size == 4 && info.value_size == 4 && {
                 if let Some(name_len) = info.name.iter().position(|&c| c == b'\0') {
-                    info.name[..=name_len] == *b"xsks_map\0"
+                    info.name[..=name_len] == *map_cstr.to_bytes_with_nul()
                 } else {
                     false
                 }
@@ -145,7 +171,7 @@ impl XdpRxMethod {
         // FIXME: there's some funky stuff with refcount going on in xdp-tools/libxdp. We don't
         // really do that right now and trust the environment. We shouln't.
 
-        Self::update_map(netlink.sys(), &mut chained_map, interface, xsk)?;
+        Self::update_map(netlink.sys(), &mut chained_map, map_key, xsk)?;
 
         // Preserve the utilized state, from the BPF overview.
         let main_prog = multiprog.prog.remove(idx);
@@ -161,7 +187,7 @@ impl XdpRxMethod {
         prog_name: &CStr,
         version_name: &CStr,
     ) -> Result<usize, AttachError> {
-        let (idx, program) = multiprog
+        let (idx, _) = multiprog
             .prog
             .iter()
             .enumerate()
@@ -208,10 +234,10 @@ impl XdpRxMethod {
     fn update_map(
         sys: &BpfSys,
         chained_map: &mut XdpMap,
-        interface: &IfInfo,
+        interface: u32,
         xsk: libc::c_int,
     ) -> Result<(), AttachError> {
-        sys.map_update_element(&chained_map.map, &interface.queue_id(), &xsk)?;
+        sys.map_update_element(&chained_map.map, &interface, &xsk)?;
         Ok(())
     }
 }
@@ -223,8 +249,7 @@ impl XdpMultiprog {
         interface: &IfInfo,
     ) -> Result<Self, AttachError> {
         let prog_id = Self::get_ifindex_prog_id(netlink, buffer, interface.ifindex())?;
-        let mut this = Self::from_ids(netlink.sys(), &prog_id, interface)?;
-        Ok(this)
+        Ok(Self::from_ids(netlink.sys(), &prog_id, interface)?)
     }
 
     fn from_ids(
@@ -255,7 +280,6 @@ impl XdpMultiprog {
             prog: Vec::new(),
             dispatch_config: Box::new(XdpDispatcherConfig::default()),
             hw,
-            num_links: 0,
             is_loaded: false,
             ifindex: interface.ifindex(),
             prog_info: prog_info.clone(),
@@ -269,6 +293,7 @@ impl XdpMultiprog {
     ) -> Result<IfindexProgInfo, AttachError> {
         let xdp = netlink.xdp_query(ifindex, buffer)?;
         let attach_mode = AttachMode::new(xdp.attach_mode);
+
         let (main_id, hw_id);
         match attach_mode {
             Some(AttachMode::DRV) => {
