@@ -5,11 +5,16 @@
 //! its use in IPv4 addressing.
 //!
 //! Its code could be more generic and might in the future be reused for other protocols.
+mod buffer;
 mod endpoint;
 mod neighbor;
 mod packet;
 #[cfg(test)]
 mod tests;
+
+pub use buffer::{
+    Buffer as RequestBuffer,
+};
 
 pub use endpoint::{Endpoint, Receiver, Sender};
 

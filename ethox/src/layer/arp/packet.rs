@@ -48,6 +48,11 @@ pub enum Init {
         /// The IPv4 address of the target.
         target_protocol_addr: ip::v4::Address,
     },
+    /// Use a pre-defined arp representation.
+    Raw {
+        /// The full representation of the arp-part of the frame.
+        inner: arp::Repr,
+    },
 }
 
 impl<'a> Controller<'a> {
@@ -207,6 +212,7 @@ impl Init {
                 target_hardware_addr,
                 target_protocol_addr,
             },
+            Init::Raw { inner } => inner,
         }
     }
 }
