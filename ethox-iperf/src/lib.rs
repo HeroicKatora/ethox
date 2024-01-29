@@ -11,6 +11,8 @@ pub mod iperf3;
 pub mod iperf2;
 pub use score::Score;
 
+use ethox::wire::pretty_print;
+
 pub trait Client<Nic>:
     ethox::layer::ip::Recv<Nic::Payload> +
     ethox::layer::ip::Send<Nic::Payload>
@@ -19,6 +21,10 @@ where
     Nic::Payload: Sized,
 { 
     fn result(&self) -> Option<Score>;
+
+    fn verbose(&self) -> bool {
+        true
+    }
 }
 
 pub fn client<Nic>(
@@ -60,7 +66,15 @@ where
     // * reset after a client instead of terminate
     // * accept more than one client
     loop {
-        let _ = nic.rx(burst, eth.recv(ip.recv(&mut client)));
+        if client.verbose() {
+            let _ = nic.rx(burst, pretty_print::FormatWith {
+                formatter: pretty_print::Formatter::default(),
+                inner: eth.recv(ip.recv(&mut client))
+            });
+        } else {
+            let _ = nic.rx(burst, eth.recv(ip.recv(&mut client)));
+        }
+
         let _ = nic.tx(burst, eth.send(ip.send(&mut client)));
 
         if let Some(result) = client.result() {

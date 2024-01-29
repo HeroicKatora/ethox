@@ -13,7 +13,7 @@ mod sys_internal;
 use crate::wire::Payload;
 use crate::layer::{Result, FnHandler};
 #[cfg(feature = "std")]
-use crate::wire::{ethernet, pretty_print::{Formatter, PrettyPrinter}};
+use crate::wire::{ethernet, pretty_print::{Formatter, PrettyPrinter, FormatWith}};
 use crate::time::Instant;
 
 pub use self::personality::{
@@ -203,6 +203,17 @@ impl<H: Handle + ?Sized, P: Payload + ?Sized> Recv<H, P> for Formatter<ethernet:
         let printer = PrettyPrinter::<ethernet::frame>
             ::new("", frame.payload.payload().as_slice());
         eprintln!("{}", printer);
+    }
+}
+
+impl<I, H: Handle + ?Sized, P: Payload + ?Sized> Recv<H, P> for FormatWith<I, ethernet::frame>
+    where I: Recv<H, P>
+{
+    fn receive(&mut self, frame: Packet<H, P>) {
+        let printer = PrettyPrinter::<ethernet::frame>
+            ::new("", frame.payload.payload().as_slice());
+        eprintln!("{}", printer);
+        self.inner.receive(frame)
     }
 }
 

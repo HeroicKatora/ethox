@@ -86,7 +86,7 @@ impl<'a> Endpoint<'a> {
     where
         A: Into<Slice<'a, ip::Cidr>>,
         C: Into<Routes<'a>>,
-        N: Into<layer::arp::NeighborCache<'a>>,
+        N: Into<layer::arp::Endpoint<'a>>,
     {
         let addresses = addr.into();
         for addr in addresses.iter() {
@@ -97,7 +97,7 @@ impl<'a> Endpoint<'a> {
                 addr: addresses,
                 routes: routes.into(),
             },
-            arp: layer::arp::Endpoint::new(neighbors.into()),
+            arp: neighbors.into(),
         }
     }
 

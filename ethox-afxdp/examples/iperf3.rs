@@ -43,11 +43,18 @@ fn main() {
     let mut eth = eth::Endpoint::new(config.hostmac);
 
     let mut neighbors = [arp::Neighbor::default(); 1];
+    let mut arp_requests = [None; 16];
+
     let mut routes = [ip::Route::new_ipv4_gateway(config.gateway.address()); 1];
     let mut ip = ip::Endpoint::new(
         Slice::One(config.host.into()),
         ip::Routes::import(List::new_full(routes.as_mut().into())),
-        arp::NeighborCache::new(&mut neighbors[..]),
+        {
+            let neighbors = arp::NeighborCache::new(&mut neighbors[..]);
+            let buffer = arp::RequestBuffer::new((&mut arp_requests[..]).into());
+
+            arp::Endpoint::new(neighbors).with_request_buffer(buffer)
+        },
     );
 
     println!("[+] Configured layers, communicating");
