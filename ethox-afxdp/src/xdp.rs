@@ -42,6 +42,7 @@ pub enum AttachError {
     NoSuchMap,
     FdError(Errno),
     UnknownAttachMode,
+    InterfaceNotSetup,
     NoLegacySupport,
     BadProgConfigMap,
     InternalError,
@@ -129,8 +130,8 @@ impl XdpRxMethod {
 
         match self {
             XdpRxMethod::DefaultProgram => {
-                map_cstr = CStr::from_bytes_with_nul(b"xsks_map\0").unwrap();
-                program_cstr = CStr::from_bytes_with_nul(b"xsk_def_prog\0").unwrap();
+                map_cstr = CStr::from_bytes_with_nul(b"SOCK\0").unwrap();
+                program_cstr = CStr::from_bytes_with_nul(b"xdp\0").unwrap();
                 map_key = interface.queue_id();
             }
             XdpRxMethod::XskMap {
@@ -157,10 +158,16 @@ impl XdpRxMethod {
             CStr::from_bytes_with_nul(b"xsk_prog_version\0").unwrap(),
         )?;
 
-        let chained_prog = &mut multiprog.prog[idx];
+        let chained_prog = if idx == 0 {
+            multiprog.main.as_mut().unwrap()
+        } else {
+            &mut multiprog.prog[idx-1].prog
+        };
+
         let mut chained_map = Self::lookup_bpf_map(netlink.sys(), chained_prog, &mut |info| {
             info.key_size == 4 && info.value_size == 4 && {
                 if let Some(name_len) = info.name.iter().position(|&c| c == b'\0') {
+                    let _ = eprint!("Map name: {:?}\n", CStr::from_bytes_with_nul(&info.name[..=name_len]));
                     info.name[..=name_len] == *map_cstr.to_bytes_with_nul()
                 } else {
                     false
@@ -174,7 +181,16 @@ impl XdpRxMethod {
         Self::update_map(netlink.sys(), &mut chained_map, map_key, xsk)?;
 
         // Preserve the utilized state, from the BPF overview.
-        let main_prog = multiprog.prog.remove(idx);
+        let main_prog = if idx == 0 {
+            ChainedProg {
+                prog: *multiprog.main.take().unwrap(),
+                chain_call_actions: 0,
+                run_prio: 0,
+            }
+        } else {
+            multiprog.prog.remove(idx-1)
+        };
+
         Ok(AttachmentMap {
             main_prog,
             main_map: chained_map,
@@ -187,12 +203,22 @@ impl XdpRxMethod {
         prog_name: &CStr,
         version_name: &CStr,
     ) -> Result<usize, AttachError> {
+        if let Some(main) = &multiprog.main {
+            eprint!("Prog name {}:", 0);
+            eprint!("{:?}\n", main.name());
+            if main.name() == Some(prog_name) {
+                return Ok(0);
+            }
+        }
+
         let (idx, _) = multiprog
             .prog
             .iter()
             .enumerate()
             .find_map(|(idx, chained)| {
+                eprint!("{}", idx+1);
                 let name = chained.prog.name();
+                eprint!("{:?}\n", name);
 
                 if name == Some(prog_name) {
                     return Some((idx, chained));
@@ -203,17 +229,17 @@ impl XdpRxMethod {
             .ok_or(AttachError::NoSuchProgram)?;
 
         // let version = Self::check_program_version(bpf, program, version_name)?;
-        Ok(idx)
+        Ok(idx + 1)
     }
 
     fn lookup_bpf_map(
         bpf: &BpfSys,
-        chained: &mut ChainedProg,
+        chained: &mut XdpProg,
         fn_: &mut dyn FnMut(&mut BpfMapInfo) -> bool,
     ) -> Result<XdpMap, AttachError> {
         let mut map_info = BpfMapInfo::default();
 
-        for &map_id in chained.prog.get_maps(bpf)? {
+        for &map_id in chained.get_maps(bpf)? {
             let map_id = match NonZeroU32::new(map_id) {
                 None => continue,
                 Some(nz) => nz,
@@ -308,10 +334,16 @@ impl XdpMultiprog {
                 main_id = 0;
                 hw_id = xdp.hw_prog_id;
             }
+            None => {
+                eprint!("{}", xdp.attach_mode);
+                return Err(AttachError::InterfaceNotSetup);
+            }
             // FIXME: support multi. Differentiate between attach mode returned by XDP and the
             // effective one to use. I.e. libxdp will try DRV if non-zero then SKB and otherwise
             // unspecified mode (None).
-            _ => return Err(AttachError::UnknownAttachMode),
+            Some(_other) => {
+                return Err(AttachError::UnknownAttachMode)
+            }
         }
 
         Ok(IfindexProgInfo {
