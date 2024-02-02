@@ -287,7 +287,7 @@ where
 {
     fn send(&mut self, packet: layer::eth::RawPacket<P>) {
         // FIXME: will *always* intercept, even if we can't actually send any arp.
-        if self.endpoint.neighbors().missing().count() > 0 {
+        if self.endpoint.inner.arp.has_send_need() {
             return self.endpoint.into_arp_sender().send(packet);
         }
 

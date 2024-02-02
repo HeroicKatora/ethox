@@ -99,6 +99,10 @@ impl<'data> Endpoint<'data> {
         EndpointRef { inner: self, ip, }
     }
 
+    pub(crate) fn has_send_need(&self) -> bool {
+        self.neighbors().missing().count() > 0 || !self.respond.is_empty()
+    }
+
     pub(crate) fn neighbors(&self) -> &Cache<'data> {
         &self.neighbors
     }
@@ -150,6 +154,7 @@ impl EndpointRef<'_, '_> {
                     self.buffer_v4(
                         source_hardware_addr,
                         source_protocol_addr,
+                        // Always use our own src as the target hardware address.
                         src,
                         target_protocol_addr,
                     );
@@ -227,11 +232,11 @@ impl EndpointRef<'_, '_> {
         target_protocol_addr: wire_ip::v4::Address,
     ) {
         if !self.inner.respond.offer(arp::Repr::EthernetIpv4 {
-            operation: arp::Operation::Request,
-            source_hardware_addr,
-            source_protocol_addr,
-            target_hardware_addr,
-            target_protocol_addr,
+            operation: arp::Operation::Reply,
+            source_hardware_addr: target_hardware_addr,
+            source_protocol_addr: target_protocol_addr,
+            target_hardware_addr: source_hardware_addr,
+            target_protocol_addr: source_protocol_addr,
         }) {
             self.inner.drop_counter += 1;
         }

@@ -75,7 +75,14 @@ where
             let _ = nic.rx(burst, eth.recv(ip.recv(&mut client)));
         }
 
-        let _ = nic.tx(burst, eth.send(ip.send(&mut client)));
+        if client.verbose() {
+            let _ = nic.tx(burst, pretty_print::FormatWith {
+                formatter: pretty_print::Formatter::default(),
+                inner: eth.send(ip.send(&mut client)),
+            });
+        } else {
+            let _ = nic.tx(burst, eth.send(ip.send(&mut client)));
+        }
 
         if let Some(result) = client.result() {
             return result;

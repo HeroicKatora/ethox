@@ -71,6 +71,29 @@ impl<P: Payload, I> Recv<P> for pretty_print::FormatWith<I, ethernet::frame>
     }
 }
 
+impl<P: Payload, I> Send<P> for pretty_print::FormatWith<I, ethernet::frame>
+    where I: Send<P>
+{
+    fn send(&mut self, mut frame: RawPacket<P>) {
+        self.inner.send(RawPacket {
+            control: frame.control.borrow_mut(),
+            payload: frame.payload,
+        });
+
+        match frame.control.nic_handle.is_queued() {
+            Ok(false) => {},
+            Ok(true) => {
+                let printer = PrettyPrinter::<ethernet::frame>::new("-> ", frame.payload.payload());
+                eprintln!("{}", printer);
+            }
+            Err(_) => {
+                let printer = PrettyPrinter::<ethernet::frame>::new("? ", frame.payload.payload());
+                eprintln!("{}", printer);
+            }
+        }
+    }
+}
+
 impl<P: Payload, E> Recv<P> for &'_ mut E
     where E: Recv<P>
 {

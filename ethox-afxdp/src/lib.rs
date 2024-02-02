@@ -153,6 +153,8 @@ pub enum Destination {
     Keep(u16),
     /// Submit the buffer to the Fill queue to be received.
     Fill,
+    /// The user gives up not given control over this packet.
+    Finalize,
 }
 
 pub struct IoReport {
@@ -722,11 +724,9 @@ impl Device for AfXdp {
             .iter_mut()
             .zip(lease.handle.iter_mut())
             .map(|(pkt, hdl)| {
-                /*if let Ok(frm) = ethox::wire::ethernet::Frame::new_checked(pkt.payload()) {
-                    let pp =
-                        ethox::wire::PrettyPrinter::<ethox::wire::ethernet::frame>::print(&frm);
-                    eprint!("--> {}\n", pp);
-                }; */
+                // We have not implemented any strategy to immediately push those packets out,
+                // hence we mark them as being finalized.
+                hdl.send = Destination::Finalize;
 
                 ethox::nic::Packet {
                     payload: pkt,
@@ -772,8 +772,17 @@ impl PayloadMut for Buffer {
 
 impl ethox::nic::Handle for Handle {
     fn queue(&mut self) -> ethox::layer::Result<()> {
+        if let Destination::Finalize = self.send {
+            return Err(ethox::layer::Error::Illegal);
+        }
+
         self.send = Destination::Tx(0);
         Ok(())
+    }
+
+    fn is_queued(&self) -> ethox::layer::Result<bool> {
+        // FIXME: match more tx, depending on the known number of actual queues in this interface.
+        Ok(matches!(self.send, Destination::Tx(0)))
     }
 
     fn info(&self) -> &dyn ethox::nic::Info {

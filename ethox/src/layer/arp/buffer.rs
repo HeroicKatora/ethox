@@ -27,6 +27,11 @@ impl<'data> Buffer<'data> {
         true
     }
 
+    /// Are there any outstanding responses?
+    pub fn is_empty(&self) -> bool {
+        self.storage.len() == 0
+    }
+
     /// Dequeue one outstanding arp response.
     pub fn pop(&mut self) -> Option<arp::Repr> {
         while let Some(st) = self.storage.pop() {

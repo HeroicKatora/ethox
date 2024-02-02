@@ -55,6 +55,12 @@ pub trait Handle {
     /// resources to queue the packet.
     fn queue(&mut self) -> Result<()>;
 
+    /// Query if the packet is already queued to be sent.
+    fn is_queued(&self) -> Result<bool> {
+        use crate::layer::Error;
+        Err(Error::Illegal)
+    }
+
     /// Information on the packet intended for lower layers.
     ///
     /// Note that technically the information may change after a call to `queue` or in the future
@@ -211,9 +217,34 @@ impl<I, H: Handle + ?Sized, P: Payload + ?Sized> Recv<H, P> for FormatWith<I, et
 {
     fn receive(&mut self, frame: Packet<H, P>) {
         let printer = PrettyPrinter::<ethernet::frame>
-            ::new("", frame.payload.payload().as_slice());
+            ::new("<", frame.payload.payload().as_slice());
         eprintln!("{}", printer);
         self.inner.receive(frame)
+    }
+}
+
+impl<I, H: Handle + ?Sized, P: Payload + ?Sized> Send<H, P> for FormatWith<I, ethernet::frame>
+    where I: Send<H, P>
+{
+    fn send(&mut self, frame: Packet<H, P>) {
+        self.inner.send(Packet {
+            handle: frame.handle,
+            payload: frame.payload,
+        });
+
+        match frame.handle.is_queued() {
+            Ok(true) => {
+                let printer = PrettyPrinter::<ethernet::frame>
+                    ::new(">", frame.payload.payload().as_slice());
+                eprintln!("{}", printer);
+            },
+            Ok(false) => {}
+            Err(_) => {
+                let printer = PrettyPrinter::<ethernet::frame>
+                    ::new("?", frame.payload.payload().as_slice());
+                eprintln!("{}", printer);
+            },
+        }
     }
 }
 
