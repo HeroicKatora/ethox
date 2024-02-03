@@ -1,0 +1,21 @@
+[package]
+name = "ethox-afxdp"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+ethox = { path = "../ethox" }
+[dependencies.bytemuck]
+version = "1.7"
+[dependencies.abpfiff]
+version = "0.1.0"
+path = "../../abpfiff"
+[dependencies.libc]
+version = "0.2.103"
+default-features = false
+[dependencies.xdpilone]
+version = "1.0.1"
+path = "../../xdpilone"
+
+[dev-dependencies.ethox-iperf]
+path = "../ethox-iperf"

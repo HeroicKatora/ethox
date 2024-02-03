@@ -6,7 +6,7 @@
 //! and logic within the ethernet endpoint is tiny compared to other layers.
 //!
 //! [layer]: ../index.html
-use crate::wire::{Payload};
+use crate::wire::{Payload, pretty_print};
 #[cfg(feature = "std")]
 use crate::wire::{pretty_print::Formatter, PrettyPrinter, ethernet};
 
@@ -58,6 +58,39 @@ impl<P: Payload> Recv<P> for Formatter<ethernet::frame> {
     fn receive(&mut self, frame: InPacket<P>) {
         let printer = PrettyPrinter::<ethernet::frame>::print(&frame.frame);
         eprintln!("{}", printer);
+    }
+}
+
+impl<P: Payload, I> Recv<P> for pretty_print::FormatWith<I, ethernet::frame>
+    where I: Recv<P>
+{
+    fn receive(&mut self, frame: InPacket<P>) {
+        let printer = PrettyPrinter::<ethernet::frame>::print(&frame.frame);
+        eprintln!("{}", printer);
+        self.inner.receive(frame);
+    }
+}
+
+impl<P: Payload, I> Send<P> for pretty_print::FormatWith<I, ethernet::frame>
+    where I: Send<P>
+{
+    fn send(&mut self, mut frame: RawPacket<P>) {
+        self.inner.send(RawPacket {
+            control: frame.control.borrow_mut(),
+            payload: frame.payload,
+        });
+
+        match frame.control.nic_handle.is_queued() {
+            Ok(false) => {},
+            Ok(true) => {
+                let printer = PrettyPrinter::<ethernet::frame>::new("-> ", frame.payload.payload());
+                eprintln!("{}", printer);
+            }
+            Err(_) => {
+                let printer = PrettyPrinter::<ethernet::frame>::new("? ", frame.payload.payload());
+                eprintln!("{}", printer);
+            }
+        }
     }
 }
 

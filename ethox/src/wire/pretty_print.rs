@@ -39,6 +39,11 @@ pub struct PrettyIndent {
     level:  usize
 }
 
+pub struct FormatWith<I, F: ?Sized> {
+    pub formatter: Formatter<F>,
+    pub inner: I,
+}
+
 impl PrettyIndent {
     /// Create an indentation state. The entire listing will be indented by the width
     /// of `prefix`, and `prefix` will appear at the start of the first line.
@@ -77,7 +82,7 @@ pub trait PrettyPrint {
 
 /// Zero-sized marker type for pretty printers.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Formatter<T: PrettyPrint + ?Sized> {
+pub struct Formatter<T: ?Sized> {
     _inner: PhantomData<T>,
 }
 

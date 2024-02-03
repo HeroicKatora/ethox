@@ -863,7 +863,7 @@ pub(crate) mod checksum {
 
 pub(crate) fn pretty_print_ip_payload<T: Into<Repr>>(f: &mut fmt::Formatter, indent: &mut PrettyIndent,
                                               ip_repr: T, payload: &[u8]) -> fmt::Result {
-    use crate::wire::{tcp, udp};
+    use crate::wire::{tcp, udp, icmpv4};
     use super::ip::checksum::format_checksum;
 
     let repr = ip_repr.into();
@@ -901,6 +901,16 @@ pub(crate) fn pretty_print_ip_payload<T: Into<Repr>>(f: &mut fmt::Formatter, ind
                         repr.src_addr(), repr.dst_addr());
                     format_checksum(f, valid)
                 }
+            }
+        }
+        Protocol::Icmp => {
+            indent.increase(f)?;
+            match icmpv4::Packet::<&[u8]>::new_checked(payload.as_ref(), Checksum::Ignored) {
+                Err(err) => write!(f, "{} icmpv4 err: ({}) {:?}", indent, err, payload.as_ref()),
+                Ok(icmp_packet) => {
+                    write!(f, "{}{}", indent, icmp_packet)?;
+                    Ok(())
+                },
             }
         }
         _ => Ok(())

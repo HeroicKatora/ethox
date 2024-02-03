@@ -1,0 +1,10 @@
+[build]
+target = "armv7-unknown-linux-musleabihf"
+
+[target.arm-unknown-linux-gnueabihf]
+linker = "arm-linux-gnueabihf-gcc"
+[target.arm-unknown-linux-musleabihf]
+linker = "arm-linux-musleabihf-gcc"
+[target.armv7-unknown-linux-musleabihf]
+linker = "arm-linux-musleabihf-gcc"
+runner = "./send_and_run.sh"

@@ -28,12 +28,12 @@ pub(crate) trait IfIndex {
 }
 
 impl ifreq {
-    pub(crate) const SIOCGIFMTU:   libc::c_ulong = 0x8921;
-    pub(crate) const SIOCGIFINDEX: libc::c_ulong = 0x8933;
+    pub(crate) const SIOCGIFMTU:   libc::Ioctl = 0x8921;
+    pub(crate) const SIOCGIFINDEX: libc::Ioctl = 0x8933;
 
-    pub(crate) const TUNSETIFF:    libc::c_ulong = 0x400454CA;
-    pub(crate) const IFF_TAP:      libc::c_int   = 0x0002;
-    pub(crate) const IFF_NO_PI:    libc::c_int   = 0x1000;
+    pub(crate) const TUNSETIFF:    libc::Ioctl = 0x400454CA;
+    pub(crate) const IFF_TAP:      libc::c_int  = 0x0002;
+    pub(crate) const IFF_NO_PI:    libc::c_int  = 0x1000;
 }
 
 impl TunSetIf for ifreq {

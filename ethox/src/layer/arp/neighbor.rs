@@ -105,7 +105,7 @@ pub enum Error {
 /// feel free to change the code (and upstream your improvement if possible).
 #[derive(Debug)]
 pub struct Cache<'a> {
-    storage:      Ordered<'a, Neighbor>,
+    storage: Ordered<'a, Neighbor>,
     silent_until: Instant,
 }
 
@@ -149,7 +149,11 @@ impl<'a> Cache<'a> {
     /// currently not checked beforehand!
     // TODO: remove duplicate entires, e.g. `slice::partition_dedup_by_key` once stable.
     pub fn import(storage: Ordered<'a, Neighbor>) -> Self {
-        Cache { storage, silent_until: Instant::from_millis(0) }
+        Cache {
+            storage,
+            // We will not respond to neighbors requesting, unless we can respond in the same frame.
+            silent_until: Instant::from_millis(0),
+        }
     }
 
     /// Add a lookup entry.

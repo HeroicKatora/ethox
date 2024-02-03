@@ -1,0 +1,8 @@
+[package]
+name = "ethox-xdp"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+ethox = { path = "../ethox" }
+libc = "0.2.125"

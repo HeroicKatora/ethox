@@ -3,11 +3,12 @@
 //! immediate communication hosts. To make the requests themselves we thus need to be informed
 //! about missing addresses.
 
-use crate::layer::{eth, Result};
-use crate::wire::{arp, ethernet, ip::Address as IpAddress, Payload, PayloadMut};
+use crate::layer::{eth, Error, Result};
+use crate::wire::{arp, ethernet, ip as wire_ip, Payload, PayloadMut};
 use crate::time::Instant;
 use crate::layer::ip;
 
+use super::buffer::Buffer;
 use super::packet::{Controller, In, Init, Raw};
 use super::neighbor::Cache;
 
@@ -20,6 +21,8 @@ use super::neighbor::Cache;
 /// layers for handling their protocol specific arp tasks.
 pub struct Endpoint<'data> {
     neighbors: Cache<'data>,
+    respond: Buffer<'data>,
+    drop_counter: u64,
 }
 
 /// An endpoint borrowed for receiving.
@@ -49,6 +52,16 @@ impl<'data> Endpoint<'data> {
     {
         Endpoint {
             neighbors: neighbors.into(),
+            respond: Buffer::default(),
+            drop_counter: 0,
+        }
+    }
+
+    /// Set a storage to temporary buffer outstanding ARP responses.
+    pub fn with_request_buffer(self, buffer: Buffer<'data>) -> Self {
+        Endpoint {
+            respond: buffer,
+            ..self
         }
     }
 
@@ -86,6 +99,10 @@ impl<'data> Endpoint<'data> {
         EndpointRef { inner: self, ip, }
     }
 
+    pub(crate) fn has_send_need(&self) -> bool {
+        self.neighbors().missing().count() > 0 || !self.respond.is_empty()
+    }
+
     pub(crate) fn neighbors(&self) -> &Cache<'data> {
         &self.neighbors
     }
@@ -101,7 +118,7 @@ impl EndpointRef<'_, '_> {
     /// See [RFC826] for details.
     ///
     /// [RFC826]: https://tools.ietf.org/html/rfc826
-    fn handle_internally<P: PayloadMut>(&mut self, packet: In<P>) -> Result<()> {
+    fn handle_internally<P: PayloadMut>(&mut self, mut packet: In<P>) -> Result<()> {
         let (operation, source_hardware_addr, source_protocol_addr, target_protocol_addr) =
             match packet.packet.repr() {
                 arp::Repr::EthernetIpv4 {
@@ -113,24 +130,37 @@ impl EndpointRef<'_, '_> {
                 } => {
                     (operation, source_hardware_addr, source_protocol_addr, target_protocol_addr)
                 },
-                _ => return Ok(()),
             };
 
         // Update the address if it already exists in our tables (may be currently looking it up).
         self.update(
             source_hardware_addr,
-            IpAddress::Ipv4(source_protocol_addr),
+            wire_ip::Address::Ipv4(source_protocol_addr),
             packet.control.info().timestamp());
 
         // TODO: handle incoming gratuitous ARP ?
 
         // verify that target protocol address is not a multicast address and we accept it.
-        if target_protocol_addr.is_unicast() && self.ip.accepts(IpAddress::Ipv4(target_protocol_addr)) {
+        if target_protocol_addr.is_unicast() && self.ip.accepts(wire_ip::Address::Ipv4(target_protocol_addr)) {
             // unsolicited updates fully ignored not enabled.
 
             // send a reply if necessary.
             if let arp::Operation::Request = operation {
-                packet.answer()?.send()?;
+                let src = packet.control.inner.src_addr();
+                let err = packet.answer()?.send();
+
+                // Does not allow in-line responses. We instead queue this packet.
+                if let Err(Error::Illegal) = err {
+                    self.buffer_v4(
+                        source_hardware_addr,
+                        source_protocol_addr,
+                        // Always use our own src as the target hardware address.
+                        src,
+                        target_protocol_addr,
+                    );
+                }
+
+                err?
             }
         }
 
@@ -141,6 +171,12 @@ impl EndpointRef<'_, '_> {
     fn send_oustanding<P: PayloadMut>(&mut self, raw: Raw<P>) -> Result<()> {
         let ts = raw.control.info().timestamp();
 
+        if let Some(inner) = self.buffered_answer(ts) {
+            let prepared = raw.prepare(Init::Raw { inner })?;
+            prepared.send()?;
+            return Ok(());
+        }
+
         // Search through the missing arp entries:
         let unresolved = self.inner.neighbors
             .missing()
@@ -148,25 +184,24 @@ impl EndpointRef<'_, '_> {
             .filter(|missing| missing.is_alive(ts) && missing.looking_for())
             // … and that are entries for ipv4
             .filter_map(|missing| match missing.protocol_addr() {
-                IpAddress::Ipv4(addr) => Some(addr),
+                wire_ip::Address::Ipv4(addr) => Some(addr),
                 _ => None,
             })
             // … and for which we can find a link-local outbound route.
-            .filter_map(|addr| {
-                self.ip.find_local_route(IpAddress::Ipv4(addr), ts)
+            .find_map(|addr| {
+                self.ip.find_local_route(wire_ip::Address::Ipv4(addr), ts)
                     .map(|route| (addr, route))
-            })
-            .next();
+            });
 
         let (addr, route) = match unresolved {
             None => return Ok(()),
             Some(required) => required,
         };
 
-        debug_assert_eq!(route.next_hop, IpAddress::Ipv4(addr));
+        debug_assert_eq!(route.next_hop, wire_ip::Address::Ipv4(addr));
 
         let ip_src_address = match route.src_addr {
-            IpAddress::Ipv4(addr) => addr,
+            wire_ip::Address::Ipv4(addr) => addr,
             _ => unreachable!("Ipv4 destination routed with non-ipv4 source"),
         };
 
@@ -181,7 +216,7 @@ impl EndpointRef<'_, '_> {
         })?;
 
         // Reset the timer for that entry. Should always succeed.
-        let reset = self.inner.neighbors.requesting(IpAddress::Ipv4(addr), ts);
+        let reset = self.inner.neighbors.requesting(wire_ip::Address::Ipv4(addr), ts);
         debug_assert!(reset.is_ok());
 
         prepared.send()?;
@@ -189,7 +224,30 @@ impl EndpointRef<'_, '_> {
         Ok(())
     }
 
-    fn update(&mut self, hw_addr: ethernet::Address, prot_addr: IpAddress, time: Instant) -> bool {
+    fn buffer_v4(
+        &mut self,
+        source_hardware_addr: ethernet::Address,
+        source_protocol_addr: wire_ip::v4::Address,
+        target_hardware_addr: ethernet::Address,
+        target_protocol_addr: wire_ip::v4::Address,
+    ) {
+        if !self.inner.respond.offer(arp::Repr::EthernetIpv4 {
+            operation: arp::Operation::Reply,
+            source_hardware_addr: target_hardware_addr,
+            source_protocol_addr: target_protocol_addr,
+            target_hardware_addr: source_hardware_addr,
+            target_protocol_addr: source_protocol_addr,
+        }) {
+            self.inner.drop_counter += 1;
+        }
+    }
+
+    /// If there are outstanding queries about _us_, then answer them at a defined rate.
+    fn buffered_answer(&mut self, _ts: Instant) -> Option<arp::Repr> {
+        self.inner.respond.pop()
+    }
+
+    fn update(&mut self, hw_addr: ethernet::Address, prot_addr: wire_ip::Address, time: Instant) -> bool {
         if let Some(_) = self.inner.neighbors.lookup(prot_addr, time) {
             assert!(self.inner.neighbors.fill(prot_addr, hw_addr, Some(time)).is_ok());
             true
