@@ -800,6 +800,9 @@ impl ethox::nic::Info for Handle {
     }
 
     fn capabilities(&self) -> ethox::nic::Capabilities {
-        ethox::nic::Capabilities::no_support()
+        let mut caps = ethox::nic::Capabilities::no_support();
+        *caps.tcp_mut() = ethox::nic::Protocol::offloaded().into();
+        *caps.udp_mut() = ethox::nic::Protocol::offloaded().into();
+        caps
     }
 }

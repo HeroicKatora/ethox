@@ -2,7 +2,7 @@ extern crate alloc;
 
 use alloc::ffi::CString;
 use core::num::NonZeroU32;
-pub use ethox_iperf::{config, iperf2};
+pub use ethox_iperf::{config, iperf2, iperf3};
 
 use ethox::layer::{arp, eth, ip};
 use ethox::managed::{List, Slice};

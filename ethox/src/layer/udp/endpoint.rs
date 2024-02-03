@@ -112,14 +112,16 @@ where
         let capabilities = control.info().capabilities();
         let checksum = capabilities.udp().rx_checksum(packet.repr());
 
-        let packet = match packet.repr().protocol() {
-            ip::Protocol::Udp => {
-                match udp::Packet::new_checked(packet, checksum) {
-                    Ok(packet) => packet,
-                    Err(_) => return,
-                }
-            },
+        match packet.repr().protocol() {
+            ip::Protocol::Udp => {},
             _ => return,
+        };
+
+        let packet = match udp::Packet::new_checked(packet, checksum) {
+            Ok(packet) => packet,
+            Err(_) => {
+                return
+            },
         };
 
         if !self.endpoint.inner.accepts(packet.repr().dst_port) {

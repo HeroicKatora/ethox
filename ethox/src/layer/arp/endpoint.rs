@@ -243,7 +243,7 @@ impl EndpointRef<'_, '_> {
     }
 
     /// If there are outstanding queries about _us_, then answer them at a defined rate.
-    fn buffered_answer(&mut self, ts: Instant) -> Option<arp::Repr> {
+    fn buffered_answer(&mut self, _ts: Instant) -> Option<arp::Repr> {
         self.inner.respond.pop()
     }
 

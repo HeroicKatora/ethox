@@ -60,6 +60,9 @@ enum HandlingKind<'a, P: PayloadMut> {
     /// The upper layer handler should not need to see this packet.
     Internal,
 
+    /// The send layer will have to intercept in the future.
+    Buffer,
+
     /// Give the packet to upper layer handler if that exists.
     ToUpperLayer(In<'a, P>),
 }
@@ -146,10 +149,13 @@ impl EndpointRef<'_> {
                     return Ok(HandlingKind::Internal)
                 }
 
-                packet
-                    .answer()?
-                    .send()?;
+                let err = packet.answer()?.send();
 
+                if let Err(layer::Error::Illegal) = err {
+                    return Ok(HandlingKind::Buffer);
+                }
+
+                err?;
                 Ok(HandlingKind::Internal)
             },
             _ => Ok(HandlingKind::ToUpperLayer(packet)),
@@ -194,7 +200,10 @@ where
             (HandlingKind::ToUpperLayer(packet), Some(handler)) => {
                 handler.receive(packet)
             },
-            _ => (),
+            (HandlingKind::ToUpperLayer(_), None) => { /* no-op */ },
+            (HandlingKind::Buffer, _) => {
+                // FIXME: to handle, similar to ARP buffering.
+            }
         }
     }
 }
