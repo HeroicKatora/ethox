@@ -1,0 +1,73 @@
+name: ci
+on:
+  push:
+    branches: [ develop, master ]
+    tags:
+      - 'v[1-9]+.[0-9]+.[0-9]+[0-9a-z]*'
+  pull_request:
+    branches: [ develop, master ]
+jobs:
+  main_task:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        ETHOX_FEATURES: ['', 'alloc', 'std', 'sys', 'alloc sys', 'std sys']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: |
+          cd ethox
+          cargo build --no-default-features --features "$ETHOX_FEATURES"
+          cargo test --no-default-features --features "$ETHOX_FEATURES"
+        env:
+        - ETHOX_FEATURES: "${{ matrix.ETHOX_FEATURES }}"
+
+  side_crates_task:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: ethox-iperf
+        run: |
+          cd ethox-iperf
+          cargo build --examples --bins
+          cargo test
+      - name: ethox-no-std
+        run: |
+          cd ethox-no-std
+          cargo build --release
+          ls -sh target/release/raw-ping
+          strip target/release/raw-ping
+          ls -sh target/release/raw-ping
+      - name: bpf_script
+        run: |
+          apt-get update
+          apt-get -y install libpcap-dev
+          cd ethox-bpf
+          cargo test
+
+  uring_task:
+    container:
+      image: rust:1.41.0-alpine3.11
+    allow_failures: true
+    uring_script:
+      - cd ethox-io-uring
+      - cargo test
+
+  nightly_task:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: |
+          cd ethox
+          cargo test --all-features
+
+  doc_task:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: |
+          cd ethox
+          cargo doc --no-deps --document-private-items --all-features
