@@ -17,10 +17,14 @@ fn simple_arp() {
     // No prior ARP cache entries needed.
     let mut neighbors = [arp_layer::Neighbor::default(); 1];
     let mut routes = [ip_layer::Route::unspecified(); 2];
-    let mut ip = ip_layer::Endpoint::new(ip::Cidr::new(IP_ADDR_HOST.into(), 24),
+    let arp = arp_layer::Endpoint::new(
+        arp_layer::NeighborCache::new(Slice::empty()));
+    let mut ip = ip_layer::Endpoint::new(
+        ip::Cidr::new(IP_ADDR_HOST.into(), 24),
         // No routes necessary for local link.
         ip_layer::Routes::new(&mut routes[..]),
-        arp_layer::NeighborCache::new(Slice::empty()));
+        arp,
+    );
 
     let mut arp = arp_layer::Endpoint::new(arp_layer::NeighborCache::new(&mut neighbors[..]));
 

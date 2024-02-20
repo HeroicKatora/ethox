@@ -26,10 +26,12 @@ fn main() {
 
     let mut neighbors = [arp::Neighbor::default(); 1];
     let mut routes = [ip::Route::new_ipv4_gateway(config.gateway.address()); 1];
+    let neighbors = arp::NeighborCache::new(&mut neighbors[..]);
+
     let mut ip = ip::Endpoint::new(
         Slice::One(config.host.into()),
         ip::Routes::import(List::new_full(routes.as_mut().into())),
-        arp::NeighborCache::new(&mut neighbors[..]));
+        arp::Endpoint::new(neighbors));
 
     println!("[+] Configured layers, communicating");
 

@@ -212,6 +212,7 @@ impl<H: Handle + ?Sized, P: Payload + ?Sized> Recv<H, P> for Formatter<ethernet:
     }
 }
 
+#[cfg(feature = "std")]
 impl<I, H: Handle + ?Sized, P: Payload + ?Sized> Recv<H, P> for FormatWith<I, ethernet::frame>
     where I: Recv<H, P>
 {
@@ -223,6 +224,7 @@ impl<I, H: Handle + ?Sized, P: Payload + ?Sized> Recv<H, P> for FormatWith<I, et
     }
 }
 
+#[cfg(feature = "std")]
 impl<I, H: Handle + ?Sized, P: Payload + ?Sized> Send<H, P> for FormatWith<I, ethernet::frame>
     where I: Send<H, P>
 {

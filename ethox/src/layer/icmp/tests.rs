@@ -31,7 +31,7 @@ fn answer_ping() {
     let neighbors = {
         let mut eth_cache = arp::NeighborCache::new(&mut neighbors[..]);
         eth_cache.fill(IP_ADDR_OTHER.into(), MAC_ADDR_OTHER, None).unwrap();
-        eth_cache
+        arp::Endpoint::new(eth_cache)
     };
     let mut ip = [ip::Route::unspecified(); 2];
     let mut ip = ip::Endpoint::new(Cidr::new(IP_ADDR_HOST.into(), 24),
@@ -72,7 +72,7 @@ fn queue_ping(nic: &mut Loopback<Vec<u8>>) {
     let neighbors = {
         let mut eth_cache = arp::NeighborCache::new(&mut neighbors[..]);
         eth_cache.fill(IP_ADDR_HOST.into(), MAC_ADDR_HOST, None).unwrap();
-        eth_cache
+        arp::Endpoint::new(eth_cache)
     };
     let mut ip = ip::Endpoint::new(
         Cidr::new(IP_ADDR_OTHER.into(), 24),

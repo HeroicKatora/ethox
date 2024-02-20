@@ -61,6 +61,7 @@ impl<P: Payload> Recv<P> for Formatter<ethernet::frame> {
     }
 }
 
+#[cfg(feature = "std")]
 impl<P: Payload, I> Recv<P> for pretty_print::FormatWith<I, ethernet::frame>
     where I: Recv<P>
 {
@@ -71,6 +72,7 @@ impl<P: Payload, I> Recv<P> for pretty_print::FormatWith<I, ethernet::frame>
     }
 }
 
+#[cfg(feature = "std")]
 impl<P: Payload, I> Send<P> for pretty_print::FormatWith<I, ethernet::frame>
     where I: Send<P>
 {
