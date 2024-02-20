@@ -34,7 +34,7 @@ fn simple_ipv4() {
     let neighbors = {
         let mut eth_cache = arp::NeighborCache::new(&mut neighbors[..]);
         eth_cache.fill(IP_ADDR_DST.into(), MAC_ADDR_DST, None).unwrap();
-        eth_cache
+        arp::Endpoint::new(eth_cache)
     };
     let mut ip = [ip::Route::unspecified(); 2];
     let mut ip = ip::Endpoint::new(Cidr::new(IP_ADDR_SRC.into(), 24),
@@ -82,7 +82,7 @@ fn simple_ipv6() {
     let neighbors = {
         let mut eth_cache = arp::NeighborCache::new(&mut neighbors[..]);
         eth_cache.fill(IP_ADDR_DST.into(), MAC_ADDR_DST, None).unwrap();
-        eth_cache
+        arp::Endpoint::new(eth_cache)
     };
     let mut ip = [ip::Route::unspecified(); 2];
     let mut ip = ip::Endpoint::new(Cidr::new(IP_ADDR_SRC.into(), 24),
