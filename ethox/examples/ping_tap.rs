@@ -45,11 +45,12 @@ fn main() {
 
     let mut neighbors = [arp::Neighbor::default(); 1];
     let mut routes = [ip::Route::new_ipv4_gateway(gateway.address()); 1];
+    let neighbors = arp::NeighborCache::new(&mut neighbors[..]);
     let mut ip = ip::Endpoint::new(Slice::One(host.into()),
         // Prefill the routes
         ip::Routes::import(List::new_full(routes.as_mut().into())), 
         // But do automatic arp
-        arp::NeighborCache::new(&mut neighbors[..]));
+        arp::Endpoint::new(neighbors));
 
     let mut icmp = icmp::Endpoint::new();
 

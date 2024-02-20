@@ -26,9 +26,10 @@ fn main() {
     let mut neighbors = [arp::Neighbor::default(); 1];
     // Buffer space for routes, we only have a single state one.
     let mut routes = [ip::Route::new_ipv4_gateway(gateway.address()); 1];
+    let neighbors = arp::NeighborCache::new(&mut neighbors[..]);
     let mut ip = ip::Endpoint::new(Slice::One(host.into()),
         ip::Routes::import(List::new_full(routes.as_mut().into())),
-        arp::NeighborCache::new(&mut neighbors[..]));
+        arp::Endpoint::new(neighbors));
 
     let mut tcp = tcp::Endpoint::new(
         Map::Pairs(List::new(Slice::One(Default::default()))),
