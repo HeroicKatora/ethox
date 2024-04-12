@@ -51,7 +51,7 @@ fn main() {
     let neighbors = {
         let mut eth_cache = arp::NeighborCache::new(&mut neighbors[..]);
         eth_cache.fill(gateway.address().into(), gatemac, None).unwrap();
-        eth_cache
+        arp::Endpoint::new(eth_cache)
     };
     let mut ip = [ip::Route::new_ipv4_gateway(gateway.address()); 1];
     let routes = ip::Routes::import(List::new_full(ip.as_mut().into()));
