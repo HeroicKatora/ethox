@@ -27,11 +27,18 @@ pub(crate) trait IfIndex {
     fn get_if_index(&mut self, fd: libc::c_int) -> Result<libc::c_int, Errno>;
 }
 
-impl ifreq {
-    pub(crate) const SIOCGIFMTU:   libc::Ioctl = 0x8921;
-    pub(crate) const SIOCGIFINDEX: libc::Ioctl = 0x8933;
+// This is freaking stupid: <https://github.com/rust-lang/libc/issues/1036#issuecomment-850765498>
+// At some point, the hidden public type def was dropped. Probably out of similar concerns. We only
+// support linux-gnu for now. The right type according to the kernel is `c_uint`. BSD does ulong.
+// Really we should just be implementing our own syscall wrapper here since the situation of using
+// `libc` is so tiring.
+type Ioctl = libc::c_ulong;
 
-    pub(crate) const TUNSETIFF:    libc::Ioctl = 0x400454CA;
+impl ifreq {
+    pub(crate) const SIOCGIFMTU:   Ioctl = 0x8921;
+    pub(crate) const SIOCGIFINDEX: Ioctl = 0x8933;
+
+    pub(crate) const TUNSETIFF:    Ioctl = 0x400454CA;
     pub(crate) const IFF_TAP:      libc::c_int  = 0x0002;
     pub(crate) const IFF_NO_PI:    libc::c_int  = 0x1000;
 }
