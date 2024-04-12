@@ -18,13 +18,19 @@ pub extern fn main(_nargs: i32, _args: *const *const u8) -> i32 {
     let hostmac = ethernet::Address([0xab,0xff,0xff,0xff,0xff,0xff]);
 
     let mut eth = eth::Endpoint::new(hostmac);
+    let mut arp_requests = [None; 16];
 
     let mut neighbors = [arp::Neighbor::default(); 10];
     let mut ip = ip::Endpoint::new(Slice::One(host.into()),
         // No routes at all
         ip::Routes::new(Slice::empty()), 
         // But do automatic arp
-        arp::NeighborCache::new(&mut neighbors[..]));
+        {
+            let neighbors = arp::NeighborCache::new(&mut neighbors[..]);
+            let buffer = arp::RequestBuffer::new((&mut arp_requests[..]).into());
+
+            arp::Endpoint::new(neighbors).with_request_buffer(buffer)
+        });
 
     let mut icmp = icmp::Endpoint::new();
 
